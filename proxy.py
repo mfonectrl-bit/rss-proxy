@@ -253,8 +253,6 @@ def send_to_telegram(bot_token, channel_id, channel_name, items, category_filter
         desc           = item.get('desc', '')
         link           = item.get('link', '')
         tg_media_bytes = item.get('_tg_media_bytes')
-        tg_msg_id      = item.get('_tg_msg_id')
-        tg_chat        = item.get('_tg_chat')
 
         body    = html_to_telegram(desc, channel_name, link)
         caption = (body or '').strip()
@@ -262,41 +260,12 @@ def send_to_telegram(bot_token, channel_id, channel_name, items, category_filter
         MAX_TEXT = 4096
 
         try:
-            # --- TG source: forward tin gốc (giữ media), reply bản dịch ---
-            if tg_msg_id and tg_chat:
-                from_chat = f'@{tg_chat}' if not tg_chat.startswith('@') else tg_chat
-                fwd_resp = tg_api(bot_token, 'forwardMessages', {
-                    'chat_id': channel_id,
-                    'from_chat_id': from_chat,
-                    'message_ids': [tg_msg_id],
-                })
-                fwd_ok = fwd_resp.get('ok', False)
-                fwd_msg_id = None
-                if fwd_ok:
-                    result = fwd_resp.get('result', [])
-                    if isinstance(result, list) and result:
-                        fwd_msg_id = result[0].get('message_id')
-                    elif isinstance(result, dict):
-                        fwd_msg_id = result.get('message_id')
-                # Reply bản dịch nếu có
-                if fwd_ok and fwd_msg_id and caption:
-                    chunks = _split_text(caption, MAX_TEXT)
-                    reply_id = fwd_msg_id
-                    for chunk in chunks:
-                        r2 = tg_api(bot_token, 'sendMessage', {
-                            'chat_id': channel_id, 'text': chunk,
-                            'parse_mode': 'HTML', 'disable_web_page_preview': True,
-                            'reply_to_message_id': reply_id,
-                        })
-                        if r2.get('ok'):
-                            reply_id = r2.get('result', {}).get('message_id', reply_id)
-                results.append({'title': title, 'ok': fwd_ok,
-                                 'error': '' if fwd_ok else fwd_resp.get('description', 'Lỗi forward')})
-
-            elif tg_media_bytes:
+            if tg_media_bytes:
+                # Có media bytes (từ real-time download) — gửi media + text
                 r = _send_media_then_text(bot_token, channel_id, tg_media_bytes, caption, MAX_CAP, MAX_TEXT, title, use_bytes=True)
                 results.append(r)
             else:
+                # Không có media bytes — thử extract từ desc (RSS) hoặc gửi text
                 imgs, videos = extract_media(desc)
                 if videos:
                     media_list = [('video', u) for u in videos]
@@ -710,10 +679,26 @@ async def _tg_setup_realtime(feed_urls):
         title = (msg.message[:80] + '...') if len(msg.message) > 80 else msg.message
         pub   = msg.date.isoformat() if msg.date else ''
 
+        # Download media cho tin real-time — chỉ 1 tin nên không tốn RAM
+        media_bytes = []
+        if msg.media:
+            try:
+                data = await tg_client.download_media(msg.media, file=bytes)
+                if data:
+                    if isinstance(msg.media, MessageMediaPhoto):
+                        media_bytes.append(('photo', data, 'image/jpeg'))
+                    elif isinstance(msg.media, MessageMediaDocument):
+                        mime = getattr(msg.media.document, 'mime_type', 'application/octet-stream')
+                        if mime.startswith('video') or mime.startswith('image'):
+                            media_bytes.append(('video' if mime.startswith('video') else 'photo', data, mime))
+            except Exception as e:
+                print(f'[TG] Download media lỗi: {e}')
+
         item = {
             'guid': guid, 'title': title, 'desc': desc, 'link': link,
             'pubDate': pub, 'translated': False, 'category': category,
-            '_tg_media_bytes': None, '_tg_msg_id': msg.id, '_tg_chat': chat_username,
+            '_tg_media_bytes': media_bytes if media_bytes else None,
+            '_tg_msg_id': msg.id, '_tg_chat': chat_username,
             '_source': 'telethon', '_feed_url': feed_url,
         }
         with tg_new_items_lock:
@@ -2136,18 +2121,35 @@ class HttpHandler(BaseHTTPRequestHandler):
                 self.wfile.write(b'{"error": "missing channels"}')
                 return
 
-            # Với TG source: lấy msg_id và chat từ link để forward qua Bot API
+            # Với TG source: download media lúc forward (chỉ những tin được chọn)
             items = []
             for it in items_raw:
                 feed_url = it.get('feedUrl', '')
-                if is_tg_source(feed_url):
+                if is_tg_source(feed_url) and TELETHON_AVAILABLE and tg_client is not None:
                     try:
                         link = it.get('link', '')
                         msg_id = int(link.rstrip('/').split('/')[-1])
-                        chat = link.rstrip('/').split('/')[-2]  # lấy username từ link
-                        it = {**it, '_tg_msg_id': msg_id, '_tg_chat': chat, '_tg_media_bytes': None}
+                        channel = normalize_tg_channel(feed_url)
+                        with tg_semaphore:
+                            msgs = tg_run(tg_client.get_messages(channel, ids=msg_id))
+                        msg = msgs if not isinstance(msgs, list) else (msgs[0] if msgs else None)
+                        media_bytes = []
+                        if msg and msg.media:
+                            try:
+                                with tg_semaphore:
+                                    data = tg_run(tg_client.download_media(msg.media, file=bytes))
+                                if data:
+                                    if isinstance(msg.media, MessageMediaPhoto):
+                                        media_bytes.append(('photo', data, 'image/jpeg'))
+                                    elif isinstance(msg.media, MessageMediaDocument):
+                                        mime = getattr(msg.media.document, 'mime_type', 'application/octet-stream')
+                                        if mime.startswith('video') or mime.startswith('image'):
+                                            media_bytes.append(('video' if mime.startswith('video') else 'photo', data, mime))
+                            except Exception as me:
+                                print(f'[!] Download media lỗi: {me}')
+                        it = {**it, '_tg_media_bytes': media_bytes if media_bytes else None}
                     except Exception as e:
-                        print(f'[!] Parse link lỗi: {e}')
+                        print(f'[!] Re-fetch media lỗi: {e}')
                 items.append(it)
 
             all_results = []

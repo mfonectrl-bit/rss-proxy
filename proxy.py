@@ -2165,11 +2165,33 @@ class HttpHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def do_HEAD(self):
+        """Render health check dùng HEAD — trả 200 ngay, không gửi body"""
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/html')
+        self.end_headers()
+
+    def handle_error(self, request, client_address):
+        """Suppress BrokenPipeError từ Render load balancer"""
+        import sys
+        exc = sys.exc_info()[1]
+        if isinstance(exc, BrokenPipeError):
+            return
+        super().handle_error(request, client_address)
+
     def log_message(self, *a):
         pass
 
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        """Suppress BrokenPipeError ở cấp server"""
+        import sys
+        exc = sys.exc_info()[1]
+        if isinstance(exc, BrokenPipeError):
+            return
+        super().handle_error(request, client_address)
 
 if __name__ == '__main__':
     # Khởi động asyncio loop cho Telethon trên thread riêng

@@ -1858,6 +1858,20 @@ def ws_handler(ws):
         ws_clients.add(ws)
     print(f'[WS] Client kết nối, tổng={len(ws_clients)}')
     msg_count = 0
+
+    # Thread gửi ping mỗi 25s để giữ kết nối sống
+    def keepalive():
+        while not ws._closed:
+            time.sleep(25)
+            if ws._closed:
+                break
+            try:
+                with ws._send_lock:
+                    ws._sock.sendall(bytes([0x89, 0x00]))  # ping frame rỗng
+            except Exception:
+                break
+    threading.Thread(target=keepalive, daemon=True).start()
+
     try:
         for raw in ws:
             msg_count += 1
@@ -1895,6 +1909,7 @@ def ws_handler(ws):
     except Exception as e:
         print(f'[WS] Lỗi: {e}')
     finally:
+        ws.close()
         with lock:
             ws_clients.discard(ws)
         print(f'[WS] Client ngắt, nhận {msg_count} messages')
@@ -2193,8 +2208,10 @@ if __name__ == '__main__':
     print(f'Dịch: {"bật" if TRANSLATE_AVAILABLE else "chưa cài thư viện"}')
     print(f'Telethon: {"OK" if TELETHON_AVAILABLE else "chưa cài — pip install telethon"}')
     print(f'Poll mỗi {POLL_INTERVAL}s | Ctrl+C để dừng')
-    import webbrowser
-    webbrowser.open(f'http://localhost:{HTTP_PORT}')
+    # Chỉ mở browser khi chạy local (không phải trên cloud)
+    if not os.environ.get('PORT'):
+        import webbrowser
+        webbrowser.open(f'http://localhost:{HTTP_PORT}')
     try:
         ThreadingHTTPServer(('', HTTP_PORT), HttpHandler).serve_forever()
     except KeyboardInterrupt:

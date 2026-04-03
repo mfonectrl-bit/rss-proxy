@@ -117,7 +117,7 @@ def html_to_telegram(html, channel_name='', link=''):
         return ''
     text = re.sub(r'<[^>]+>', replace_tag, text)
     
-    entities = {'&amp;':'&','&lt;':'<','&gt;':'>','&quot;':'"','&#39;':"'",'&nbsp;':' ','&apos;':"'"'}
+    entities = {'&amp;':'&', '&lt;':'<', '&gt;':'>', '&quot;':'"', '&#39;':"'", '&nbsp;':' ', '&apos;':"'" }
     for ent, char in entities.items():
         text = text.replace(ent, char)
     text = re.sub(r'&#(\d+);', lambda m: chr(int(m.group(1))), text)

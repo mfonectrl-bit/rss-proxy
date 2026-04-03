@@ -802,6 +802,7 @@ def _ws_handshake(request_handler):
     """
     key = request_handler.headers.get('Sec-WebSocket-Key', '').strip()
     if not key:
+        print('[WS] Handshake thất bại: không có Sec-WebSocket-Key')
         return None
     accept = base64.b64encode(
         hashlib.sha1((key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()).digest()
@@ -817,8 +818,10 @@ def _ws_handshake(request_handler):
         request_handler.wfile.flush()
         sock = request_handler.connection
         sock.settimeout(None)
+        print('[WS] Handshake thành công')
         return WsConn(sock)
-    except Exception:
+    except Exception as e:
+        print(f'[WS] Handshake lỗi: {e}')
         return None
 
 
@@ -1906,6 +1909,7 @@ class HttpHandler(BaseHTTPRequestHandler):
 
         # --- WebSocket upgrade ---
         if p.path == '/ws' and self.headers.get('Upgrade', '').lower() == 'websocket':
+            print(f'[WS] Upgrade request nhận được, key={self.headers.get("Sec-WebSocket-Key","?")}')
             ws = _ws_handshake(self)
             if ws:
                 threading.Thread(target=ws_handler, args=(ws,), daemon=True).start()

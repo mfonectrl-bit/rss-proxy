@@ -755,8 +755,9 @@ class WsConn:
     def recv(self):
         """Đọc một WebSocket frame, trả về string hoặc None nếu đóng."""
         try:
-            # Set timeout ngắn để phát hiện disconnect nhanh
-            self._sock.settimeout(30)  # Thêm timeout 30s
+            # ⚠️ Set timeout 30s để phát hiện disconnect nhanh, tránh treo
+            self._sock.settimeout(30)
+            
             header = self._recvexact(2)
             opcode = header[0] & 0x0f
             masked = bool(header[1] & 0x80)
@@ -782,7 +783,7 @@ class WsConn:
                         self._sock.sendall(bytes([0x8a, len(data)]) + bytes(data))
                     except Exception:
                         pass
-                return self.recv()  # Đọc frame tiếp theo
+                return self.recv()
             return data.decode('utf-8', errors='replace')
         except (ConnectionError, OSError, socket.timeout, BrokenPipeError):
             print(f'[WS] recv disconnected')
@@ -1869,20 +1870,28 @@ def ws_handler(ws):
     print(f'[WS] Client kết nối, tổng={len(ws_clients)}')
     msg_count = 0
 
-    # Thread gửi ping mỗi 25s để giữ kết nối sống
 # Thread gửi heartbeat mỗi 15s để giữ kết nối sống qua Render LB
 def keepalive():
     while not ws._closed:
-        time.sleep(15)  # Giảm từ 25s → 15s để an toàn hơn
+        time.sleep(15)  # Giảm từ 25s → 15s để an toàn với Render LB timeout ~55s
         if ws._closed:
             break
         try:
-            # Gửi heartbeat dạng JSON thay vì WebSocket ping frame
-            # Render LB sẽ forward frame data (0x81) đáng tin cậy hơn control frame (0x89)
+            # Gửi heartbeat dạng JSON qua DATA frame (0x81) thay vì PING frame (0x89)
+            # Render LB forward data frames đáng tin cậy hơn control frames
             heartbeat = json.dumps({'type': 'heartbeat', 'ts': time.time()}, ensure_ascii=False)
-            ws.send(heartbeat)
+            payload = heartbeat.encode('utf-8')
+            n = len(payload)
+            with ws._send_lock:
+                if n < 126:
+                    header = bytes([0x81, n])
+                elif n < 65536:
+                    header = bytes([0x81, 126]) + struct.pack('>H', n)
+                else:
+                    header = bytes([0x81, 127]) + struct.pack('>Q', n)
+                ws._sock.sendall(header + payload)
         except Exception:
-            break  # Break để ws_handler thoát và cleanup
+            break  # Break để ws_handler thoát và cleanup connection
 threading.Thread(target=keepalive, daemon=True).start()
 
 try:

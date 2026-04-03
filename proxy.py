@@ -755,7 +755,7 @@ class WsConn:
     def recv(self):
         """Đọc một WebSocket frame, trả về string hoặc None nếu đóng."""
         try:
-            # ⚠️ Set timeout 30s để phát hiện disconnect nhanh, tránh treo
+            # ⚠️ Set timeout 30s để phát hiện disconnect nhanh
             self._sock.settimeout(30)
             
             header = self._recvexact(2)
@@ -1872,18 +1872,18 @@ def ws_handler(ws):
 
     # Heartbeat thread: gửi JSON mỗi 15s để giữ connection sống qua Render LB
     def keepalive():
+        """Gửi heartbeat JSON mỗi 15s để giữ connection qua Render LB"""
         while True:
-            time.sleep(15)
-            # Kiểm tra flag đóng an toàn
+            time.sleep(15)  # Render LB timeout ~55s → gửi mỗi 15s là an toàn
             if getattr(ws, '_closed', False):
                 break
             try:
+                # Gửi JSON qua DATA frame (0x81) thay vì PING frame (0x89)
                 hb = json.dumps({'type': 'heartbeat', 'ts': time.time()}, ensure_ascii=False)
-                ws.send(hb)  # Dùng WsConn.send() đã được định nghĩa sẵn
+                ws.send(hb)  # Dùng WsConn.send() đã có sẵn
             except Exception:
-                break  # Thoát thread ngay nếu connection mất
-
-    threading.Thread(target=keepalive, daemon=True).start()
+                break  # Thoát thread khi connection mất
+        threading.Thread(target=keepalive, daemon=True).start()
 
     try:
         for raw in ws:

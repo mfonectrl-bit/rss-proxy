@@ -761,6 +761,10 @@ def tg_load_history_sync(channel, limit=20):
     """Load lịch sử — chỉ gọi 1 lần khi thêm kênh mới"""
     return tg_run(_tg_load_history(channel, limit))
 
+def tg_fetch_channel(channel, limit=20):
+    """Fetch tin từ một kênh TG — dùng cho poller và /tl_fetch endpoint"""
+    return tg_run(_tg_load_history(channel, limit))
+
 # --- STATE ---
 lock = threading.Lock()
 watched_urls = []

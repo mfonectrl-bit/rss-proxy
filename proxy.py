@@ -1581,11 +1581,11 @@ function connectWS(){
         wsSend({type:'tg_settings',channels:tgChannels});
         wsSend({type:'auto_fwd',enabled:autoFwd,channels:tgChannels});
         wsSend({type:'categories',categories});
-        // Nếu là reconnect (không phải lần đầu), fetch lại tất cả feeds để cập nhật tin mới
+        // Khi reconnect: chỉ fetch lại RSS feeds (nhanh), TG feeds sẽ nhận qua WS broadcast
         if(wsReconnectCount>0){
             setTimeout(()=>{
-                feeds.forEach(f=>fetchAndMerge(f.url,f.name,f.category,false));
-            }, 1500);
+                feeds.filter(f=>!isTgSource(f.url)).forEach(f=>fetchAndMerge(f.url,f.name,f.category,false));
+            }, 1000);
         }
         wsReconnectCount++;
     };

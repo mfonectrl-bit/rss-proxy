@@ -252,7 +252,9 @@ def send_to_telegram(bot_token, channel_id, channel_name, items, category_filter
         title          = item.get('title', '').strip()
         desc           = item.get('desc', '')
         link           = item.get('link', '')
-        tg_media_bytes = item.get('_tg_media_bytes')   # list of (type, bytes, mime)
+        tg_media_bytes = item.get('_tg_media_bytes')
+        tg_msg_id      = item.get('_tg_msg_id')
+        tg_chat        = item.get('_tg_chat')
 
         body    = html_to_telegram(desc, channel_name, link)
         caption = (body or '').strip()
@@ -260,8 +262,38 @@ def send_to_telegram(bot_token, channel_id, channel_name, items, category_filter
         MAX_TEXT = 4096
 
         try:
-            if tg_media_bytes:
-                # --- Telethon media: gửi media trước, reply text nếu caption quá dài ---
+            # --- TG source: forward tin gốc (giữ media), reply bản dịch ---
+            if tg_msg_id and tg_chat:
+                from_chat = f'@{tg_chat}' if not tg_chat.startswith('@') else tg_chat
+                fwd_resp = tg_api(bot_token, 'forwardMessages', {
+                    'chat_id': channel_id,
+                    'from_chat_id': from_chat,
+                    'message_ids': [tg_msg_id],
+                })
+                fwd_ok = fwd_resp.get('ok', False)
+                fwd_msg_id = None
+                if fwd_ok:
+                    result = fwd_resp.get('result', [])
+                    if isinstance(result, list) and result:
+                        fwd_msg_id = result[0].get('message_id')
+                    elif isinstance(result, dict):
+                        fwd_msg_id = result.get('message_id')
+                # Reply bản dịch nếu có
+                if fwd_ok and fwd_msg_id and caption:
+                    chunks = _split_text(caption, MAX_TEXT)
+                    reply_id = fwd_msg_id
+                    for chunk in chunks:
+                        r2 = tg_api(bot_token, 'sendMessage', {
+                            'chat_id': channel_id, 'text': chunk,
+                            'parse_mode': 'HTML', 'disable_web_page_preview': True,
+                            'reply_to_message_id': reply_id,
+                        })
+                        if r2.get('ok'):
+                            reply_id = r2.get('result', {}).get('message_id', reply_id)
+                results.append({'title': title, 'ok': fwd_ok,
+                                 'error': '' if fwd_ok else fwd_resp.get('description', 'Lỗi forward')})
+
+            elif tg_media_bytes:
                 r = _send_media_then_text(bot_token, channel_id, tg_media_bytes, caption, MAX_CAP, MAX_TEXT, title, use_bytes=True)
                 results.append(r)
             else:
@@ -272,7 +304,6 @@ def send_to_telegram(bot_token, channel_id, channel_name, items, category_filter
                     media_list = [('photo', u) for u in imgs]
 
                 if not media_list:
-                    # Chỉ text — chia nhỏ nếu quá dài
                     chunks = _split_text(caption, MAX_TEXT)
                     sent_id = None
                     ok = True
@@ -548,6 +579,7 @@ tg_new_items_lock  = threading.Lock()
 async def _tg_load_history(channel, limit=20):
     """Chỉ gọi 1 lần khi thêm kênh mới — load tin cũ để init known_guids"""
     msgs = await tg_client.get_messages(channel, limit=limit)
+    chat_username = channel.lstrip('@')
     items = []
     for msg in msgs:
         if not msg or not msg.message:
@@ -557,11 +589,11 @@ async def _tg_load_history(channel, limit=20):
         desc = msg.message.replace('\n', '<br>')
         title = (msg.message[:80] + '...') if len(msg.message) > 80 else msg.message
         pub  = msg.date.isoformat() if msg.date else ''
-        # Không download media ở đây — chỉ download khi forward
         items.append({
             'guid': guid, 'title': title, 'desc': desc, 'link': link,
             'pubDate': pub, 'translated': False, 'category': '',
-            '_tg_media_bytes': None, '_source': 'telethon',
+            '_tg_media_bytes': None, '_tg_msg_id': msg.id, '_tg_chat': chat_username,
+            '_source': 'telethon',
         })
     return items
 
@@ -607,7 +639,8 @@ async def _tg_register_handlers():
         item = {
             'guid': guid, 'title': title, 'desc': desc, 'link': link,
             'pubDate': pub, 'translated': False, 'category': category,
-            '_tg_media_bytes': None, '_source': 'telethon', '_feed_url': feed_url,
+            '_tg_media_bytes': None, '_tg_msg_id': msg.id, '_tg_chat': chat_username,
+            '_source': 'telethon', '_feed_url': feed_url,
         }
         with tg_new_items_lock:
             tg_new_items_queue.append(item)
@@ -680,7 +713,8 @@ async def _tg_setup_realtime(feed_urls):
         item = {
             'guid': guid, 'title': title, 'desc': desc, 'link': link,
             'pubDate': pub, 'translated': False, 'category': category,
-            '_tg_media_bytes': None, '_source': 'telethon', '_feed_url': feed_url,
+            '_tg_media_bytes': None, '_tg_msg_id': msg.id, '_tg_chat': chat_username,
+            '_source': 'telethon', '_feed_url': feed_url,
         }
         with tg_new_items_lock:
             tg_new_items_queue.append(item)
@@ -1883,7 +1917,7 @@ def ws_handler(ws):
                 ws.send(hb)  # Dùng WsConn.send() đã có sẵn
             except Exception:
                 break  # Thoát thread khi connection mất
-        threading.Thread(target=keepalive, daemon=True).start()
+    threading.Thread(target=keepalive, daemon=True).start()  # ← đúng chỗ: ngoài hàm
 
     try:
         for raw in ws:
@@ -2102,35 +2136,18 @@ class HttpHandler(BaseHTTPRequestHandler):
                 self.wfile.write(b'{"error": "missing channels"}')
                 return
 
-            # Với item từ Telethon, fetch lại media bytes (serialize qua semaphore)
+            # Với TG source: lấy msg_id và chat từ link để forward qua Bot API
             items = []
             for it in items_raw:
                 feed_url = it.get('feedUrl', '')
-                if is_tg_source(feed_url) and TELETHON_AVAILABLE and tg_client is not None:
+                if is_tg_source(feed_url):
                     try:
                         link = it.get('link', '')
                         msg_id = int(link.rstrip('/').split('/')[-1])
-                        channel = normalize_tg_channel(feed_url)
-                        with tg_semaphore:
-                            msgs = tg_run(tg_client.get_messages(channel, ids=msg_id))
-                        msg = msgs if not isinstance(msgs, list) else (msgs[0] if msgs else None)
-                        media_bytes = []
-                        if msg and msg.media:
-                            try:
-                                with tg_semaphore:
-                                    data = tg_run(tg_client.download_media(msg.media, file=bytes))
-                                if data:
-                                    if isinstance(msg.media, MessageMediaPhoto):
-                                        media_bytes.append(('photo', data, 'image/jpeg'))
-                                    elif isinstance(msg.media, MessageMediaDocument):
-                                        mime = getattr(msg.media.document, 'mime_type', 'application/octet-stream')
-                                        if mime.startswith('video') or mime.startswith('image'):
-                                            media_bytes.append(('video' if mime.startswith('video') else 'photo', data, mime))
-                            except Exception as me:
-                                print(f'[!] Download media lỗi: {me}')
-                        it = {**it, '_tg_media_bytes': media_bytes if media_bytes else None}
+                        chat = link.rstrip('/').split('/')[-2]  # lấy username từ link
+                        it = {**it, '_tg_msg_id': msg_id, '_tg_chat': chat, '_tg_media_bytes': None}
                     except Exception as e:
-                        print(f'[!] Re-fetch media lỗi: {e}')
+                        print(f'[!] Parse link lỗi: {e}')
                 items.append(it)
 
             all_results = []

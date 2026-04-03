@@ -816,22 +816,14 @@ def _ws_handshake(request_handler):
         f'Sec-WebSocket-Accept: {accept}\r\n\r\n'
     )
     try:
-        # Lấy raw socket trước khi ghi — tránh buffering issues
-        sock = request_handler.connection
-        sock.sendall(response.encode())
-        sock.settimeout(None)
-        # Detach socket khỏi HTTP handler để tránh bị đóng khi do_GET return
-        request_handler.connection = None
-        try:
-            request_handler.wfile.close()
-        except Exception:
-            pass
-        try:
-            request_handler.rfile.close()
-        except Exception:
-            pass
+        orig_sock = request_handler.connection
+        orig_sock.sendall(response.encode())
+        # Duplicate socket — WS thread dùng bản copy, HTTP handler dùng bản gốc
+        # HTTP handler sẽ tự close bản gốc khi xong, WS vẫn có bản copy
+        ws_sock = orig_sock.dup()
+        ws_sock.settimeout(None)
         print('[WS] Handshake thành công')
-        return WsConn(sock)
+        return WsConn(ws_sock)
     except Exception as e:
         print(f'[WS] Handshake lỗi: {e}')
         return None
@@ -2138,16 +2130,6 @@ class HttpHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-Type', 'text/html')
         self.end_headers()
-
-    def finish(self):
-        """Override finish() để không đóng socket đã được detach cho WebSocket"""
-        if self.connection is None:
-            # Socket đã được detach cho WS, bỏ qua cleanup
-            return
-        try:
-            super().finish()
-        except Exception:
-            pass
 
     def handle_error(self, request, client_address):
         """Suppress BrokenPipeError từ Render load balancer"""

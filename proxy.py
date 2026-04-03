@@ -9,13 +9,14 @@ import asyncio
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from urllib.parse import urlparse, parse_qs
-from websockets.sync.server import serve as ws_serve
+import hashlib
+import base64
+import struct
 import xml.etree.ElementTree as ET
 
 # --- CẤU HÌNH ---
 POLL_INTERVAL    = 60
 HTTP_PORT = int(os.environ.get("PORT", 8765))
-WS_PORT   = 8766
 TRANSLATE_ENABLE = True
 SESSION_FILE     = 'tg_session'
 TG_CONFIG_FILE   = 'tg_config.json'
@@ -657,14 +658,7 @@ async def _tg_setup_realtime(feed_urls):
     """Setup real-time listener cho danh sách feed URLs"""
     global _tg_new_message_handler
 
-    if not tg_client:
-        print('[TG] setup_realtime: tg_client là None')
-        return
-
-    authorized = await tg_client.is_user_authorized()
-    print(f'[TG] setup_realtime: is_authorized={authorized}')
-    if not authorized:
-        print('[TG] setup_realtime: chưa authorized, bỏ qua')
+    if not tg_client or not await tg_client.is_user_authorized():
         return
 
     # Remove old handler
@@ -679,15 +673,14 @@ async def _tg_setup_realtime(feed_urls):
         return
 
     raw_channels = [normalize_tg_channel(u).lstrip('@') for u in feed_urls]
-    print(f'[TG] setup_realtime: cần resolve {len(raw_channels)} channels: {raw_channels}')
 
     # Resolve từng channel để loại bỏ username không hợp lệ/không tồn tại
+    # Nếu bỏ qua bước này, một channel lỗi sẽ khiến toàn bộ handler crash
     channels_list = []
     for ch in raw_channels:
         try:
             await tg_client.get_input_entity(ch)
             channels_list.append(ch)
-            print(f'[TG] Resolve OK: @{ch}')
         except Exception as e:
             print(f'[TG] Bỏ qua channel không hợp lệ @{ch}: {e}')
 
@@ -772,7 +765,113 @@ tg_channels = []
 categories = ['Sức khỏe', 'Tài chính', 'Xã hội', 'Công nghệ', 'Giải trí', 'Khác']
 poll_next_time = time.time() + POLL_INTERVAL
 
-# --- HTML/JS FRONTEND ---
+# --- WebSocket thuần RFC 6455 (không cần thư viện websockets) ---
+
+class WsConn:
+    """WebSocket connection wrapper dùng raw socket, tương thích với ws_handler cũ."""
+    def __init__(self, sock):
+        self._sock = sock
+        self._send_lock = threading.Lock()
+        self._closed = False
+
+    def send(self, text):
+        if self._closed:
+            raise ConnectionError('closed')
+        payload = text.encode('utf-8')
+        n = len(payload)
+        with self._send_lock:
+            try:
+                if n < 126:
+                    header = bytes([0x81, n])
+                elif n < 65536:
+                    header = bytes([0x81, 126]) + struct.pack('>H', n)
+                else:
+                    header = bytes([0x81, 127]) + struct.pack('>Q', n)
+                self._sock.sendall(header + payload)
+            except Exception:
+                self._closed = True
+                raise
+
+    def _recvexact(self, n):
+        buf = b''
+        while len(buf) < n:
+            chunk = self._sock.recv(n - len(buf))
+            if not chunk:
+                raise ConnectionError('disconnected')
+            buf += chunk
+        return buf
+
+    def recv(self):
+        """Đọc một WebSocket frame, trả về string hoặc None nếu đóng."""
+        try:
+            header = self._recvexact(2)
+            opcode = header[0] & 0x0f
+            masked = bool(header[1] & 0x80)
+            length = header[1] & 0x7f
+            if length == 126:
+                length = struct.unpack('>H', self._recvexact(2))[0]
+            elif length == 127:
+                length = struct.unpack('>Q', self._recvexact(8))[0]
+            mask_key = self._recvexact(4) if masked else b'\x00\x00\x00\x00'
+            data = bytearray(self._recvexact(length))
+            if masked:
+                for i in range(length):
+                    data[i] ^= mask_key[i % 4]
+            if opcode == 0x8:   # close
+                return None
+            if opcode == 0x9:   # ping → pong
+                with self._send_lock:
+                    try:
+                        self._sock.sendall(bytes([0x8a, len(data)]) + bytes(data))
+                    except Exception:
+                        pass
+                return self.recv()
+            return data.decode('utf-8', errors='replace')
+        except Exception:
+            return None
+
+    def close(self):
+        self._closed = True
+        try:
+            self._sock.close()
+        except Exception:
+            pass
+
+    def __iter__(self):
+        while True:
+            msg = self.recv()
+            if msg is None:
+                break
+            yield msg
+
+
+def _ws_handshake(request_handler):
+    """
+    Thực hiện WebSocket upgrade từ BaseHTTPRequestHandler.
+    Trả về WsConn nếu thành công, None nếu thất bại.
+    """
+    key = request_handler.headers.get('Sec-WebSocket-Key', '').strip()
+    if not key:
+        return None
+    accept = base64.b64encode(
+        hashlib.sha1((key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()).digest()
+    ).decode()
+    response = (
+        'HTTP/1.1 101 Switching Protocols\r\n'
+        'Upgrade: websocket\r\n'
+        'Connection: Upgrade\r\n'
+        f'Sec-WebSocket-Accept: {accept}\r\n\r\n'
+    )
+    try:
+        request_handler.wfile.write(response.encode())
+        request_handler.wfile.flush()
+        sock = request_handler.connection
+        sock.settimeout(None)
+        return WsConn(sock)
+    except Exception:
+        return None
+
+
 HTML = r"""<!DOCTYPE html>
 <html lang="vi">
 <head>
@@ -1022,7 +1121,7 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
 <div id="toast"></div>
 
 <script>
-const WS_URL='ws://localhost:8766';
+const WS_URL=(location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws';
 const DEFAULT_FEEDS=[{name:'VN Wall Street',url:'https://tg.i-c-a.su/rss/vnwallstreet',category:'Tài chính'}];
 const DEFAULT_CATEGORIES=['Sức khỏe','Tài chính','Xã hội','Công nghệ','Giải trí','Khác'];
 const PAGE_SIZE = 30;
@@ -1619,7 +1718,6 @@ def _do_forward(processed, category, url):
     with lock:
         do_fwd = auto_fwd_enabled
         cfgs = list(tg_channels)
-    print(f'[FWD] _do_forward: auto_fwd={do_fwd}, channels={len(cfgs)}, items={len(processed)}, url={url}')
     if not do_fwd or not cfgs:
         return
     total_sent = 0
@@ -1685,10 +1783,8 @@ def _init_tg_feed(url_obj):
     url      = url_obj['url']
     category = url_obj.get('category', '')
     channel  = normalize_tg_channel(url)
-    print(f'[TG] _init_tg_feed bắt đầu: {channel}')
     try:
         items = tg_load_history_sync(channel, limit=20)
-        print(f'[TG] _init_tg_feed lấy được {len(items)} items: {channel}')
         for it in items:
             if not it.get('category'):
                 it['category'] = category
@@ -1768,9 +1864,8 @@ def poller():
             url = url_obj['url']
             if url not in tg_inited and TELETHON_AVAILABLE and tg_client is not None:
                 tg_inited.add(url)
-                print(f'[TG] Poller trigger init: {url} (tg_client={tg_client is not None}, auth_state={tg_auth_state})')
                 threading.Thread(target=_init_tg_feed, args=(url_obj,), daemon=True).start()
-                time.sleep(0.3)
+                time.sleep(0.3)   # delay nhỏ giữa các feed để tránh flood Telegram API
 
         # --- RSS thường (parallel) ---
         rss_urls = [u for u in urls if not is_tg_source(u['url']) and not _is_ica_source(u['url'])]
@@ -1796,7 +1891,6 @@ def ws_handler(ws):
     global translate_enabled, auto_fwd_enabled, tg_channels, categories
     with lock:
         ws_clients.add(ws)
-    print(f'[WS] Client kết nối, tổng={len(ws_clients)}')
     try:
         for raw in ws:
             try:
@@ -1806,8 +1900,6 @@ def ws_handler(ws):
             t = msg.get('type')
             if t == 'feeds':
                 urls = msg.get('feeds', [])
-                tg_count = sum(1 for u in urls if is_tg_source(u['url']))
-                print(f'[WS] feeds nhận: {len(urls)} feeds ({tg_count} TG), tg_client={tg_client is not None}')
                 with lock:
                     watched_urls.clear()
                     watched_urls.extend(urls)
@@ -1818,28 +1910,24 @@ def ws_handler(ws):
                 tg_urls = [u['url'] for u in urls if is_tg_source(u['url'])]
                 if tg_urls and TELETHON_AVAILABLE and tg_client:
                     threading.Thread(target=tg_setup_realtime_sync, args=(tg_urls,), daemon=True).start()
-                else:
-                    print(f'[WS] Không trigger realtime: tg_urls={len(tg_urls)}, available={TELETHON_AVAILABLE}, client={tg_client is not None}')
             elif t == 'translate':
                 translate_enabled = msg.get('enabled', True)
             elif t == 'tg_settings':
                 with lock:
                     tg_channels = msg.get('channels', [])
-                print(f'[WS] tg_settings: {len(tg_channels)} channels')
             elif t == 'auto_fwd':
                 auto_fwd_enabled = msg.get('enabled', False)
                 with lock:
                     tg_channels = msg.get('channels', tg_channels)
-                print(f'[WS] Auto-forward: {"bật" if auto_fwd_enabled else "tắt"}, channels={len(tg_channels)}')
+                print(f'[WS] Auto-forward: {"bật" if auto_fwd_enabled else "tắt"}')
             elif t == 'categories':
                 with lock:
                     categories = msg.get('categories', categories)
-    except Exception as e:
-        print(f'[WS] ws_handler lỗi: {e}')
+    except:
+        pass
     finally:
         with lock:
             ws_clients.discard(ws)
-        print(f'[WS] Client ngắt kết nối, còn={len(ws_clients)}')
 
 def is_tg_source(url):
     return url.startswith('@') or 't.me/' in url
@@ -1857,6 +1945,14 @@ def normalize_tg_channel(url):
 class HttpHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         p = urlparse(self.path)
+
+        # --- WebSocket upgrade ---
+        if p.path == '/ws' and self.headers.get('Upgrade', '').lower() == 'websocket':
+            ws = _ws_handshake(self)
+            if ws:
+                threading.Thread(target=ws_handler, args=(ws,), daemon=True).start()
+            return
+
         if p.path == '/fetch':
             qs = parse_qs(p.query)
             url = qs.get('url', [None])[0]
@@ -2086,12 +2182,6 @@ if __name__ == '__main__':
                     print(f'[!] Telethon auto-login lỗi: {e}')
 
     threading.Thread(target=poller, daemon=True).start()
-
-    def run_ws():
-        with ws_serve(ws_handler, 'localhost', WS_PORT) as s:
-            print(f'[WS] ws://localhost:{WS_PORT}')
-            s.serve_forever()
-    threading.Thread(target=run_ws, daemon=True).start()
 
     print(f'=== RSS + Telegram Reader === http://localhost:{HTTP_PORT}')
     print(f'Dịch: {"bật" if TRANSLATE_AVAILABLE else "chưa cài thư viện"}')

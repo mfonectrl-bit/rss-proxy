@@ -1571,6 +1571,7 @@ setInterval(()=>{
 }, 1000);
 
 // --- WebSocket ---
+let wsReconnectCount=0;
 function connectWS(){
     ws=new WebSocket(WS_URL);
     ws.onopen=()=>{
@@ -1580,6 +1581,13 @@ function connectWS(){
         wsSend({type:'tg_settings',channels:tgChannels});
         wsSend({type:'auto_fwd',enabled:autoFwd,channels:tgChannels});
         wsSend({type:'categories',categories});
+        // Nếu là reconnect (không phải lần đầu), fetch lại tất cả feeds để cập nhật tin mới
+        if(wsReconnectCount>0){
+            setTimeout(()=>{
+                feeds.forEach(f=>fetchAndMerge(f.url,f.name,f.category,false));
+            }, 1500);
+        }
+        wsReconnectCount++;
     };
     ws.onmessage=e=>{
         const msg=JSON.parse(e.data);

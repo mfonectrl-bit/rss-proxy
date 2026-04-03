@@ -2172,36 +2172,34 @@ if __name__ == '__main__':
     if TELETHON_AVAILABLE:
         tg_loop_thread = threading.Thread(target=run_tg_loop, daemon=True)
         tg_loop_thread.start()
-        time.sleep(0.2)  # đợi loop khởi động
+        time.sleep(0.2)
         print('[i] Telethon loop: OK')
 
         session_str = os.environ.get('TG_SESSION_STRING', '').strip()
-        cfg = load_tg_config()
 
-        if session_str and cfg:
-            # Ưu tiên: dùng StringSession từ env var — ổn định trên cloud
-            print('[i] Dùng TG_SESSION_STRING từ env var')
+        # Đọc config từ env vars trước, fallback về file
+        env_api_id   = os.environ.get('TG_API_ID', '').strip()
+        env_api_hash = os.environ.get('TG_API_HASH', '').strip()
+        env_phone    = os.environ.get('TG_PHONE', '').strip()
+
+        if env_api_id and env_api_hash and env_phone:
+            cfg = {'api_id': env_api_id, 'api_hash': env_api_hash, 'phone': env_phone}
+            print('[i] Dùng Telethon config từ env vars')
+        else:
+            cfg = load_tg_config()
+
+        if cfg:
             try:
                 result = tg_run(_tg_send_code(cfg['api_id'], cfg['api_hash'], cfg['phone']))
                 if result.get('state') == 'connected':
-                    print('[i] Telethon: tự động đăng nhập bằng session string thành công')
-                else:
-                    print(f'[!] Telethon auto-login: {result.get("msg")}')
-            except Exception as e:
-                print(f'[!] Telethon auto-login lỗi: {e}')
-        elif os.path.exists(SESSION_FILE + '.session') and cfg:
-            # Fallback: dùng session file (local)
-            print(f'[i] Tìm thấy session file: {SESSION_FILE}.session')
-            try:
-                result = tg_run(_tg_send_code(cfg['api_id'], cfg['api_hash'], cfg['phone']))
-                if result.get('state') == 'connected':
-                    print('[i] Telethon: tự động đăng nhập lại thành công')
+                    src = 'session string' if session_str else 'session file'
+                    print(f'[i] Telethon: đăng nhập thành công ({src})')
                 else:
                     print(f'[!] Telethon auto-login: {result.get("msg")}')
             except Exception as e:
                 print(f'[!] Telethon auto-login lỗi: {e}')
         else:
-            print('[i] Chưa có session — cần đăng nhập qua giao diện web')
+            print('[i] Chưa có config — cần đăng nhập qua giao diện web')
 
     threading.Thread(target=poller, daemon=True).start()
 

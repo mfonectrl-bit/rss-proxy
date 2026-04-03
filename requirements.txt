@@ -1,4 +1,6 @@
+cat > requirements.txt << EOF
 websockets>=12.0
-deep-translator
-langdetect
-telethon
+telethon>=1.36.0
+deep-translator>=1.11.0
+langdetect>=1.0.9
+EOF

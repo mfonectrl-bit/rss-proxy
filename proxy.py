@@ -122,6 +122,11 @@ def translate_text(text):
         print(f'[!] Dịch lỗi: {e}')
         result = text
     with translate_lock:
+        if len(translate_cache) > 500:
+            # Xóa bớt nửa cache khi quá lớn
+            keys = list(translate_cache.keys())
+            for k in keys[:250]:
+                del translate_cache[k]
         translate_cache[key] = result
     return result
 
@@ -521,34 +526,11 @@ async def _tg_fetch_messages(channel, limit=20):
         desc  = msg.message.replace('\n', '<br>')
         pub   = msg.date.isoformat() if msg.date else ''
         link  = f'https://t.me/{channel.lstrip("@")}/{msg.id}'
-
-        # Media: đọc vào bytes (không lưu file)
-        media_bytes = []
-        if msg.media:
-            try:
-                data = await tg_client.download_media(msg.media, file=bytes)
-                if data:
-                    if isinstance(msg.media, MessageMediaPhoto):
-                        media_bytes.append(('photo', data, 'image/jpeg'))
-                    elif isinstance(msg.media, MessageMediaDocument):
-                        mime = getattr(msg.media.document, 'mime_type', 'application/octet-stream')
-                        if mime.startswith('video'):
-                            media_bytes.append(('video', data, mime))
-                        elif mime.startswith('image'):
-                            media_bytes.append(('photo', data, mime))
-            except Exception as e:
-                print(f'[!] Tải media lỗi: {e}')
-
+        # Không download media ở đây — chỉ download khi forward (/tg_forward sẽ fetch lại)
         item = {
-            'guid': guid,
-            'title': title,
-            'desc': desc,
-            'link': link,
-            'pubDate': pub,
-            'translated': False,
-            'category': '',
-            '_tg_media_bytes': media_bytes if media_bytes else None,
-            '_source': 'telethon',
+            'guid': guid, 'title': title, 'desc': desc, 'link': link,
+            'pubDate': pub, 'translated': False, 'category': '',
+            '_tg_media_bytes': None, '_source': 'telethon',
         }
         items.append(item)
     return items
@@ -574,24 +556,11 @@ async def _tg_load_history(channel, limit=20):
         desc = msg.message.replace('\n', '<br>')
         title = (msg.message[:80] + '...') if len(msg.message) > 80 else msg.message
         pub  = msg.date.isoformat() if msg.date else ''
-        media_bytes = []
-        if msg.media:
-            try:
-                data = await tg_client.download_media(msg.media, file=bytes)
-                if data:
-                    if isinstance(msg.media, MessageMediaPhoto):
-                        media_bytes.append(('photo', data, 'image/jpeg'))
-                    elif isinstance(msg.media, MessageMediaDocument):
-                        mime = getattr(msg.media.document, 'mime_type', 'application/octet-stream')
-                        if mime.startswith('video') or mime.startswith('image'):
-                            media_bytes.append(('video' if mime.startswith('video') else 'photo', data, mime))
-            except:
-                pass
+        # Không download media ở đây — chỉ download khi forward
         items.append({
             'guid': guid, 'title': title, 'desc': desc, 'link': link,
             'pubDate': pub, 'translated': False, 'category': '',
-            '_tg_media_bytes': media_bytes if media_bytes else None,
-            '_source': 'telethon',
+            '_tg_media_bytes': None, '_source': 'telethon',
         })
     return items
 
@@ -633,26 +602,11 @@ async def _tg_register_handlers():
         desc  = msg.message.replace('\n', '<br>')
         title = (msg.message[:80] + '...') if len(msg.message) > 80 else msg.message
         pub   = msg.date.isoformat() if msg.date else ''
-        media_bytes = []
-        if msg.media:
-            try:
-                data = await tg_client.download_media(msg.media, file=bytes)
-                if data:
-                    if isinstance(msg.media, MessageMediaPhoto):
-                        media_bytes.append(('photo', data, 'image/jpeg'))
-                    elif isinstance(msg.media, MessageMediaDocument):
-                        mime = getattr(msg.media.document, 'mime_type', 'application/octet-stream')
-                        if mime.startswith('video') or mime.startswith('image'):
-                            media_bytes.append(('video' if mime.startswith('video') else 'photo', data, mime))
-            except:
-                pass
 
         item = {
             'guid': guid, 'title': title, 'desc': desc, 'link': link,
             'pubDate': pub, 'translated': False, 'category': category,
-            '_tg_media_bytes': media_bytes if media_bytes else None,
-            '_source': 'telethon',
-            '_feed_url': feed_url,
+            '_tg_media_bytes': None, '_source': 'telethon', '_feed_url': feed_url,
         }
         with tg_new_items_lock:
             tg_new_items_queue.append(item)
@@ -721,26 +675,11 @@ async def _tg_setup_realtime(feed_urls):
         desc  = msg.message.replace('\n', '<br>')
         title = (msg.message[:80] + '...') if len(msg.message) > 80 else msg.message
         pub   = msg.date.isoformat() if msg.date else ''
-        media_bytes = []
-        if msg.media:
-            try:
-                data = await tg_client.download_media(msg.media, file=bytes)
-                if data:
-                    if isinstance(msg.media, MessageMediaPhoto):
-                        media_bytes.append(('photo', data, 'image/jpeg'))
-                    elif isinstance(msg.media, MessageMediaDocument):
-                        mime = getattr(msg.media.document, 'mime_type', 'application/octet-stream')
-                        if mime.startswith('video') or mime.startswith('image'):
-                            media_bytes.append(('video' if mime.startswith('video') else 'photo', data, mime))
-            except:
-                pass
 
         item = {
             'guid': guid, 'title': title, 'desc': desc, 'link': link,
             'pubDate': pub, 'translated': False, 'category': category,
-            '_tg_media_bytes': media_bytes if media_bytes else None,
-            '_source': 'telethon',
-            '_feed_url': feed_url,
+            '_tg_media_bytes': None, '_source': 'telethon', '_feed_url': feed_url,
         }
         with tg_new_items_lock:
             tg_new_items_queue.append(item)

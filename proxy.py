@@ -32,6 +32,7 @@ except ImportError as e:
 
 try:
     from telethon import TelegramClient, events
+    from telethon.sessions import StringSession
     from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument
     import telethon.errors
     TELETHON_AVAILABLE = True
@@ -445,7 +446,13 @@ async def _tg_send_code(api_id, api_hash, phone):
     tg_api_id   = int(api_id)
     tg_api_hash = api_hash
     tg_phone    = phone
-    tg_client   = TelegramClient(SESSION_FILE, tg_api_id, tg_api_hash)
+    # Ưu tiên dùng StringSession từ env var (ổn định trên cloud, không bị mất khi restart)
+    session_str = os.environ.get('TG_SESSION_STRING', '').strip()
+    if session_str and TELETHON_AVAILABLE:
+        session = StringSession(session_str)
+    else:
+        session = SESSION_FILE
+    tg_client   = TelegramClient(session, tg_api_id, tg_api_hash)
     await tg_client.connect()
     if await tg_client.is_user_authorized():
         tg_auth_state = 'connected'
@@ -2167,19 +2174,34 @@ if __name__ == '__main__':
         tg_loop_thread.start()
         time.sleep(0.2)  # đợi loop khởi động
         print('[i] Telethon loop: OK')
-        if os.path.exists(SESSION_FILE + '.session'):
+
+        session_str = os.environ.get('TG_SESSION_STRING', '').strip()
+        cfg = load_tg_config()
+
+        if session_str and cfg:
+            # Ưu tiên: dùng StringSession từ env var — ổn định trên cloud
+            print('[i] Dùng TG_SESSION_STRING từ env var')
+            try:
+                result = tg_run(_tg_send_code(cfg['api_id'], cfg['api_hash'], cfg['phone']))
+                if result.get('state') == 'connected':
+                    print('[i] Telethon: tự động đăng nhập bằng session string thành công')
+                else:
+                    print(f'[!] Telethon auto-login: {result.get("msg")}')
+            except Exception as e:
+                print(f'[!] Telethon auto-login lỗi: {e}')
+        elif os.path.exists(SESSION_FILE + '.session') and cfg:
+            # Fallback: dùng session file (local)
             print(f'[i] Tìm thấy session file: {SESSION_FILE}.session')
-            cfg = load_tg_config()
-            if cfg:
-                try:
-                    result = tg_run(_tg_send_code(cfg['api_id'], cfg['api_hash'], cfg['phone']))
-                    if result.get('state') == 'connected':
-                        print('[i] Telethon: tự động đăng nhập lại thành công')
-                        # Setup real-time sẽ được trigger khi WS gửi feeds message
-                    else:
-                        print(f'[!] Telethon auto-login: {result.get("msg")}')
-                except Exception as e:
-                    print(f'[!] Telethon auto-login lỗi: {e}')
+            try:
+                result = tg_run(_tg_send_code(cfg['api_id'], cfg['api_hash'], cfg['phone']))
+                if result.get('state') == 'connected':
+                    print('[i] Telethon: tự động đăng nhập lại thành công')
+                else:
+                    print(f'[!] Telethon auto-login: {result.get("msg")}')
+            except Exception as e:
+                print(f'[!] Telethon auto-login lỗi: {e}')
+        else:
+            print('[i] Chưa có session — cần đăng nhập qua giao diện web')
 
     threading.Thread(target=poller, daemon=True).start()
 

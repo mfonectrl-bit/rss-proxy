@@ -768,6 +768,7 @@ class WsConn:
                 for i in range(length):
                     data[i] ^= mask_key[i % 4]
             if opcode == 0x8:   # close
+                print(f'[WS] Frame close nhận được (len={length})')
                 return None
             if opcode == 0x9:   # ping → pong
                 with self._send_lock:
@@ -777,7 +778,8 @@ class WsConn:
                         pass
                 return self.recv()
             return data.decode('utf-8', errors='replace')
-        except Exception:
+        except Exception as e:
+            print(f'[WS] recv lỗi: {type(e).__name__}: {e}')
             return None
 
     def close(self):
@@ -1852,8 +1854,11 @@ def ws_handler(ws):
     global translate_enabled, auto_fwd_enabled, tg_channels, categories
     with lock:
         ws_clients.add(ws)
+    print(f'[WS] Client kết nối, tổng={len(ws_clients)}')
+    msg_count = 0
     try:
         for raw in ws:
+            msg_count += 1
             try:
                 msg = json.loads(raw)
             except:
@@ -1861,13 +1866,14 @@ def ws_handler(ws):
             t = msg.get('type')
             if t == 'feeds':
                 urls = msg.get('feeds', [])
+                tg_count = sum(1 for u in urls if is_tg_source(u['url']))
+                print(f'[WS] feeds: {len(urls)} feeds ({tg_count} TG)')
                 with lock:
                     watched_urls.clear()
                     watched_urls.extend(urls)
                     for u in urls:
                         if u['url'] not in known_guids:
                             known_guids[u['url']] = None
-                # Re-register Telethon real-time handlers khi feed list thay đổi
                 tg_urls = [u['url'] for u in urls if is_tg_source(u['url'])]
                 if tg_urls and TELETHON_AVAILABLE and tg_client:
                     threading.Thread(target=tg_setup_realtime_sync, args=(tg_urls,), daemon=True).start()
@@ -1880,15 +1886,16 @@ def ws_handler(ws):
                 auto_fwd_enabled = msg.get('enabled', False)
                 with lock:
                     tg_channels = msg.get('channels', tg_channels)
-                print(f'[WS] Auto-forward: {"bật" if auto_fwd_enabled else "tắt"}')
+                print(f'[WS] auto_fwd={auto_fwd_enabled}, channels={len(tg_channels)}')
             elif t == 'categories':
                 with lock:
                     categories = msg.get('categories', categories)
-    except:
-        pass
+    except Exception as e:
+        print(f'[WS] Lỗi: {e}')
     finally:
         with lock:
             ws_clients.discard(ws)
+        print(f'[WS] Client ngắt, nhận {msg_count} messages')
 
 def is_tg_source(url):
     return url.startswith('@') or 't.me/' in url

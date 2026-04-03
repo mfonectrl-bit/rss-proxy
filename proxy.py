@@ -12,6 +12,7 @@ from urllib.parse import urlparse, parse_qs
 import hashlib
 import base64
 import struct
+import socket
 import xml.etree.ElementTree as ET
 
 # --- CẤU HÌNH ---
@@ -754,6 +755,8 @@ class WsConn:
     def recv(self):
         """Đọc một WebSocket frame, trả về string hoặc None nếu đóng."""
         try:
+            # Set timeout ngắn để phát hiện disconnect nhanh
+            self._sock.settimeout(30)  # Thêm timeout 30s
             header = self._recvexact(2)
             opcode = header[0] & 0x0f
             masked = bool(header[1] & 0x80)
@@ -767,17 +770,23 @@ class WsConn:
             if masked:
                 for i in range(length):
                     data[i] ^= mask_key[i % 4]
-            if opcode == 0x8:   # close
-                print(f'[WS] Frame close nhận được (len={length})')
+            
+            # Handle close frame
+            if opcode == 0x8:
+                print(f'[WS] Frame close nhận được')
                 return None
-            if opcode == 0x9:   # ping → pong
+            # Handle ping → reply pong
+            if opcode == 0x9:
                 with self._send_lock:
                     try:
                         self._sock.sendall(bytes([0x8a, len(data)]) + bytes(data))
                     except Exception:
                         pass
-                return self.recv()
+                return self.recv()  # Đọc frame tiếp theo
             return data.decode('utf-8', errors='replace')
+        except (ConnectionError, OSError, socket.timeout, BrokenPipeError):
+            print(f'[WS] recv disconnected')
+            return None
         except Exception as e:
             print(f'[WS] recv lỗi: {type(e).__name__}: {e}')
             return None
@@ -1537,6 +1546,7 @@ function connectWS(){
     };
     ws.onmessage=e=>{
         const msg=JSON.parse(e.data);
+        if(msg.type==='heartbeat') return;
         if(msg.type==='new_items'){
             const feedName=feeds.find(f=>f.url===msg.url)?.name||msg.url;
             const parsed=msg.items.map(it=>({...it,feedUrl:msg.url,feedName,ts:it.pubDate?new Date(it.pubDate).getTime():0,isNew:true}));
@@ -1860,17 +1870,20 @@ def ws_handler(ws):
     msg_count = 0
 
     # Thread gửi ping mỗi 25s để giữ kết nối sống
-    def keepalive():
-        while not ws._closed:
-            time.sleep(25)
-            if ws._closed:
-                break
-            try:
-                with ws._send_lock:
-                    ws._sock.sendall(bytes([0x89, 0x00]))  # ping frame rỗng
-            except Exception:
-                break
-    threading.Thread(target=keepalive, daemon=True).start()
+# Thread gửi heartbeat mỗi 15s để giữ kết nối sống qua Render LB
+def keepalive():
+    while not ws._closed:
+        time.sleep(15)  # Giảm từ 25s → 15s để an toàn hơn
+        if ws._closed:
+            break
+        try:
+            # Gửi heartbeat dạng JSON thay vì WebSocket ping frame
+            # Render LB sẽ forward frame data (0x81) đáng tin cậy hơn control frame (0x89)
+            heartbeat = json.dumps({'type': 'heartbeat', 'ts': time.time()}, ensure_ascii=False)
+            ws.send(heartbeat)
+        except Exception:
+            break  # Break để ws_handler thoát và cleanup
+threading.Thread(target=keepalive, daemon=True).start()
 
     try:
         for raw in ws:

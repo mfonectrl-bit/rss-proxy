@@ -1870,71 +1870,71 @@ def ws_handler(ws):
     print(f'[WS] Client kết nối, tổng={len(ws_clients)}')
     msg_count = 0
 
-# Thread gửi heartbeat mỗi 15s để giữ kết nối sống qua Render LB
-def keepalive():
-    while not ws._closed:
-        time.sleep(15)  # Giảm từ 25s → 15s để an toàn với Render LB timeout ~55s
-        if ws._closed:
-            break
-        try:
-            # Gửi heartbeat dạng JSON qua DATA frame (0x81) thay vì PING frame (0x89)
-            # Render LB forward data frames đáng tin cậy hơn control frames
-            heartbeat = json.dumps({'type': 'heartbeat', 'ts': time.time()}, ensure_ascii=False)
-            payload = heartbeat.encode('utf-8')
-            n = len(payload)
-            with ws._send_lock:
-                if n < 126:
-                    header = bytes([0x81, n])
-                elif n < 65536:
-                    header = bytes([0x81, 126]) + struct.pack('>H', n)
-                else:
-                    header = bytes([0x81, 127]) + struct.pack('>Q', n)
-                ws._sock.sendall(header + payload)
-        except Exception:
-            break  # Break để ws_handler thoát và cleanup connection
-threading.Thread(target=keepalive, daemon=True).start()
+    # Heartbeat thread: gửi JSON mỗi 15s để giữ connection sống qua Render LB
+    def keepalive():
+        while True:
+            time.sleep(15)
+            # Kiểm tra flag đóng an toàn
+            if getattr(ws, '_closed', False):
+                break
+            try:
+                hb = json.dumps({'type': 'heartbeat', 'ts': time.time()}, ensure_ascii=False)
+                ws.send(hb)  # Dùng WsConn.send() đã được định nghĩa sẵn
+            except Exception:
+                break  # Thoát thread ngay nếu connection mất
 
-try:
-    for raw in ws:
-        msg_count += 1
+    threading.Thread(target=keepalive, daemon=True).start()
+
+    try:
+        for raw in ws:
+            msg_count += 1
+            try:
+                msg = json.loads(raw)
+            except Exception:
+                continue
+
+            t = msg.get('type')
+            if t == 'heartbeat':
+                continue  # Bỏ qua heartbeat client gửi lên (nếu có)
+
+            if t == 'feeds':
+                urls = msg.get('feeds', [])
+                tg_count = sum(1 for u in urls if is_tg_source(u['url']))
+                print(f'[WS] feeds: {len(urls)} feeds ({tg_count} TG)')
+                with lock:
+                    watched_urls.clear()
+                    watched_urls.extend(urls)
+                    for u in urls:
+                        if u['url'] not in known_guids:
+                            known_guids[u['url']] = None
+                tg_urls = [u['url'] for u in urls if is_tg_source(u['url'])]
+                if tg_urls and TELETHON_AVAILABLE and tg_client:
+                    threading.Thread(target=tg_setup_realtime_sync, args=(tg_urls,), daemon=True).start()
+            elif t == 'translate':
+                translate_enabled = msg.get('enabled', True)
+            elif t == 'tg_settings':
+                with lock:
+                    tg_channels = msg.get('channels', [])
+            elif t == 'auto_fwd':
+                auto_fwd_enabled = msg.get('enabled', False)
+                with lock:
+                    tg_channels = msg.get('channels', tg_channels)
+                print(f'[WS] auto_fwd={auto_fwd_enabled}, channels={len(tg_channels)}')
+            elif t == 'categories':
+                with lock:
+                    categories = msg.get('categories', categories)
+    except Exception as e:
+        print(f'[WS] Lỗi xử lý tin nhắn: {e}')
+    finally:
+        # Đánh dấu đóng để stop keepalive thread
+        ws._closed = True
         try:
-            msg = json.loads(raw)
-        except:
-            continue
-        t = msg.get('type')
-        if t == 'feeds':
-            urls = msg.get('feeds', [])
-            tg_count = sum(1 for u in urls if is_tg_source(u['url']))
-            print(f'[WS] feeds: {len(urls)} feeds ({tg_count} TG)')
-            with lock:
-                watched_urls.clear()
-                watched_urls.extend(urls)
-                for u in urls:
-                    if u['url'] not in known_guids:
-                        known_guids[u['url']] = None
-            tg_urls = [u['url'] for u in urls if is_tg_source(u['url'])]
-            if tg_urls and TELETHON_AVAILABLE and tg_client:
-                threading.Thread(target=tg_setup_realtime_sync, args=(tg_urls,), daemon=True).start()
-        elif t == 'translate':
-            translate_enabled = msg.get('enabled', True)
-        elif t == 'tg_settings':
-            with lock:
-                tg_channels = msg.get('channels', [])
-        elif t == 'auto_fwd':
-            auto_fwd_enabled = msg.get('enabled', False)
-            with lock:
-                tg_channels = msg.get('channels', tg_channels)
-            print(f'[WS] auto_fwd={auto_fwd_enabled}, channels={len(tg_channels)}')
-        elif t == 'categories':
-            with lock:
-                categories = msg.get('categories', categories)
-except Exception as e:
-    print(f'[WS] Lỗi: {e}')
-finally:
-    ws.close()
-    with lock:
-        ws_clients.discard(ws)
-    print(f'[WS] Client ngắt, nhận {msg_count} messages')
+            ws.close()
+        except Exception as e:
+            print(f'[WS] close error: {e}')
+        with lock:
+            ws_clients.discard(ws)
+        print(f'[WS] Client ngắt, nhận {msg_count} messages')
 
 def is_tg_source(url):
     return url.startswith('@') or 't.me/' in url

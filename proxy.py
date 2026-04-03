@@ -1885,47 +1885,47 @@ def keepalive():
             break  # Break để ws_handler thoát và cleanup
 threading.Thread(target=keepalive, daemon=True).start()
 
-    try:
-        for raw in ws:
-            msg_count += 1
-            try:
-                msg = json.loads(raw)
-            except:
-                continue
-            t = msg.get('type')
-            if t == 'feeds':
-                urls = msg.get('feeds', [])
-                tg_count = sum(1 for u in urls if is_tg_source(u['url']))
-                print(f'[WS] feeds: {len(urls)} feeds ({tg_count} TG)')
-                with lock:
-                    watched_urls.clear()
-                    watched_urls.extend(urls)
-                    for u in urls:
-                        if u['url'] not in known_guids:
-                            known_guids[u['url']] = None
-                tg_urls = [u['url'] for u in urls if is_tg_source(u['url'])]
-                if tg_urls and TELETHON_AVAILABLE and tg_client:
-                    threading.Thread(target=tg_setup_realtime_sync, args=(tg_urls,), daemon=True).start()
-            elif t == 'translate':
-                translate_enabled = msg.get('enabled', True)
-            elif t == 'tg_settings':
-                with lock:
-                    tg_channels = msg.get('channels', [])
-            elif t == 'auto_fwd':
-                auto_fwd_enabled = msg.get('enabled', False)
-                with lock:
-                    tg_channels = msg.get('channels', tg_channels)
-                print(f'[WS] auto_fwd={auto_fwd_enabled}, channels={len(tg_channels)}')
-            elif t == 'categories':
-                with lock:
-                    categories = msg.get('categories', categories)
-    except Exception as e:
-        print(f'[WS] Lỗi: {e}')
-    finally:
-        ws.close()
-        with lock:
-            ws_clients.discard(ws)
-        print(f'[WS] Client ngắt, nhận {msg_count} messages')
+try:
+    for raw in ws:
+        msg_count += 1
+        try:
+            msg = json.loads(raw)
+        except:
+            continue
+        t = msg.get('type')
+        if t == 'feeds':
+            urls = msg.get('feeds', [])
+            tg_count = sum(1 for u in urls if is_tg_source(u['url']))
+            print(f'[WS] feeds: {len(urls)} feeds ({tg_count} TG)')
+            with lock:
+                watched_urls.clear()
+                watched_urls.extend(urls)
+                for u in urls:
+                    if u['url'] not in known_guids:
+                        known_guids[u['url']] = None
+            tg_urls = [u['url'] for u in urls if is_tg_source(u['url'])]
+            if tg_urls and TELETHON_AVAILABLE and tg_client:
+                threading.Thread(target=tg_setup_realtime_sync, args=(tg_urls,), daemon=True).start()
+        elif t == 'translate':
+            translate_enabled = msg.get('enabled', True)
+        elif t == 'tg_settings':
+            with lock:
+                tg_channels = msg.get('channels', [])
+        elif t == 'auto_fwd':
+            auto_fwd_enabled = msg.get('enabled', False)
+            with lock:
+                tg_channels = msg.get('channels', tg_channels)
+            print(f'[WS] auto_fwd={auto_fwd_enabled}, channels={len(tg_channels)}')
+        elif t == 'categories':
+            with lock:
+                categories = msg.get('categories', categories)
+except Exception as e:
+    print(f'[WS] Lỗi: {e}')
+finally:
+    ws.close()
+    with lock:
+        ws_clients.discard(ws)
+    print(f'[WS] Client ngắt, nhận {msg_count} messages')
 
 def is_tg_source(url):
     return url.startswith('@') or 't.me/' in url

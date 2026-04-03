@@ -1555,6 +1555,16 @@ function connectWS(){
     };
     ws.onclose=()=>{wsReady=false;document.getElementById('ws-dot').className='ws-dot wait';document.getElementById('ws-lbl').textContent='Mất kết nối...';setTimeout(connectWS,3000);};
 }
+
+// Thêm vào đầu file JS trong HTML (ngay sau ws.onclose)
+ws.onclose = e => {
+    wsReady = false;
+    document.getElementById('ws-dot').className = 'ws-dot';
+    document.getElementById('ws-lbl').textContent = 'Mất kết nối (code: '+e.code+')';
+    console.warn('[WS] Đóng kết nối:', e.reason, 'Code:', e.code);
+    setTimeout(connectWS, 3000);
+};
+
 function wsSend(obj){if(ws&&wsReady)ws.send(JSON.stringify(obj));}
 
 function showToastMsg(msg){
@@ -2216,3 +2226,4 @@ if __name__ == '__main__':
         ThreadingHTTPServer(('', HTTP_PORT), HttpHandler).serve_forever()
     except KeyboardInterrupt:
         print('Dừng.')
+

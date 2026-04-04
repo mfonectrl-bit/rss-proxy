@@ -432,6 +432,24 @@ def _send_media_then_text(bot_token, channel_id, media_list, caption, max_cap, m
             err = resp.get('description', '')
             if ok:
                 media_msg_id = resp.get('result', {}).get('message_id')
+            else:
+                # Fallback: URL không gửi được (trang web HTML, CORS...) → gửi text+link
+                chunks = _split_text(caption, max_text)
+                sent_id = None
+                ok = True
+                for chunk in chunks:
+                    payload = {'chat_id': channel_id, 'text': chunk, 'parse_mode': 'HTML',
+                               'disable_web_page_preview': False}
+                    if sent_id:
+                        payload['reply_to_message_id'] = sent_id
+                    r2 = tg_api(bot_token, 'sendMessage', payload)
+                    if r2.get('ok') and not sent_id:
+                        sent_id = r2.get('result', {}).get('message_id')
+                        media_msg_id = sent_id
+                    if not r2.get('ok'):
+                        ok = False
+                need_reply = False  # Đã gửi full text rồi
+                err = '' if ok else err
         else:
             media_group = []
             for idx, (mtype, murl) in enumerate(media_list[:10]):
@@ -445,6 +463,23 @@ def _send_media_then_text(bot_token, channel_id, media_list, caption, max_cap, m
             err = resp.get('description', '') if isinstance(resp, dict) else ''
             if ok and isinstance(resp.get('result'), list) and resp['result']:
                 media_msg_id = resp['result'][0].get('message_id')
+            elif not ok:
+                # Fallback: sendMediaGroup fail → gửi text
+                chunks = _split_text(caption, max_text)
+                sent_id = None
+                ok = True
+                for chunk in chunks:
+                    payload = {'chat_id': channel_id, 'text': chunk, 'parse_mode': 'HTML',
+                               'disable_web_page_preview': False}
+                    if sent_id:
+                        payload['reply_to_message_id'] = sent_id
+                    r2 = tg_api(bot_token, 'sendMessage', payload)
+                    if r2.get('ok') and not sent_id:
+                        sent_id = r2.get('result', {}).get('message_id')
+                    if not r2.get('ok'):
+                        ok = False
+                need_reply = False
+                err = '' if ok else err
 
     # Nếu caption bị cắt, reply text đầy đủ
     if ok and need_reply and media_msg_id:

@@ -253,19 +253,19 @@ def send_to_telegram(bot_token, channel_id, channel_name, items, category_filter
         desc           = item.get('desc', '')
         link           = item.get('link', '')
         tg_media_bytes = item.get('_tg_media_bytes')
+        # show_link mặc định True nếu không có trong item
+        show_link      = item.get('show_link', True)
 
-        body    = html_to_telegram(desc, channel_name, link)
+        body    = html_to_telegram(desc, channel_name, link if show_link else '')
         caption = (body or '').strip()
         MAX_CAP  = 1024
         MAX_TEXT = 4096
 
         try:
             if tg_media_bytes:
-                # Có media bytes (từ real-time download) — gửi media + text
                 r = _send_media_then_text(bot_token, channel_id, tg_media_bytes, caption, MAX_CAP, MAX_TEXT, title, use_bytes=True)
                 results.append(r)
             else:
-                # Không có media bytes — thử extract từ desc (RSS) hoặc gửi text
                 imgs, videos = extract_media(desc)
                 if videos:
                     media_list = [('video', u) for u in videos]
@@ -654,6 +654,9 @@ async def _tg_setup_realtime(feed_urls):
 
     print(f'[TG] Đăng ký real-time cho: {channels_list}')
 
+    # Set lưu grouped_id đã xử lý để không tạo duplicate item
+    handled_groups = set()
+
     async def handler(event):
         msg = event.message
         if not msg or not msg.message:
@@ -661,6 +664,11 @@ async def _tg_setup_realtime(feed_urls):
         chat_username = getattr(event.chat, 'username', None)
         if not chat_username:
             return
+
+        # Bỏ qua nếu là tin phụ trong group (đã có tin chính)
+        if msg.grouped_id and msg.grouped_id in handled_groups:
+            return
+
         feed_url = None
         category = ''
         with lock:
@@ -672,6 +680,9 @@ async def _tg_setup_realtime(feed_urls):
                     break
         if not feed_url:
             return
+
+        if msg.grouped_id:
+            handled_groups.add(msg.grouped_id)
 
         guid  = f'tg_@{chat_username}_{msg.id}'
         link  = f'https://t.me/{chat_username}/{msg.id}'
@@ -685,6 +696,7 @@ async def _tg_setup_realtime(feed_urls):
             'pubDate': pub, 'translated': False, 'category': category,
             '_tg_media_bytes': None, '_tg_has_media': has_media,
             '_tg_msg_id': msg.id, '_tg_chat': chat_username,
+            '_tg_grouped_id': msg.grouped_id,  # None nếu không phải group
             '_source': 'telethon', '_feed_url': feed_url,
         }
         with tg_new_items_lock:
@@ -981,6 +993,10 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
 <input type="text" id="new-url" placeholder="URL RSS hoặc @username / t.me/channel">
 <select id="new-category"></select>
 <div id="feed-type-hint" style="font-size:11px;color:#6366f1;margin-bottom:8px;display:none">⚡ Nguồn Telegram — sẽ dùng Telethon</div>
+<label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:10px;cursor:pointer">
+  <input type="checkbox" id="new-show-link" checked style="width:16px;height:16px;cursor:pointer">
+  Hiển thị link "Xem bài gốc →" khi forward
+</label>
 <div class="modal-btns">
 <button onclick="closeModal()">Hủy</button>
 <button class="btn-ok" id="btn-add-feed" onclick="addFeed()">Thêm</button>
@@ -1400,6 +1416,7 @@ function openEditFeed(i){
     editFeedIndex=i;const f=feeds[i];
     document.getElementById('new-name').value=f.name;document.getElementById('new-url').value=f.url;
     document.getElementById('new-category').value=f.category||'Khác';
+    document.getElementById('new-show-link').checked=f.show_link!==false;
     document.getElementById('modal-title').textContent='Sửa feed';
     document.getElementById('btn-add-feed').textContent='Cập nhật';
     const hint=document.getElementById('feed-type-hint');
@@ -1410,6 +1427,7 @@ function openEditFeed(i){
 function openModal(){
     editFeedIndex=-1;document.getElementById('new-name').value='';document.getElementById('new-url').value='';
     document.getElementById('new-category').value=categories[0]||'Khác';
+    document.getElementById('new-show-link').checked=true;
     document.getElementById('modal-title').textContent='Thêm feed';
     document.getElementById('btn-add-feed').textContent='Thêm';
     document.getElementById('feed-type-hint').style.display='none';
@@ -1419,11 +1437,12 @@ function closeModal(){document.getElementById('modal').classList.remove('open');
 
 function addFeed(){
     const name=document.getElementById('new-name').value.trim(),url=document.getElementById('new-url').value.trim(),
-        cat=document.getElementById('new-category').value;
+        cat=document.getElementById('new-category').value,
+        show_link=document.getElementById('new-show-link').checked;
     if(!name||!url){alert('Nhập đủ tên và URL');return;}
-    if(editFeedIndex>=0){feeds[editFeedIndex]={name,url,category:cat};}
-    else{feeds.push({name,url,category:cat});}
-    saveFeeds();wsSend({type:'feeds',feeds:feeds.map(f=>({url:f.url,name:f.name,category:f.category}))});
+    if(editFeedIndex>=0){feeds[editFeedIndex]={name,url,category:cat,show_link};}
+    else{feeds.push({name,url,category:cat,show_link});}
+    saveFeeds();wsSend({type:'feeds',feeds:feeds.map(f=>({url:f.url,name:f.name,category:f.category,show_link:f.show_link!==false}))});
     closeModal();
     if(editFeedIndex<0) fetchAndMerge(url,name,cat,true);
     else{allItems=allItems.filter(it=>it.feedUrl!==url);fetchAndMerge(url,name,cat,false);}
@@ -1732,14 +1751,14 @@ def _do_forward(processed, category, url):
 
 def _poll_one(url_obj):
     """Poll một feed, trả về True nếu thành công"""
-    url      = url_obj['url']
-    category = url_obj.get('category', '')
+    url       = url_obj['url']
+    category  = url_obj.get('category', '')
+    show_link = url_obj.get('show_link', True)
     try:
         if is_tg_source(url):
             if not TELETHON_AVAILABLE or tg_client is None:
                 return False
             channel = normalize_tg_channel(url)
-            # KHÔNG dùng semaphore ở đây — poller đã gọi TG feeds tuần tự
             items = tg_fetch_channel(channel, limit=20)
             for it in items:
                 if not it.get('category'):
@@ -1757,6 +1776,8 @@ def _poll_one(url_obj):
             new_items = [it for it in items if it['guid'] and it['guid'] not in prev]
             if new_items:
                 processed = process_tg_items(new_items) if is_tg_source(url) else process_items(new_items)
+                for it in processed:
+                    it['show_link'] = show_link
                 with lock:
                     known_guids[url] = {it['guid'] for it in items if it['guid']}
                 ws_items = [{k: v for k, v in it.items() if k != '_tg_media_bytes'} for it in processed]
@@ -1794,23 +1815,47 @@ def _init_tg_feed(url_obj):
 def _download_and_forward(processed, category, feed_url):
     """Download media cho các item có _tg_has_media, sau đó forward"""
     for it in processed:
-        if it.get('_tg_has_media') and it.get('_tg_msg_id') and tg_client:
-            try:
-                msg_id  = it['_tg_msg_id']
-                channel = normalize_tg_channel(feed_url)
+        if not it.get('_tg_has_media') or not it.get('_tg_msg_id') or not tg_client:
+            continue
+        try:
+            msg_id     = it['_tg_msg_id']
+            channel    = normalize_tg_channel(feed_url)
+            grouped_id = it.get('_tg_grouped_id')
+
+            if grouped_id:
+                # Grouped media: fetch tất cả tin trong group (tối đa 10)
+                # Lấy 10 tin xung quanh msg_id để tìm các tin cùng group
+                all_msgs = tg_run(tg_client.get_messages(channel, ids=list(range(msg_id, msg_id + 10))))
+                if not isinstance(all_msgs, list):
+                    all_msgs = [all_msgs] if all_msgs else []
+                group_msgs = [m for m in all_msgs if m and m.grouped_id == grouped_id and m.media]
+                if not group_msgs:
+                    # Fallback: chỉ lấy tin chính
+                    group_msgs = [tg_run(tg_client.get_messages(channel, ids=msg_id))]
+                    group_msgs = [m for m in group_msgs if m and m.media]
+            else:
                 msgs = tg_run(tg_client.get_messages(channel, ids=msg_id))
-                msg = msgs if not isinstance(msgs, list) else (msgs[0] if msgs else None)
-                if msg and msg.media:
-                    data = tg_run(tg_client.download_media(msg.media, file=bytes))
+                msg  = msgs if not isinstance(msgs, list) else (msgs[0] if msgs else None)
+                group_msgs = [msg] if msg and msg.media else []
+
+            media_bytes = []
+            for m in group_msgs[:10]:
+                try:
+                    data = tg_run(tg_client.download_media(m.media, file=bytes))
                     if data:
-                        if isinstance(msg.media, MessageMediaPhoto):
-                            it['_tg_media_bytes'] = [('photo', data, 'image/jpeg')]
-                        elif isinstance(msg.media, MessageMediaDocument):
-                            mime = getattr(msg.media.document, 'mime_type', 'application/octet-stream')
+                        if isinstance(m.media, MessageMediaPhoto):
+                            media_bytes.append(('photo', data, 'image/jpeg'))
+                        elif isinstance(m.media, MessageMediaDocument):
+                            mime = getattr(m.media.document, 'mime_type', 'application/octet-stream')
                             if mime.startswith('video') or mime.startswith('image'):
-                                it['_tg_media_bytes'] = [('video' if mime.startswith('video') else 'photo', data, mime)]
-            except Exception as e:
-                print(f'[TG] Download media auto-fwd lỗi: {e}')
+                                media_bytes.append(('video' if mime.startswith('video') else 'photo', data, mime))
+                except Exception as e:
+                    print(f'[TG] Download media item lỗi: {e}')
+
+            if media_bytes:
+                it['_tg_media_bytes'] = media_bytes
+        except Exception as e:
+            print(f'[TG] Download media auto-fwd lỗi: {e}')
     _do_forward(processed, category, feed_url)
 
 def _process_tg_queue():
@@ -1828,11 +1873,13 @@ def _process_tg_queue():
         by_feed.setdefault(fu, []).append(item)
 
     for feed_url, items in by_feed.items():
-        category = ''
+        category  = ''
+        show_link = True
         with lock:
             for u in watched_urls:
                 if u['url'] == feed_url:
-                    category = u.get('category', '')
+                    category  = u.get('category', '')
+                    show_link = u.get('show_link', True)
                     break
             prev = known_guids.get(feed_url)
 
@@ -1842,6 +1889,9 @@ def _process_tg_queue():
             continue
 
         processed = process_tg_items(new_items)
+        # Gắn show_link vào từng item
+        for it in processed:
+            it['show_link'] = show_link
         with lock:
             if known_guids.get(feed_url) is None:
                 known_guids[feed_url] = set()

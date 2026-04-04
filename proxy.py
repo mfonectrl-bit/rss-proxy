@@ -678,26 +678,12 @@ async def _tg_setup_realtime(feed_urls):
         desc  = msg.message.replace('\n', '<br>')
         title = (msg.message[:80] + '...') if len(msg.message) > 80 else msg.message
         pub   = msg.date.isoformat() if msg.date else ''
-
-        # Download media cho tin real-time — chỉ 1 tin nên không tốn RAM
-        media_bytes = []
-        if msg.media:
-            try:
-                data = await tg_client.download_media(msg.media, file=bytes)
-                if data:
-                    if isinstance(msg.media, MessageMediaPhoto):
-                        media_bytes.append(('photo', data, 'image/jpeg'))
-                    elif isinstance(msg.media, MessageMediaDocument):
-                        mime = getattr(msg.media.document, 'mime_type', 'application/octet-stream')
-                        if mime.startswith('video') or mime.startswith('image'):
-                            media_bytes.append(('video' if mime.startswith('video') else 'photo', data, mime))
-            except Exception as e:
-                print(f'[TG] Download media lỗi: {e}')
+        has_media = bool(msg.media and isinstance(msg.media, (MessageMediaPhoto, MessageMediaDocument)))
 
         item = {
             'guid': guid, 'title': title, 'desc': desc, 'link': link,
             'pubDate': pub, 'translated': False, 'category': category,
-            '_tg_media_bytes': media_bytes if media_bytes else None,
+            '_tg_media_bytes': None, '_tg_has_media': has_media,
             '_tg_msg_id': msg.id, '_tg_chat': chat_username,
             '_source': 'telethon', '_feed_url': feed_url,
         }
@@ -1547,6 +1533,7 @@ setInterval(()=>{
 
 // --- WebSocket ---
 let wsReconnectCount=0;
+let wsHeartbeatTimer=null;
 function connectWS(){
     ws=new WebSocket(WS_URL);
     ws.onopen=()=>{
@@ -1563,6 +1550,11 @@ function connectWS(){
             }, 1000);
         }
         wsReconnectCount++;
+        // Heartbeat từ client mỗi 10s để tránh Render LB cắt connection
+        if(wsHeartbeatTimer) clearInterval(wsHeartbeatTimer);
+        wsHeartbeatTimer=setInterval(()=>{
+            if(wsReady) wsSend({type:'heartbeat'});
+        }, 10000);
     };
     ws.onmessage=e=>{
         const msg=JSON.parse(e.data);
@@ -1583,7 +1575,13 @@ function connectWS(){
             showToastMsg(`Auto-forward: đã gửi ${msg.count} tin mới lên Telegram`);
         }
     };
-    ws.onclose=()=>{wsReady=false;document.getElementById('ws-dot').className='ws-dot wait';document.getElementById('ws-lbl').textContent='Mất kết nối...';setTimeout(connectWS,3000);};
+    ws.onclose=()=>{
+        wsReady=false;
+        if(wsHeartbeatTimer){clearInterval(wsHeartbeatTimer);wsHeartbeatTimer=null;}
+        document.getElementById('ws-dot').className='ws-dot wait';
+        document.getElementById('ws-lbl').textContent='Mất kết nối...';
+        setTimeout(connectWS,3000);
+    };
 }
 function wsSend(obj){if(ws&&wsReady)ws.send(JSON.stringify(obj));}
 
@@ -1793,6 +1791,28 @@ def _init_tg_feed(url_obj):
     except Exception as e:
         print(f'[!] Load lịch sử lỗi {channel}: {e}')
 
+def _download_and_forward(processed, category, feed_url):
+    """Download media cho các item có _tg_has_media, sau đó forward"""
+    for it in processed:
+        if it.get('_tg_has_media') and it.get('_tg_msg_id') and tg_client:
+            try:
+                msg_id  = it['_tg_msg_id']
+                channel = normalize_tg_channel(feed_url)
+                msgs = tg_run(tg_client.get_messages(channel, ids=msg_id))
+                msg = msgs if not isinstance(msgs, list) else (msgs[0] if msgs else None)
+                if msg and msg.media:
+                    data = tg_run(tg_client.download_media(msg.media, file=bytes))
+                    if data:
+                        if isinstance(msg.media, MessageMediaPhoto):
+                            it['_tg_media_bytes'] = [('photo', data, 'image/jpeg')]
+                        elif isinstance(msg.media, MessageMediaDocument):
+                            mime = getattr(msg.media.document, 'mime_type', 'application/octet-stream')
+                            if mime.startswith('video') or mime.startswith('image'):
+                                it['_tg_media_bytes'] = [('video' if mime.startswith('video') else 'photo', data, mime)]
+            except Exception as e:
+                print(f'[TG] Download media auto-fwd lỗi: {e}')
+    _do_forward(processed, category, feed_url)
+
 def _process_tg_queue():
     """Xử lý tin mới từ Telethon real-time queue"""
     with tg_new_items_lock:
@@ -1828,10 +1848,11 @@ def _process_tg_queue():
             for it in new_items:
                 known_guids[feed_url].add(it['guid'])
 
-        ws_items = [{k: v for k, v in it.items() if k != '_tg_media_bytes'} for it in processed]
+        ws_items = [{k: v for k, v in it.items() if k not in ('_tg_media_bytes', '_tg_has_media')} for it in processed]
         broadcast({'type': 'new_items', 'url': feed_url, 'items': ws_items})
         print(f'[+] {len(new_items)} bài mới (real-time): {feed_url}')
-        _do_forward(processed, category, feed_url)
+        # Download media và forward trong thread riêng — không block poller
+        threading.Thread(target=_download_and_forward, args=(processed, category, feed_url), daemon=True).start()
 
 def poller():
     """

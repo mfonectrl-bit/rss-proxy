@@ -267,8 +267,12 @@ def send_to_telegram(bot_token, channel_id, channel_name, items, category_filter
                 results.append(r)
             else:
                 imgs, videos = extract_media(desc)
-                # Gộp video và ảnh lại — video ưu tiên trước
-                media_list = [('video', u) for u in videos] + [('photo', u) for u in imgs]
+                # Nếu có video thì chỉ dùng video (ảnh thường là thumbnail của video)
+                # Nếu không có video mới dùng ảnh
+                if videos:
+                    media_list = [('video', u) for u in videos]
+                else:
+                    media_list = [('photo', u) for u in imgs]
 
                 if not media_list:
                     chunks = _split_text(caption, MAX_TEXT)
@@ -623,9 +627,12 @@ async def _tg_load_history(channel, limit=20):
 # Lưu handler để có thể remove sau
 _tg_new_message_handler = None
 
+# Cache các channel đã resolve thành công để không resolve lại mỗi lần WS reconnect
+_resolved_channels_cache = set()
+
 async def _tg_setup_realtime(feed_urls):
     """Setup real-time listener cho danh sách feed URLs"""
-    global _tg_new_message_handler
+    global _tg_new_message_handler, _resolved_channels_cache
 
     if not tg_client or not await tg_client.is_user_authorized():
         return
@@ -643,12 +650,15 @@ async def _tg_setup_realtime(feed_urls):
 
     raw_channels = [normalize_tg_channel(u).lstrip('@') for u in feed_urls]
 
-    # Resolve từng channel để loại bỏ username không hợp lệ/không tồn tại
-    # Nếu bỏ qua bước này, một channel lỗi sẽ khiến toàn bộ handler crash
+    # Resolve channel — dùng cache để tránh gọi API lặp lại mỗi lần WS reconnect
     channels_list = []
     for ch in raw_channels:
+        if ch in _resolved_channels_cache:
+            channels_list.append(ch)
+            continue
         try:
             await tg_client.get_input_entity(ch)
+            _resolved_channels_cache.add(ch)
             channels_list.append(ch)
         except Exception as e:
             print(f'[TG] Bỏ qua channel không hợp lệ @{ch}: {e}')
@@ -1878,26 +1888,25 @@ def _download_and_forward(processed, category, feed_url):
             channel    = normalize_tg_channel(feed_url)
             grouped_id = it.get('_tg_grouped_id')
 
-            if grouped_id:
-                # Grouped media: fetch tất cả tin trong group (tối đa 10)
-                # Lấy 10 tin xung quanh msg_id để tìm các tin cùng group
-                all_msgs = tg_run(tg_client.get_messages(channel, ids=list(range(msg_id, msg_id + 10))))
-                if not isinstance(all_msgs, list):
-                    all_msgs = [all_msgs] if all_msgs else []
-                group_msgs = [m for m in all_msgs if m and m.grouped_id == grouped_id and m.media]
-                if not group_msgs:
-                    # Fallback: chỉ lấy tin chính
-                    group_msgs = [tg_run(tg_client.get_messages(channel, ids=msg_id))]
-                    group_msgs = [m for m in group_msgs if m and m.media]
-            else:
-                msgs = tg_run(tg_client.get_messages(channel, ids=msg_id))
-                msg  = msgs if not isinstance(msgs, list) else (msgs[0] if msgs else None)
-                group_msgs = [msg] if msg and msg.media else []
+            with tg_semaphore:
+                if grouped_id:
+                    all_msgs = tg_run(tg_client.get_messages(channel, ids=list(range(msg_id, msg_id + 10))))
+                    if not isinstance(all_msgs, list):
+                        all_msgs = [all_msgs] if all_msgs else []
+                    group_msgs = [m for m in all_msgs if m and m.grouped_id == grouped_id and m.media]
+                    if not group_msgs:
+                        single = tg_run(tg_client.get_messages(channel, ids=msg_id))
+                        group_msgs = [single] if single and single.media else []
+                else:
+                    msgs = tg_run(tg_client.get_messages(channel, ids=msg_id))
+                    msg  = msgs if not isinstance(msgs, list) else (msgs[0] if msgs else None)
+                    group_msgs = [msg] if msg and msg.media else []
 
             media_bytes = []
             for m in group_msgs[:10]:
                 try:
-                    data = tg_run(tg_client.download_media(m.media, file=bytes))
+                    with tg_semaphore:
+                        data = tg_run(tg_client.download_media(m.media, file=bytes))
                     if data:
                         if isinstance(m.media, MessageMediaPhoto):
                             media_bytes.append(('photo', data, 'image/jpeg'))
@@ -1982,12 +1991,12 @@ def poller():
 
         # --- Init history cho TG feed mới ---
         tg_urls = [u for u in urls if is_tg_source(u['url'])]
-        for url_obj in tg_urls:
-            url = url_obj['url']
-            if url not in tg_inited and TELETHON_AVAILABLE and tg_client is not None:
-                tg_inited.add(url)
-                threading.Thread(target=_init_tg_feed, args=(url_obj,), daemon=True).start()
-                time.sleep(0.3)   # delay nhỏ giữa các feed để tránh flood Telegram API
+        new_tg = [u for u in tg_urls if u['url'] not in tg_inited and TELETHON_AVAILABLE and tg_client is not None]
+        # Khởi tạo từng feed tuần tự với delay — tránh flood API khi có nhiều feed
+        for url_obj in new_tg:
+            tg_inited.add(url_obj['url'])
+            threading.Thread(target=_init_tg_feed, args=(url_obj,), daemon=True).start()
+            time.sleep(1.0)   # delay 1s/feed — 45 feed = 45s khởi động, chấp nhận được
 
         # --- RSS thường (parallel) ---
         rss_urls = [u for u in urls if not is_tg_source(u['url']) and not _is_ica_source(u['url'])]

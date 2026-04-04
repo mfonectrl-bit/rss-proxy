@@ -1359,7 +1359,7 @@ function deleteFeed(i){
     const url=feeds[i].url;feeds.splice(i,1);saveFeeds();
     allItems=allItems.filter(it=>it.feedUrl!==url);
     if(filterUrl===url)filterUrl=null;
-    wsSend({type:'feeds',feeds:feeds.map(f=>({url:f.url,name:f.name,category:f.category}))});
+    wsSend({type:'feeds',feeds:feeds.map(f=>({url:f.url,name:f.name,category:f.category,show_link:f.show_link!==false}))});
     renderSidebar();renderStream();
 }
 
@@ -1509,7 +1509,7 @@ function connectWS(){
     ws.onopen=()=>{
         wsReady=true;document.getElementById('ws-dot').className='ws-dot on';
         document.getElementById('ws-lbl').textContent='Đang theo dõi';
-        wsSend({type:'feeds',feeds:feeds.map(f=>({url:f.url,name:f.name,category:f.category}))});
+        wsSend({type:'feeds',feeds:feeds.map(f=>({url:f.url,name:f.name,category:f.category,show_link:f.show_link!==false}))});
         wsSend({type:'tg_settings',channels:tgChannels});
         wsSend({type:'auto_fwd',enabled:autoFwd,channels:tgChannels});
         wsSend({type:'categories',categories});

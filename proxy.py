@@ -267,10 +267,8 @@ def send_to_telegram(bot_token, channel_id, channel_name, items, category_filter
                 results.append(r)
             else:
                 imgs, videos = extract_media(desc)
-                if videos:
-                    media_list = [('video', u) for u in videos]
-                else:
-                    media_list = [('photo', u) for u in imgs]
+                # Gộp video và ảnh lại — video ưu tiên trước
+                media_list = [('video', u) for u in videos] + [('photo', u) for u in imgs]
 
                 if not media_list:
                     chunks = _split_text(caption, MAX_TEXT)
@@ -288,6 +286,9 @@ def send_to_telegram(bot_token, channel_id, channel_name, items, category_filter
                     results.append({'title': title, 'ok': ok, 'error': '' if ok else 'Lỗi gửi'})
                 else:
                     r = _send_media_then_text(bot_token, channel_id, media_list, caption, MAX_CAP, MAX_TEXT, title, use_bytes=False)
+                    # Nếu sendMediaGroup fail (URL không accessible), fallback gửi text-only
+                    if not r['ok'] and len(media_list) > 1:
+                        r = _send_media_then_text(bot_token, channel_id, media_list[:1], caption, MAX_CAP, MAX_TEXT, title, use_bytes=False)
                     results.append(r)
         except Exception as e:
             results.append({'title': title, 'ok': False, 'error': str(e)})
@@ -992,7 +993,13 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
 <!-- Modal thêm/sửa feed -->
 <div class="modal-bg" id="modal">
 <div class="modal">
-<h2 id="modal-title">Thêm feed</h2>
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
+  <h2 id="modal-title" style="margin-bottom:0">Thêm feed</h2>
+  <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;background:#f0fdf4;border:1px solid #bbf7d0;padding:4px 10px;border-radius:8px" id="auto-fwd-toggle-wrap">
+    <input type="checkbox" id="new-auto-fwd" style="width:14px;height:14px;cursor:pointer">
+    <span>Auto-forward</span>
+  </label>
+</div>
 <input type="text" id="new-name" placeholder="Tên feed">
 <input type="text" id="new-url" placeholder="URL RSS hoặc @username / t.me/channel">
 <select id="new-category"></select>
@@ -1001,6 +1008,11 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
   <input type="checkbox" id="new-show-link" checked style="width:16px;height:16px;cursor:pointer">
   Hiển thị link "Xem bài gốc →" khi forward
 </label>
+<!-- Dropdown chọn kênh đích -->
+<div id="feed-channel-wrap" style="margin-bottom:10px;display:none">
+  <div style="font-size:12px;color:#555;margin-bottom:6px;font-weight:600">Forward tới kênh:</div>
+  <div id="feed-channel-list" style="border:1px solid #e0e0d8;border-radius:8px;max-height:140px;overflow-y:auto;padding:4px 0;background:#fff"></div>
+</div>
 <div class="modal-btns">
 <button onclick="closeModal()">Hủy</button>
 <button class="btn-ok" id="btn-add-feed" onclick="addFeed()">Thêm</button>
@@ -1412,41 +1424,70 @@ function deleteFeed(i){
     const url=feeds[i].url;feeds.splice(i,1);saveFeeds();
     allItems=allItems.filter(it=>it.feedUrl!==url);
     if(filterUrl===url)filterUrl=null;
-    wsSend({type:'feeds',feeds:feeds.map(f=>({url:f.url,name:f.name,category:f.category,show_link:f.show_link!==false}))});
+    wsSend({type:'feeds',feeds:feeds.map(f=>({url:f.url,name:f.name,category:f.category,show_link:f.show_link!==false,auto_fwd:f.auto_fwd===true,target_channels:f.target_channels||[]}))});
     renderSidebar();renderStream();
+}
+
+function renderFeedChannelList(selectedIds){
+    const wrap=document.getElementById('feed-channel-wrap');
+    const list=document.getElementById('feed-channel-list');
+    if(!tgChannels.length){wrap.style.display='none';return;}
+    wrap.style.display='block';
+    list.innerHTML=tgChannels.map((ch,idx)=>`
+        <label style="display:flex;align-items:center;gap:8px;padding:6px 10px;cursor:pointer;font-size:13px;hover:background:#f5f5f0">
+            <input type="checkbox" class="feed-ch-cb" value="${idx}" ${selectedIds&&selectedIds.includes(idx)?'checked':''} style="width:14px;height:14px">
+            <span>${ch.name} <span style="color:#aaa;font-size:11px">(${ch.type})</span></span>
+        </label>
+    `).join('');
+}
+
+function getSelectedFeedChannels(){
+    return Array.from(document.querySelectorAll('.feed-ch-cb:checked')).map(el=>parseInt(el.value));
 }
 
 function openEditFeed(i){
     editFeedIndex=i;const f=feeds[i];
-    document.getElementById('new-name').value=f.name;document.getElementById('new-url').value=f.url;
+    document.getElementById('new-name').value=f.name;
+    document.getElementById('new-url').value=f.url;
     document.getElementById('new-category').value=f.category||'Khác';
     document.getElementById('new-show-link').checked=f.show_link!==false;
+    document.getElementById('new-auto-fwd').checked=f.auto_fwd===true;
     document.getElementById('modal-title').textContent='Sửa feed';
     document.getElementById('btn-add-feed').textContent='Cập nhật';
     const hint=document.getElementById('feed-type-hint');
     hint.style.display=isTgSource(f.url)?'block':'none';
+    renderFeedChannelList(f.target_channels||[]);
     document.getElementById('modal').classList.add('open');
 }
 
 function openModal(){
-    editFeedIndex=-1;document.getElementById('new-name').value='';document.getElementById('new-url').value='';
+    editFeedIndex=-1;
+    document.getElementById('new-name').value='';
+    document.getElementById('new-url').value='';
     document.getElementById('new-category').value=categories[0]||'Khác';
     document.getElementById('new-show-link').checked=true;
+    document.getElementById('new-auto-fwd').checked=false;
     document.getElementById('modal-title').textContent='Thêm feed';
     document.getElementById('btn-add-feed').textContent='Thêm';
     document.getElementById('feed-type-hint').style.display='none';
+    renderFeedChannelList([]);
     document.getElementById('modal').classList.add('open');
 }
 function closeModal(){document.getElementById('modal').classList.remove('open');}
 
 function addFeed(){
-    const name=document.getElementById('new-name').value.trim(),url=document.getElementById('new-url').value.trim(),
-        cat=document.getElementById('new-category').value,
-        show_link=document.getElementById('new-show-link').checked;
+    const name=document.getElementById('new-name').value.trim(),
+          url=document.getElementById('new-url').value.trim(),
+          cat=document.getElementById('new-category').value,
+          show_link=document.getElementById('new-show-link').checked,
+          auto_fwd=document.getElementById('new-auto-fwd').checked,
+          target_channels=getSelectedFeedChannels();
     if(!name||!url){alert('Nhập đủ tên và URL');return;}
-    if(editFeedIndex>=0){feeds[editFeedIndex]={name,url,category:cat,show_link};}
-    else{feeds.push({name,url,category:cat,show_link});}
-    saveFeeds();wsSend({type:'feeds',feeds:feeds.map(f=>({url:f.url,name:f.name,category:f.category,show_link:f.show_link!==false}))});
+    const feedObj={name,url,category:cat,show_link,auto_fwd,target_channels};
+    if(editFeedIndex>=0){feeds[editFeedIndex]=feedObj;}
+    else{feeds.push(feedObj);}
+    saveFeeds();
+    wsSend({type:'feeds',feeds:feeds.map(f=>({url:f.url,name:f.name,category:f.category,show_link:f.show_link!==false,auto_fwd:f.auto_fwd===true,target_channels:f.target_channels||[]}))});
     closeModal();
     if(editFeedIndex<0) fetchAndMerge(url,name,cat,true);
     else{allItems=allItems.filter(it=>it.feedUrl!==url);fetchAndMerge(url,name,cat,false);}
@@ -1562,7 +1603,7 @@ function connectWS(){
     ws.onopen=()=>{
         wsReady=true;document.getElementById('ws-dot').className='ws-dot on';
         document.getElementById('ws-lbl').textContent='Đang theo dõi';
-        wsSend({type:'feeds',feeds:feeds.map(f=>({url:f.url,name:f.name,category:f.category,show_link:f.show_link!==false}))});
+        wsSend({type:'feeds',feeds:feeds.map(f=>({url:f.url,name:f.name,category:f.category,show_link:f.show_link!==false,auto_fwd:f.auto_fwd===true,target_channels:f.target_channels||[]}))});
         wsSend({type:'tg_settings',channels:tgChannels});
         wsSend({type:'auto_fwd',enabled:autoFwd,channels:tgChannels});
         wsSend({type:'categories',categories});
@@ -1730,14 +1771,25 @@ def broadcast(msg):
         ws_clients.difference_update(dead)
 
 def _do_forward(processed, category, url):
-    """Gửi tin lên Telegram nếu auto-forward bật"""
+    """Gửi tin lên Telegram nếu auto-forward bật và feed cho phép"""
     with lock:
         do_fwd = auto_fwd_enabled
         cfgs = list(tg_channels)
+        # Lấy config của feed này
+        feed_cfg = next((u for u in watched_urls if u['url'] == url), {})
     if not do_fwd or not cfgs:
         return
+    # Kiểm tra feed có bật auto_fwd không (mặc định True để tương thích feed cũ)
+    if not feed_cfg.get('auto_fwd', True):
+        return
+    # Lấy danh sách kênh đích của feed (nếu có)
+    target_channels = feed_cfg.get('target_channels', [])  # list index trong tgChannels
+
     total_sent = 0
-    for ch in cfgs:
+    for ch_idx, ch in enumerate(cfgs):
+        # Nếu feed có target_channels thì chỉ gửi đến các kênh được chọn
+        if target_channels and ch_idx not in target_channels:
+            continue
         should_send = False
         if ch['type'] == 'master':
             should_send = True

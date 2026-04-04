@@ -314,15 +314,13 @@ def _split_text(text, max_len):
 
 def _send_media_then_text(bot_token, channel_id, media_list, caption, max_cap, max_text, title, use_bytes=False):
     """
-    Gửi media (1 hoặc nhiều), caption ngắn đi kèm media.
-    Nếu caption quá dài: gửi media với CHỈ footer (link + tên kênh),
-    sau đó reply toàn bộ nội dung đầy đủ.
+    Gửi media (1 hoặc nhiều) trong 1 tin duy nhất dùng sendMediaGroup.
+    Nếu caption quá dài: gửi media với footer (link + tên kênh), reply nội dung đầy đủ.
     """
     if len(caption) <= max_cap:
         short_cap = caption
         need_reply = False
     else:
-        # Tách footer: 2 dòng cuối (link gốc + tên kênh)
         lines = caption.split('\n')
         footer_lines = []
         for l in reversed(lines):
@@ -331,38 +329,93 @@ def _send_media_then_text(bot_token, channel_id, media_list, caption, max_cap, m
                 if len(footer_lines) >= 2:
                     break
         footer = '\n'.join(footer_lines)
-        # Media chỉ kèm footer, không kèm body bị cắt
         short_cap = footer if len(footer) <= max_cap else ''
         need_reply = True
 
-    # Gửi media
     media_msg_id = None
     ok = True
     err = ''
 
     if use_bytes:
-        # Telethon media bytes
-        for idx, (mtype, data, mime) in enumerate(media_list[:1]):  # 1 media đại diện
+        # --- Telethon bytes: dùng sendMediaGroup với attach:// ---
+        if len(media_list) == 1:
+            # 1 media: gửi đơn kèm caption
+            mtype, data, mime = media_list[0]
             method = 'sendPhoto' if mtype == 'photo' else 'sendVideo'
             field  = 'photo'    if mtype == 'photo' else 'video'
             ext    = 'jpg'      if mtype == 'photo' else 'mp4'
             resp = tg_api_multipart(bot_token, method,
                 {'chat_id': channel_id, 'caption': short_cap, 'parse_mode': 'HTML'},
                 field, data, f'media.{ext}', mime)
-            ok = resp.get('ok', False)
+            ok  = resp.get('ok', False)
             err = resp.get('description', '')
             if ok:
                 media_msg_id = resp.get('result', {}).get('message_id')
-        # Nếu có nhiều media, gửi tiếp các ảnh còn lại không caption
-        for idx, (mtype, data, mime) in enumerate(media_list[1:10]):
-            method = 'sendPhoto' if mtype == 'photo' else 'sendVideo'
-            field  = 'photo'    if mtype == 'photo' else 'video'
-            ext    = 'jpg'      if mtype == 'photo' else 'mp4'
-            tg_api_multipart(bot_token, method,
-                {'chat_id': channel_id, 'reply_to_message_id': media_msg_id} if media_msg_id else {'chat_id': channel_id},
-                field, data, f'media.{ext}', mime)
+        else:
+            # Nhiều media: dùng sendMediaGroup multipart
+            boundary = b'----TGBoundary8x'
+            parts = []
+
+            # Build media JSON array với attach:// references
+            media_json = []
+            for idx, (mtype, data, mime) in enumerate(media_list[:10]):
+                attach_name = f'file{idx}'
+                entry = {
+                    'type':  'photo' if mtype == 'photo' else 'video',
+                    'media': f'attach://{attach_name}',
+                }
+                if idx == 0:
+                    entry['caption']    = short_cap
+                    entry['parse_mode'] = 'HTML'
+                media_json.append(entry)
+
+            # Field: chat_id
+            parts.append(
+                b'--' + boundary + b'\r\n' +
+                b'Content-Disposition: form-data; name="chat_id"\r\n\r\n' +
+                str(channel_id).encode() + b'\r\n'
+            )
+            # Field: media (JSON array)
+            parts.append(
+                b'--' + boundary + b'\r\n' +
+                b'Content-Disposition: form-data; name="media"\r\n' +
+                b'Content-Type: application/json\r\n\r\n' +
+                json.dumps(media_json, ensure_ascii=False).encode('utf-8') + b'\r\n'
+            )
+            # File fields
+            for idx, (mtype, data, mime) in enumerate(media_list[:10]):
+                attach_name = f'file{idx}'
+                ext = 'jpg' if mtype == 'photo' else 'mp4'
+                parts.append(
+                    b'--' + boundary + b'\r\n' +
+                    f'Content-Disposition: form-data; name="{attach_name}"; filename="media{idx}.{ext}"\r\n'.encode() +
+                    f'Content-Type: {mime}\r\n\r\n'.encode() +
+                    data + b'\r\n'
+                )
+            parts.append(b'--' + boundary + b'--\r\n')
+            body = b''.join(parts)
+
+            url_api = f'https://api.telegram.org/bot{bot_token}/sendMediaGroup'
+            req = urllib.request.Request(url_api, data=body,
+                headers={'Content-Type': f'multipart/form-data; boundary={boundary.decode()}'})
+            try:
+                resp_raw = urllib.request.urlopen(req, timeout=60)
+                resp = json.loads(resp_raw.read())
+            except urllib.error.HTTPError as e:
+                try:
+                    resp = json.loads(e.read())
+                except:
+                    resp = {'ok': False, 'description': str(e)}
+            except Exception as e:
+                resp = {'ok': False, 'description': str(e)}
+
+            ok  = resp.get('ok', False)
+            err = resp.get('description', '')
+            if ok and isinstance(resp.get('result'), list) and resp['result']:
+                media_msg_id = resp['result'][0].get('message_id')
+
     else:
-        # URL media
+        # --- URL media ---
         if len(media_list) == 1:
             mtype, murl = media_list[0]
             method = 'sendPhoto' if mtype == 'photo' else 'sendVideo'
@@ -370,7 +423,7 @@ def _send_media_then_text(bot_token, channel_id, media_list, caption, max_cap, m
                 'chat_id': channel_id, mtype: murl,
                 'caption': short_cap, 'parse_mode': 'HTML'
             })
-            ok = resp.get('ok', False)
+            ok  = resp.get('ok', False)
             err = resp.get('description', '')
             if ok:
                 media_msg_id = resp.get('result', {}).get('message_id')
@@ -379,11 +432,11 @@ def _send_media_then_text(bot_token, channel_id, media_list, caption, max_cap, m
             for idx, (mtype, murl) in enumerate(media_list[:10]):
                 entry = {'type': 'photo' if mtype == 'photo' else 'video', 'media': murl}
                 if idx == 0:
-                    entry['caption'] = short_cap
+                    entry['caption']    = short_cap
                     entry['parse_mode'] = 'HTML'
                 media_group.append(entry)
             resp = tg_api(bot_token, 'sendMediaGroup', {'chat_id': channel_id, 'media': media_group})
-            ok = resp.get('ok') if isinstance(resp, dict) else bool(resp)
+            ok  = resp.get('ok') if isinstance(resp, dict) else bool(resp)
             err = resp.get('description', '') if isinstance(resp, dict) else ''
             if ok and isinstance(resp.get('result'), list) and resp['result']:
                 media_msg_id = resp['result'][0].get('message_id')

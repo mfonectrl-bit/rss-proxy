@@ -566,55 +566,6 @@ async def _tg_load_history(channel, limit=20):
         })
     return items
 
-async def _tg_register_handlers():
-    """Đăng ký event handler real-time cho tất cả TG feeds hiện tại"""
-    global tg_client
-    # Xóa handler cũ nếu có
-    tg_client.remove_event_handler(_tg_new_message_handler)
-
-    with lock:
-        tg_feed_urls = [u['url'] for u in watched_urls if is_tg_source(u['url'])]
-
-    if not tg_feed_urls:
-        return
-
-    channels = [normalize_tg_channel(u).lstrip('@') for u in tg_feed_urls]
-
-    @tg_client.on(events.NewMessage(chats=channels))
-    async def _tg_new_message_handler(event):
-        msg = event.message
-        if not msg or not msg.message:
-            return
-        # Tìm feed_url tương ứng
-        chat_username = getattr(event.chat, 'username', None)
-        if not chat_username:
-            return
-        feed_url = None
-        with lock:
-            for u in watched_urls:
-                if is_tg_source(u['url']) and normalize_tg_channel(u['url']).lstrip('@').lower() == chat_username.lower():
-                    feed_url = u['url']
-                    category = u.get('category', '')
-                    break
-        if not feed_url:
-            return
-
-        guid  = f'tg_@{chat_username}_{msg.id}'
-        link  = f'https://t.me/{chat_username}/{msg.id}'
-        desc  = msg.message.replace('\n', '<br>')
-        title = (msg.message[:80] + '...') if len(msg.message) > 80 else msg.message
-        pub   = msg.date.isoformat() if msg.date else ''
-
-        item = {
-            'guid': guid, 'title': title, 'desc': desc, 'link': link,
-            'pubDate': pub, 'translated': False, 'category': category,
-            '_tg_media_bytes': None, '_tg_msg_id': msg.id, '_tg_chat': chat_username,
-            '_source': 'telethon', '_feed_url': feed_url,
-        }
-        with tg_new_items_lock:
-            tg_new_items_queue.append(item)
-        print(f'[TG] Tin mới real-time: @{chat_username} #{msg.id}')
-
 # Lưu handler để có thể remove sau
 _tg_new_message_handler = None
 
@@ -625,13 +576,13 @@ async def _tg_setup_realtime(feed_urls):
     if not tg_client or not await tg_client.is_user_authorized():
         return
 
-    # Remove old handler
-    if _tg_new_message_handler:
-        try:
-            tg_client.remove_event_handler(_tg_new_message_handler)
-        except:
-            pass
-        _tg_new_message_handler = None
+    # Xóa TẤT CẢ event handlers hiện tại để tránh duplicate
+    try:
+        for callback, event in tg_client.list_event_handlers():
+            tg_client.remove_event_handler(callback, event)
+    except Exception:
+        pass
+    _tg_new_message_handler = None
 
     if not feed_urls:
         return
@@ -2196,6 +2147,11 @@ class HttpHandler(BaseHTTPRequestHandler):
             items = []
             for it in items_raw:
                 feed_url = it.get('feedUrl', '')
+                # Lấy show_link từ watched_urls
+                with lock:
+                    show_link = next((u.get('show_link', True) for u in watched_urls if u['url'] == feed_url), True)
+                it = {**it, 'show_link': show_link}
+
                 if is_tg_source(feed_url) and TELETHON_AVAILABLE and tg_client is not None:
                     try:
                         link = it.get('link', '')

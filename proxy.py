@@ -294,21 +294,76 @@ def send_to_telegram(bot_token, channel_id, channel_name, items, category_filter
                 if videos:
                     v = videos[0].lower()
                     if any(v.endswith(ext) for ext in ('.mp4', '.webm', '.mov', '.mkv')):
-                        send_video_url = videos[0]  # URL file video thật
+                        send_video_url = videos[0]
 
-                if send_photo_url:
-                    # Gửi ảnh kèm caption đầy đủ — thumbnail ở trên, nội dung ở dưới
+                if send_video_url:
+                    # Check kích thước video trước — nếu > 20MB thì dùng thumbnail ảnh thay thế
+                    video_too_large = False
+                    try:
+                        req_head = urllib.request.Request(send_video_url, method='HEAD',
+                            headers={'User-Agent': 'Mozilla/5.0'})
+                        with urllib.request.urlopen(req_head, timeout=5) as r:
+                            content_length = int(r.headers.get('Content-Length', 0))
+                            if content_length > 20 * 1024 * 1024:  # > 20MB
+                                video_too_large = True
+                    except Exception:
+                        pass  # Không check được size thì cứ thử gửi
+
+                    if video_too_large:
+                        # Video quá lớn → dùng thumbnail ảnh nếu có, không thì fallback text
+                        if send_photo_url:
+                            resp = tg_api(bot_token, 'sendPhoto', {
+                                'chat_id': channel_id, 'photo': send_photo_url,
+                                'caption': caption[:MAX_CAP], 'parse_mode': 'HTML'
+                            })
+                            if resp.get('ok'):
+                                msg_id = resp.get('result', {}).get('message_id')
+                                if len(caption) > MAX_CAP and msg_id:
+                                    for chunk in _split_text(caption, MAX_TEXT):
+                                        r2 = tg_api(bot_token, 'sendMessage', {
+                                            'chat_id': channel_id, 'text': chunk,
+                                            'parse_mode': 'HTML', 'disable_web_page_preview': True,
+                                            'reply_to_message_id': msg_id
+                                        })
+                                        if r2.get('ok'):
+                                            msg_id = r2.get('result', {}).get('message_id', msg_id)
+                                results.append({'title': title, 'ok': True, 'error': ''})
+                            else:
+                                _send_text_fallback(bot_token, channel_id, caption, MAX_TEXT, results, title)
+                        else:
+                            _send_text_fallback(bot_token, channel_id, caption, MAX_TEXT, results, title)
+                    else:
+                        # Thử gửi video
+                        resp = tg_api(bot_token, 'sendVideo', {
+                            'chat_id': channel_id, 'video': send_video_url,
+                            'caption': caption[:MAX_CAP], 'parse_mode': 'HTML'
+                        })
+                        if resp.get('ok'):
+                            results.append({'title': title, 'ok': True, 'error': ''})
+                        elif send_photo_url:
+                            # Video fail → thử thumbnail ảnh
+                            resp2 = tg_api(bot_token, 'sendPhoto', {
+                                'chat_id': channel_id, 'photo': send_photo_url,
+                                'caption': caption[:MAX_CAP], 'parse_mode': 'HTML'
+                            })
+                            if resp2.get('ok'):
+                                results.append({'title': title, 'ok': True, 'error': ''})
+                            else:
+                                _send_text_fallback(bot_token, channel_id, caption, MAX_TEXT, results, title)
+                        else:
+                            _send_text_fallback(bot_token, channel_id, caption, MAX_TEXT, results, title)
+
+                elif send_photo_url:
+                    # Chỉ có ảnh (không có video) — gửi ảnh kèm caption
                     resp = tg_api(bot_token, 'sendPhoto', {
                         'chat_id': channel_id, 'photo': send_photo_url,
                         'caption': caption[:MAX_CAP], 'parse_mode': 'HTML'
                     })
                     if resp.get('ok'):
                         msg_id = resp.get('result', {}).get('message_id')
-                        # Nếu caption bị cắt → reply nội dung đầy đủ
                         if len(caption) > MAX_CAP and msg_id:
-                            chunks = _split_text(caption, MAX_TEXT)
                             reply_id = msg_id
-                            for chunk in chunks:
+                            for chunk in _split_text(caption, MAX_TEXT):
                                 r2 = tg_api(bot_token, 'sendMessage', {
                                     'chat_id': channel_id, 'text': chunk,
                                     'parse_mode': 'HTML', 'disable_web_page_preview': True,
@@ -316,17 +371,6 @@ def send_to_telegram(bot_token, channel_id, channel_name, items, category_filter
                                 })
                                 if r2.get('ok'):
                                     reply_id = r2.get('result', {}).get('message_id', reply_id)
-                        results.append({'title': title, 'ok': True, 'error': ''})
-                    else:
-                        # Ảnh URL fail → fallback text với link để Telegram tự preview
-                        _send_text_fallback(bot_token, channel_id, caption, MAX_TEXT, results, title)
-                elif send_video_url:
-                    # Video file thật — thử gửi, nếu fail hoặc quá 50MB thì fallback text
-                    resp = tg_api(bot_token, 'sendVideo', {
-                        'chat_id': channel_id, 'video': send_video_url,
-                        'caption': caption[:MAX_CAP], 'parse_mode': 'HTML'
-                    })
-                    if resp.get('ok'):
                         results.append({'title': title, 'ok': True, 'error': ''})
                     else:
                         _send_text_fallback(bot_token, channel_id, caption, MAX_TEXT, results, title)
@@ -338,7 +382,7 @@ def send_to_telegram(bot_token, channel_id, channel_name, items, category_filter
     return results
 
 def _split_text(text, max_len):
-    """Chia text thành các chunk <= max_len, cắt ở ranh giới dòng nếu được"""
+    """Chia text thành các chunk <= max_len, cắt ở ranh giới dòng/câu nếu được"""
     if len(text) <= max_len:
         return [text]
     chunks = []
@@ -346,14 +390,16 @@ def _split_text(text, max_len):
         if len(text) <= max_len:
             chunks.append(text)
             break
-        # Tìm điểm cắt gần nhất là dòng mới
+        # Tìm điểm cắt tốt nhất: dòng mới → dấu chấm câu → space
         cut = text.rfind('\n', 0, max_len)
         if cut < max_len // 2:
-            cut = max_len - 3
-            chunks.append(text[:cut] + '…')
-        else:
-            chunks.append(text[:cut])
-        text = text[cut:].lstrip('\n')
+            cut = text.rfind('. ', 0, max_len)
+        if cut < max_len // 2:
+            cut = text.rfind(' ', 0, max_len)
+        if cut < max_len // 2:
+            cut = max_len
+        chunks.append(text[:cut].rstrip())
+        text = text[cut:].lstrip('\n ')
     return chunks
 
 def _send_media_then_text(bot_token, channel_id, media_list, caption, max_cap, max_text, title, use_bytes=False):

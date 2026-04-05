@@ -242,6 +242,23 @@ def tg_api_multipart(bot_token, method, fields, file_field, file_data, file_name
     except Exception as e:
         return {'ok': False, 'description': str(e)}
 
+def _send_text_fallback(bot_token, channel_id, caption, max_text, results, title):
+    """Gửi text thuần khi không có media hoặc media fail"""
+    chunks = _split_text(caption, max_text)
+    sent_id = None
+    ok = True
+    for chunk in chunks:
+        payload = {'chat_id': channel_id, 'text': chunk, 'parse_mode': 'HTML',
+                   'disable_web_page_preview': True}
+        if sent_id:
+            payload['reply_to_message_id'] = sent_id
+        resp = tg_api(bot_token, 'sendMessage', payload)
+        if resp.get('ok') and not sent_id:
+            sent_id = resp.get('result', {}).get('message_id')
+        if not resp.get('ok'):
+            ok = False
+    results.append({'title': title, 'ok': ok, 'error': '' if ok else 'Lỗi gửi'})
+
 def send_to_telegram(bot_token, channel_id, channel_name, items, category_filter=None, channel_type='channel'):
     results = []
     for item in items:
@@ -267,57 +284,55 @@ def send_to_telegram(bot_token, channel_id, channel_name, items, category_filter
                 results.append(r)
             else:
                 imgs, videos = extract_media(desc)
-                # Chỉ lấy 1 media đầu tiên — video ưu tiên hơn ảnh
-                if videos:
-                    first_media = [('video', videos[0])]
-                elif imgs:
-                    first_media = [('photo', imgs[0])]
-                else:
-                    first_media = []
 
-                if not first_media:
-                    # Không có media — gửi text, bật web preview để Telegram tự lấy thumbnail
-                    chunks = _split_text(caption, MAX_TEXT)
-                    sent_id = None
-                    ok = True
-                    for chunk in chunks:
-                        payload = {'chat_id': channel_id, 'text': chunk, 'parse_mode': 'HTML',
-                                   'disable_web_page_preview': True}
-                        if sent_id:
-                            payload['reply_to_message_id'] = sent_id
-                        resp = tg_api(bot_token, 'sendMessage', payload)
-                        if resp.get('ok') and not sent_id:
-                            sent_id = resp.get('result', {}).get('message_id')
-                        if not resp.get('ok'):
-                            ok = False
-                    results.append({'title': title, 'ok': ok, 'error': '' if ok else 'Lỗi gửi'})
-                else:
-                    mtype, murl = first_media[0]
-                    method = 'sendPhoto' if mtype == 'photo' else 'sendVideo'
-                    resp = tg_api(bot_token, method, {
-                        'chat_id': channel_id, mtype: murl,
-                        'caption': caption[:MAX_CAP] if len(caption) <= MAX_CAP else caption[:MAX_CAP],
-                        'parse_mode': 'HTML'
+                # Xác định media để gửi:
+                # - Nếu có ảnh trực tiếp (img tag) → gửi ảnh kèm caption (thumbnail lên trên)
+                # - Nếu chỉ có video URL (thường là link trang web, không gửi được) → gửi text
+                # - Video file thật (.mp4 trực tiếp) thì thử gửi, nếu fail thì fallback text
+                send_photo_url = imgs[0] if imgs else None
+                send_video_url = None
+                if videos:
+                    v = videos[0].lower()
+                    if any(v.endswith(ext) for ext in ('.mp4', '.webm', '.mov', '.mkv')):
+                        send_video_url = videos[0]  # URL file video thật
+
+                if send_photo_url:
+                    # Gửi ảnh kèm caption đầy đủ — thumbnail ở trên, nội dung ở dưới
+                    resp = tg_api(bot_token, 'sendPhoto', {
+                        'chat_id': channel_id, 'photo': send_photo_url,
+                        'caption': caption[:MAX_CAP], 'parse_mode': 'HTML'
+                    })
+                    if resp.get('ok'):
+                        msg_id = resp.get('result', {}).get('message_id')
+                        # Nếu caption bị cắt → reply nội dung đầy đủ
+                        if len(caption) > MAX_CAP and msg_id:
+                            chunks = _split_text(caption, MAX_TEXT)
+                            reply_id = msg_id
+                            for chunk in chunks:
+                                r2 = tg_api(bot_token, 'sendMessage', {
+                                    'chat_id': channel_id, 'text': chunk,
+                                    'parse_mode': 'HTML', 'disable_web_page_preview': True,
+                                    'reply_to_message_id': reply_id
+                                })
+                                if r2.get('ok'):
+                                    reply_id = r2.get('result', {}).get('message_id', reply_id)
+                        results.append({'title': title, 'ok': True, 'error': ''})
+                    else:
+                        # Ảnh URL fail → fallback text với link để Telegram tự preview
+                        _send_text_fallback(bot_token, channel_id, caption, MAX_TEXT, results, title)
+                elif send_video_url:
+                    # Video file thật — thử gửi, nếu fail hoặc quá 50MB thì fallback text
+                    resp = tg_api(bot_token, 'sendVideo', {
+                        'chat_id': channel_id, 'video': send_video_url,
+                        'caption': caption[:MAX_CAP], 'parse_mode': 'HTML'
                     })
                     if resp.get('ok'):
                         results.append({'title': title, 'ok': True, 'error': ''})
                     else:
-                        # URL media không gửi được → fallback gửi text
-                        # disable_web_page_preview=False để Telegram tự lấy thumbnail từ link bài gốc
-                        chunks = _split_text(caption, MAX_TEXT)
-                        sent_id = None
-                        ok = True
-                        for chunk in chunks:
-                            payload = {'chat_id': channel_id, 'text': chunk, 'parse_mode': 'HTML',
-                                       'disable_web_page_preview': False}
-                            if sent_id:
-                                payload['reply_to_message_id'] = sent_id
-                            r2 = tg_api(bot_token, 'sendMessage', payload)
-                            if r2.get('ok') and not sent_id:
-                                sent_id = r2.get('result', {}).get('message_id')
-                            if not r2.get('ok'):
-                                ok = False
-                        results.append({'title': title, 'ok': ok, 'error': '' if ok else 'Lỗi gửi'})
+                        _send_text_fallback(bot_token, channel_id, caption, MAX_TEXT, results, title)
+                else:
+                    # Không có media — gửi text thuần
+                    _send_text_fallback(bot_token, channel_id, caption, MAX_TEXT, results, title)
         except Exception as e:
             results.append({'title': title, 'ok': False, 'error': str(e)})
     return results

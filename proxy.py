@@ -1912,6 +1912,7 @@ def _download_and_forward(processed, category, feed_url):
             channel    = normalize_tg_channel(feed_url)
             grouped_id = it.get('_tg_grouped_id')
 
+            # get_messages dùng semaphore (nhẹ, nhanh)
             with tg_semaphore:
                 if grouped_id:
                     all_msgs = tg_run(tg_client.get_messages(channel, ids=list(range(msg_id, msg_id + 10))))
@@ -1926,11 +1927,11 @@ def _download_and_forward(processed, category, feed_url):
                     msg  = msgs if not isinstance(msgs, list) else (msgs[0] if msgs else None)
                     group_msgs = [msg] if msg and msg.media else []
 
+            # download_media KHÔNG dùng semaphore — tránh giữ lock quá lâu khi download file lớn
             media_bytes = []
             for m in group_msgs[:10]:
                 try:
-                    with tg_semaphore:
-                        data = tg_run(tg_client.download_media(m.media, file=bytes))
+                    data = tg_run(tg_client.download_media(m.media, file=bytes))
                     if data:
                         if isinstance(m.media, MessageMediaPhoto):
                             media_bytes.append(('photo', data, 'image/jpeg'))
@@ -2301,8 +2302,8 @@ class HttpHandler(BaseHTTPRequestHandler):
                         media_bytes = []
                         if msg and msg.media:
                             try:
-                                with tg_semaphore:
-                                    data = tg_run(tg_client.download_media(msg.media, file=bytes))
+                                # download_media không dùng semaphore — tránh timeout khi file lớn
+                                data = tg_run(tg_client.download_media(msg.media, file=bytes))
                                 if data:
                                     if isinstance(msg.media, MessageMediaPhoto):
                                         media_bytes.append(('photo', data, 'image/jpeg'))

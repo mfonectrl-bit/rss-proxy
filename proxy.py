@@ -6,6 +6,7 @@ import time
 import re
 import os
 import asyncio
+import queue as _queue
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from urllib.parse import urlparse, parse_qs
@@ -36,6 +37,235 @@ def _default_engine():
     return 'google'
 
 translate_engine = _default_engine()  # có thể thay đổi qua WS message
+
+# ================= AI SERVICE (Multi-AI Rotation) =================
+# Kiến trúc mới: xoay vòng Gemini → DeepL → Google
+# Không còn phụ thuộc 1 API, tránh rate limit, classify category luôn khi dùng Gemini
+class AIService:
+    """
+    Multi-AI rotation engine.
+    - process(text) → (translated_text, category)
+    - Tự động fallback: Gemini → DeepL → Google
+    - Nếu text đã là tiếng Việt → trả về nguyên, category='default'
+    """
+    def __init__(self):
+        # Thứ tự ưu tiên: Gemini > DeepL > Google
+        self._providers = ['gemini', 'deepl', 'google']
+        self._index = 0
+
+    def _next_provider(self):
+        fn = self._providers[self._index]
+        self._index = (self._index + 1) % len(self._providers)
+        return fn
+
+    def _run_gemini(self, text):
+        """Dịch + phân loại category bằng Gemini (trả JSON)"""
+        if not GEMINI_API_KEY:
+            return None
+        try:
+            prompt = (
+                'Translate the following text to Vietnamese. '
+                'Also classify it into one of: politics, health, tech, finance, entertainment, default. '
+                'Return ONLY valid JSON, no markdown, no explanation: '
+                '{"text":"<translated>","category":"<category>"}.\n\nTEXT: ' + text[:3000]
+            )
+            payload = json.dumps({
+                'contents': [{'parts': [{'text': prompt}]}],
+                'generationConfig': {'temperature': 0.1, 'maxOutputTokens': 2048}
+            }).encode('utf-8')
+            url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}'
+            req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
+            resp = urllib.request.urlopen(req, timeout=15)
+            data = json.loads(resp.read())
+            raw = data['candidates'][0]['content']['parts'][0]['text'].strip()
+            # Strip markdown code fences nếu có
+            raw = re.sub(r'^```[a-z]*\n?', '', raw).rstrip('`').strip()
+            result = json.loads(raw)
+            return result.get('text', ''), result.get('category', 'default')
+        except Exception as e:
+            print(f'[AI] Gemini lỗi: {e}')
+            return None
+
+    def _run_deepl(self, text):
+        """Dịch bằng DeepL (không classify category)"""
+        if not DEEPL_API_KEY:
+            return None
+        try:
+            base = 'api-free.deepl.com' if DEEPL_API_KEY.endswith(':fx') else 'api.deepl.com'
+            payload = urllib.parse.urlencode({
+                'auth_key': DEEPL_API_KEY,
+                'text': text[:3000],
+                'target_lang': 'VI',
+            }).encode('utf-8')
+            req = urllib.request.Request(
+                f'https://{base}/v2/translate', data=payload,
+                headers={'Content-Type': 'application/x-www-form-urlencoded'}
+            )
+            resp = urllib.request.urlopen(req, timeout=15)
+            data = json.loads(resp.read())
+            translated = data['translations'][0]['text']
+            return translated, 'default'
+        except Exception as e:
+            print(f'[AI] DeepL lỗi: {e}')
+            return None
+
+    def _run_google(self, text):
+        """Google Translate fallback — luôn thành công"""
+        try:
+            return _translate_google(text), 'default'
+        except Exception as e:
+            print(f'[AI] Google lỗi: {e}')
+            return text, 'default'
+
+    def process(self, text):
+        """
+        Xử lý text qua AI rotation.
+        Trả về (translated_text, category).
+        Nếu text đã là tiếng Việt → (text, 'default') không tốn API call.
+        """
+        if not text or len(text.strip()) < 4:
+            return text, 'default'
+        # Kiểm tra nếu đã là tiếng Việt
+        if is_vietnamese(text[:400]):
+            return text, 'default'
+        # Thử từng provider theo thứ tự ưu tiên
+        for provider in self._providers:
+            result = None
+            if provider == 'gemini':
+                result = self._run_gemini(text)
+            elif provider == 'deepl':
+                result = self._run_deepl(text)
+            elif provider == 'google':
+                result = self._run_google(text)
+            if result:
+                translated, category = result
+                if translated:
+                    return translated, category
+        return text, 'default'
+
+# Singleton AI service — dùng chung toàn bộ app
+ai_service = AIService()
+
+# ================= ASYNC PIPELINE (Batch Queue) =================
+# Hàng đợi async cho tin Telethon real-time + RSS
+# Thay thế process_items / process_tg_items dùng sync threads đơn thuần
+class BatchPipeline:
+    """
+    Pipeline async xử lý tin theo batch.
+    - producer(item): đẩy item vào queue
+    - Batch consumer chạy trên thread riêng: gom tối đa BATCH_SIZE item/lượt, xử lý AI, broadcast + forward
+    """
+    BATCH_SIZE = 5
+
+    def __init__(self):
+        self._q = _queue.Queue()
+        self._thread = None
+
+    def start(self):
+        self._thread = threading.Thread(target=self._consumer_loop, daemon=True)
+        self._thread.start()
+
+    def put(self, item):
+        """Đẩy item vào queue. item = dict với keys: text, media, feed_url, category, show_link, guid, ..."""
+        self._q.put(item)
+
+    def _consumer_loop(self):
+        while True:
+            batch = []
+            try:
+                # Chờ item đầu tiên (blocking)
+                first = self._q.get(timeout=1)
+                batch.append(first)
+                # Drain thêm không block
+                while len(batch) < self.BATCH_SIZE:
+                    try:
+                        batch.append(self._q.get_nowait())
+                    except _queue.Empty:
+                        break
+            except _queue.Empty:
+                continue
+
+            if batch:
+                try:
+                    self._process_batch(batch)
+                except Exception as e:
+                    print(f'[Pipeline] Batch lỗi: {e}')
+
+    def _process_batch(self, batch):
+        """
+        Xử lý một batch: AI translate → route → broadcast UI → forward Telegram.
+        Với TG items có media: download media trước rồi mới forward (_download_and_forward).
+        Với RSS items: forward trực tiếp (_do_forward).
+        """
+        # Group by feed_url để broadcast theo từng nguồn
+        by_feed = {}
+        for item in batch:
+            fu = item.get('feed_url', '')
+            by_feed.setdefault(fu, []).append(item)
+
+        for feed_url, items in by_feed.items():
+            processed = []
+            for item in items:
+                text = item.get('text', '')
+                translated, ai_category = ai_service.process(text)
+                # Ưu tiên category từ feed config; fallback về AI category
+                if not item.get('category'):
+                    item['category'] = _map_category(ai_category)
+                item['text_translated'] = translated
+                # Rebuild desc/title theo format UI
+                desc_html = translated.replace('\n', '<br>')
+                title = (translated[:80] + '...') if len(translated) > 80 else translated
+                item['desc'] = desc_html
+                item['title'] = title
+                item['translated'] = True
+                item['show_link'] = item.get('show_link', True)
+                processed.append(item)
+
+            if not processed:
+                continue
+
+            # 1. Broadcast lên UI (không cần chờ forward)
+            ws_items = [{k: v for k, v in it.items()
+                         if k not in ('_tg_media_bytes', '_tg_has_media', 'text', 'text_translated')}
+                        for it in processed]
+            broadcast({'type': 'new_items', 'url': feed_url, 'items': ws_items})
+
+            # 2. Forward — tách luồng để không block pipeline
+            feed_category = processed[0].get('category', '')
+            is_tg = any(it.get('_source') == 'telethon' for it in processed)
+            if is_tg:
+                # TG: download media trước rồi forward
+                threading.Thread(
+                    target=_download_and_forward,
+                    args=(processed, feed_category, feed_url),
+                    daemon=True
+                ).start()
+            else:
+                # RSS: forward trực tiếp (không có bytes media để download)
+                threading.Thread(
+                    target=_do_forward,
+                    args=(processed, feed_category, feed_url),
+                    daemon=True
+                ).start()
+
+def _map_category(ai_category):
+    """
+    Map AI category về category hệ thống.
+    AI trả về: politics, health, tech, finance, entertainment, default
+    Hệ thống dùng: Sức khỏe, Tài chính, Công nghệ, Giải trí, Xã hội, Khác
+    """
+    mapping = {
+        'politics':      'Xã hội',
+        'health':        'Sức khỏe',
+        'tech':          'Công nghệ',
+        'finance':       'Tài chính',
+        'entertainment': 'Giải trí',
+        'default':       'Khác',
+    }
+    return mapping.get(ai_category, 'Khác')
+
+# Khởi động pipeline — sẽ gọi sau khi các hàm broadcast/forward được định nghĩa
+_pipeline = BatchPipeline()
 
 try:
     from deep_translator import GoogleTranslator
@@ -76,7 +306,11 @@ tg_phone_code_hash = None   # lưu phone_code_hash khi gửi OTP
 
 # --- HÀM TIỆN ÍCH ---
 def _translate_with_engine(text, engine=None):
-    """Dịch text sang tiếng Việt dùng engine được chọn, fallback về Google nếu lỗi"""
+    """
+    Dịch text sang tiếng Việt.
+    - Nếu engine chỉ định → dùng engine đó (override thủ công từ UI dropdown).
+    - Nếu engine lỗi → fallback về AIService rotation thay vì chỉ Google.
+    """
     if not text or len(text.strip()) < 4:
         return text
     eng = engine or translate_engine
@@ -88,11 +322,10 @@ def _translate_with_engine(text, engine=None):
         else:
             return _translate_google(text)
     except Exception as e:
-        print(f'[!] Dịch [{eng}] lỗi: {e}, fallback Google')
-        try:
-            return _translate_google(text)
-        except:
-            return text
+        print(f'[!] Dịch [{eng}] lỗi: {e}, fallback AI rotation')
+        # Fallback về AIService rotation (Gemini→DeepL→Google) thay vì chỉ Google
+        translated, _ = ai_service.process(text)
+        return translated or text
 
 def _translate_gemini(text):
     """Dịch bằng Gemini API (gemini-2.0-flash — nhanh và miễn phí)"""
@@ -1996,7 +2229,15 @@ def _do_forward(processed, category, url):
         broadcast({'type': 'auto_fwd_sent', 'count': total_sent, 'url': url})
 
 def _poll_one(url_obj):
-    """Poll một feed, trả về True nếu thành công"""
+    """
+    Poll một feed, trả về True nếu thành công.
+    Kiến trúc mới:
+    - Lấy items từ nguồn (RSS XML hoặc Telethon history poll)
+    - Dedup bằng known_guids
+    - Đẩy NEW items vào BatchPipeline → AI rotate → broadcast → forward
+    Lưu ý: Telethon real-time đã xử lý qua _process_tg_queue/pipeline riêng.
+    _poll_one chỉ dùng cho: RSS thường + tg.i-c-a.su (không có real-time listener).
+    """
     url       = url_obj['url']
     category  = url_obj.get('category', '')
     show_link = url_obj.get('show_link', True)
@@ -2016,20 +2257,25 @@ def _poll_one(url_obj):
         with lock:
             prev = known_guids.get(url)
         if prev is None:
+            # Lần đầu — chỉ init known_guids, không broadcast (tránh spam items cũ)
             with lock:
                 known_guids[url] = {it['guid'] for it in items if it['guid']}
         else:
             new_items = [it for it in items if it['guid'] and it['guid'] not in prev]
             if new_items:
-                processed = process_tg_items(new_items) if is_tg_source(url) else process_items(new_items)
-                for it in processed:
-                    it['show_link'] = show_link
+                # Cập nhật known_guids ngay để không xử lý lại
                 with lock:
                     known_guids[url] = {it['guid'] for it in items if it['guid']}
-                ws_items = [{k: v for k, v in it.items() if k != '_tg_media_bytes'} for it in processed]
-                broadcast({'type': 'new_items', 'url': url, 'items': ws_items})
-                print(f'[+] {len(new_items)} bài mới: {url}')
-                _do_forward(processed, category, url)
+                print(f'[+] {len(new_items)} bài mới → pipeline: {url}')
+                # Đẩy vào BatchPipeline thay vì xử lý sync
+                for it in new_items:
+                    it['show_link'] = show_link
+                    it['feed_url']  = url
+                    # Với RSS: text = title + desc plaintext để AI dịch
+                    raw_text = it.get('title', '') + '\n' + strip_html(it.get('desc', ''))
+                    it['text']    = raw_text.strip()
+                    it['_source'] = 'rss'
+                    _pipeline.put(it)
         return True
     except Exception as ex:
         print(f'[!] Poll lỗi {url}: {ex}')
@@ -2039,7 +2285,11 @@ def _is_ica_source(url):
     return 'tg.i-c-a.su' in url
 
 def _init_tg_feed(url_obj):
-    """Load lịch sử 1 lần khi feed TG mới được thêm vào"""
+    """
+    Load lịch sử 1 lần khi thêm kênh TG mới.
+    Chỉ dùng để hiển thị trên UI (không forward).
+    Dịch bằng process_tg_items (sync) vì đây là init one-shot, không cần pipeline.
+    """
     url      = url_obj['url']
     category = url_obj.get('category', '')
     channel  = normalize_tg_channel(url)
@@ -2050,7 +2300,9 @@ def _init_tg_feed(url_obj):
                 it['category'] = category
         with lock:
             known_guids[url] = {it['guid'] for it in items if it['guid']}
-        # Broadcast lịch sử để hiển thị trên web (không forward)
+        # Dịch để hiển thị UI (không forward — chỉ lịch sử)
+        if translate_enabled and TRANSLATE_AVAILABLE:
+            items = process_tg_items(items)
         ws_items = [{k: v for k, v in it.items() if k != '_tg_media_bytes'} for it in items]
         if ws_items:
             broadcast({'type': 'new_items', 'url': url, 'items': ws_items})
@@ -2105,7 +2357,11 @@ def _download_and_forward(processed, category, feed_url):
     _do_forward(processed, category, feed_url)
 
 def _process_tg_queue():
-    """Xử lý tin mới từ Telethon real-time queue"""
+    """
+    Xử lý tin mới từ Telethon real-time queue.
+    Kiến trúc mới: dedup → đẩy vào BatchPipeline (async, non-blocking).
+    Pipeline sẽ gom batch, gọi AIService rotation, broadcast + forward.
+    """
     with tg_new_items_lock:
         if not tg_new_items_queue:
             return
@@ -2129,26 +2385,37 @@ def _process_tg_queue():
                     break
             prev = known_guids.get(feed_url)
 
-        # Lọc trùng
+        # Dedup — lọc trùng trước khi vào pipeline
         new_items = [it for it in items if not prev or it['guid'] not in prev]
         if not new_items:
             continue
 
-        processed = process_tg_items(new_items)
-        # Gắn show_link vào từng item
-        for it in processed:
-            it['show_link'] = show_link
+        # Cập nhật known_guids ngay để poller không xử lý lại
         with lock:
             if known_guids.get(feed_url) is None:
                 known_guids[feed_url] = set()
             for it in new_items:
                 known_guids[feed_url].add(it['guid'])
 
-        ws_items = [{k: v for k, v in it.items() if k not in ('_tg_media_bytes', '_tg_has_media')} for it in processed]
-        broadcast({'type': 'new_items', 'url': feed_url, 'items': ws_items})
-        print(f'[+] {len(new_items)} bài mới (real-time): {feed_url}')
-        # Download media và forward trong thread riêng — không block poller
-        threading.Thread(target=_download_and_forward, args=(processed, category, feed_url), daemon=True).start()
+        print(f'[+] {len(new_items)} bài mới (real-time → pipeline): {feed_url}')
+
+        # Đẩy vào BatchPipeline thay vì xử lý sync
+        for it in new_items:
+            pipeline_item = {
+                'text': strip_html(it.get('desc', '').replace('<br>', '\n')) or it.get('title', ''),
+                'feed_url': feed_url,
+                'category': category,
+                'show_link': show_link,
+                'guid': it.get('guid', ''),
+                'link': it.get('link', ''),
+                'pubDate': it.get('pubDate', ''),
+                '_tg_has_media': it.get('_tg_has_media', False),
+                '_tg_msg_id': it.get('_tg_msg_id'),
+                '_tg_chat': it.get('_tg_chat'),
+                '_tg_grouped_id': it.get('_tg_grouped_id'),
+                '_source': 'telethon',
+            }
+            _pipeline.put(pipeline_item)
 
 def poller():
     """
@@ -2540,6 +2807,10 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
         super().handle_error(request, client_address)
 
 if __name__ == '__main__':
+    # Khởi động BatchPipeline (async AI rotation + batch processing)
+    _pipeline.start()
+    print('[i] BatchPipeline: OK (AI rotation + batch processing)')
+
     # Khởi động asyncio loop cho Telethon trên thread riêng
     if TELETHON_AVAILABLE:
         tg_loop_thread = threading.Thread(target=run_tg_loop, daemon=True)

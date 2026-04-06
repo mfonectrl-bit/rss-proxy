@@ -22,6 +22,21 @@ TRANSLATE_ENABLE = True
 SESSION_FILE     = 'tg_session'
 TG_CONFIG_FILE   = 'tg_config.json'
 
+# --- Engine dịch ---
+# Đọc API keys từ env var
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '').strip()
+DEEPL_API_KEY  = os.environ.get('DEEPL_API_KEY', '').strip()
+
+# Engine mặc định: gemini nếu có key, deepl nếu có key, google nếu không có gì
+def _default_engine():
+    if GEMINI_API_KEY:
+        return 'gemini'
+    if DEEPL_API_KEY:
+        return 'deepl'
+    return 'google'
+
+translate_engine = _default_engine()  # có thể thay đổi qua WS message
+
 try:
     from deep_translator import GoogleTranslator
     from langdetect import detect
@@ -30,6 +45,8 @@ try:
 except ImportError as e:
     TRANSLATE_AVAILABLE = False
     print(f'[!] Thư viện dịch chưa cài: {e}')
+
+print(f'[i] Engine dịch mặc định: {_default_engine()} | Gemini={"có" if GEMINI_API_KEY else "không"} | DeepL={"có" if DEEPL_API_KEY else "không"}')
 
 try:
     from telethon import TelegramClient, events
@@ -58,6 +75,64 @@ tg_auth_msg      = ''
 tg_phone_code_hash = None   # lưu phone_code_hash khi gửi OTP
 
 # --- HÀM TIỆN ÍCH ---
+def _translate_with_engine(text, engine=None):
+    """Dịch text sang tiếng Việt dùng engine được chọn, fallback về Google nếu lỗi"""
+    if not text or len(text.strip()) < 4:
+        return text
+    eng = engine or translate_engine
+    try:
+        if eng == 'gemini' and GEMINI_API_KEY:
+            return _translate_gemini(text)
+        elif eng == 'deepl' and DEEPL_API_KEY:
+            return _translate_deepl(text)
+        else:
+            return _translate_google(text)
+    except Exception as e:
+        print(f'[!] Dịch [{eng}] lỗi: {e}, fallback Google')
+        try:
+            return _translate_google(text)
+        except:
+            return text
+
+def _translate_gemini(text):
+    """Dịch bằng Gemini API (gemini-2.0-flash — nhanh và miễn phí)"""
+    prompt = (
+        'Dịch đoạn văn bản sau sang tiếng Việt. '
+        'Giữ nguyên tên riêng, thuật ngữ chuyên ngành, số liệu và ký hiệu. '
+        'Chỉ trả về bản dịch, không giải thích thêm.\n\n' + text[:4000]
+    )
+    payload = json.dumps({
+        'contents': [{'parts': [{'text': prompt}]}],
+        'generationConfig': {'temperature': 0.1, 'maxOutputTokens': 2048}
+    }).encode('utf-8')
+    url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}'
+    req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
+    resp = urllib.request.urlopen(req, timeout=15)
+    data = json.loads(resp.read())
+    return data['candidates'][0]['content']['parts'][0]['text'].strip()
+
+def _translate_deepl(text):
+    """Dịch bằng DeepL Free API"""
+    payload = urllib.parse.urlencode({
+        'auth_key': DEEPL_API_KEY,
+        'text': text[:4000],
+        'target_lang': 'VI',
+        'source_lang': 'EN',
+    }).encode('utf-8')
+    # DeepL Free dùng api-free.deepl.com, Pro dùng api.deepl.com
+    base = 'api-free.deepl.com' if DEEPL_API_KEY.endswith(':fx') else 'api.deepl.com'
+    req = urllib.request.Request(
+        f'https://{base}/v2/translate', data=payload,
+        headers={'Content-Type': 'application/x-www-form-urlencoded'}
+    )
+    resp = urllib.request.urlopen(req, timeout=15)
+    data = json.loads(resp.read())
+    return data['translations'][0]['text'].strip()
+
+def _translate_google(text):
+    """Dịch bằng Google Translate (deep_translator) — fallback"""
+    return GoogleTranslator(source='auto', target='vi').translate(text) or text
+
 def strip_html(text):
     return re.sub(r'<[^>]+>', ' ', text).strip()
 
@@ -84,11 +159,12 @@ def is_vietnamese(text):
 def translate_text(text):
     if not text or not TRANSLATE_AVAILABLE or not TRANSLATE_ENABLE:
         return text
-    key = hash(text)
+    key = (hash(text), translate_engine)
     with translate_lock:
         if key in translate_cache:
             return translate_cache[key]
     try:
+        # Tách HTML tags, dịch phần text, ghép lại
         parts = re.split(r'(<[^>]+>)', text)
         out, buf = [], []
         for part in parts:
@@ -96,10 +172,7 @@ def translate_text(text):
                 if buf:
                     chunk = ' '.join(buf).strip()
                     if chunk and len(chunk) > 3:
-                        try:
-                            out.append(GoogleTranslator(source='auto', target='vi').translate(chunk) or chunk)
-                        except:
-                            out.append(chunk)
+                        out.append(_translate_with_engine(chunk))
                     elif chunk:
                         out.append(chunk)
                     buf = []
@@ -112,10 +185,7 @@ def translate_text(text):
         if buf:
             chunk = ' '.join(buf).strip()
             if chunk and len(chunk) > 3:
-                try:
-                    out.append(GoogleTranslator(source='auto', target='vi').translate(chunk) or chunk)
-                except:
-                    out.append(chunk)
+                out.append(_translate_with_engine(chunk))
             elif chunk:
                 out.append(chunk)
         result = ''.join(out)
@@ -124,7 +194,6 @@ def translate_text(text):
         result = text
     with translate_lock:
         if len(translate_cache) > 500:
-            # Xóa bớt nửa cache khi quá lớn
             keys = list(translate_cache.keys())
             for k in keys[:250]:
                 del translate_cache[k]
@@ -281,6 +350,8 @@ def send_to_telegram(bot_token, channel_id, channel_name, items, category_filter
         try:
             if tg_media_bytes:
                 r = _send_media_then_text(bot_token, channel_id, tg_media_bytes, caption, MAX_CAP, MAX_TEXT, title, use_bytes=True)
+                # Giải phóng RAM: xóa bytes ngay sau khi gửi
+                item['_tg_media_bytes'] = None
                 results.append(r)
             else:
                 imgs, videos = extract_media(desc)
@@ -541,6 +612,14 @@ def _send_media_then_text(bot_token, channel_id, media_list, caption, max_cap, m
             resp2 = tg_api(bot_token, 'sendMessage', payload)
             if resp2.get('ok'):
                 reply_id = resp2.get('result', {}).get('message_id', reply_id)
+
+    # Giải phóng RAM: xóa bytes khỏi media_list sau khi gửi xong
+    if use_bytes and ok:
+        for i in range(len(media_list)):
+            try:
+                media_list[i] = (media_list[i][0], None, media_list[i][2])
+            except Exception:
+                pass
 
     return {'title': title, 'ok': ok, 'error': err}
 
@@ -1055,6 +1134,15 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
 <button class="tg-save" style="background:#6366f1" onclick="openTelethonModal()">⚡ Telethon</button>
 <span id="tg-saved" style="display:none;color:#16a34a;font-size:11px">✓ Đã lưu</span>
 <span id="tg-auth-badge" style="font-size:11px;color:#aaa">Telethon: chưa kết nối</span>
+<span style="margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12px;color:#92400e;font-weight:600">
+  🌐 Dịch:
+  <select id="engine-select" onchange="setTranslateEngine(this.value)"
+    style="padding:4px 8px;border:1px solid #fcd34d;border-radius:7px;font-size:12px;background:#fff;cursor:pointer">
+    <option value="gemini">Gemini (tốt nhất)</option>
+    <option value="deepl">DeepL</option>
+    <option value="google">Google Translate</option>
+  </select>
+</span>
 </div>
 </div>
 <div class="layout">
@@ -1230,6 +1318,7 @@ let tgChannels=JSON.parse(localStorage.getItem('tg_channels')||'null')||[];
 let categories=JSON.parse(localStorage.getItem('categories')||'null')||DEFAULT_CATEGORIES;
 let allItems=[],newBadges={},filterUrl=null,searchQ='',ws=null,wsReady=false,shownCount=PAGE_SIZE;
 let translateOn=JSON.parse(localStorage.getItem('translate_on')??'true');
+let translateEngine=localStorage.getItem('translate_engine')||'gemini';
 let selected=new Set(),autoFwd=JSON.parse(localStorage.getItem('auto_fwd')??'false');
 let editFeedIndex=-1,selectedChannelIndex=-1;
 let pollInterval=60,pollNextIn=0;
@@ -1239,6 +1328,11 @@ function saveFeeds(){localStorage.setItem('rss_feeds',JSON.stringify(feeds));}
 function saveTgChannels(){localStorage.setItem('tg_channels',JSON.stringify(tgChannels));}
 function saveCategories(){localStorage.setItem('categories',JSON.stringify(categories));}
 
+function setTranslateEngine(val){
+    translateEngine=val;
+    localStorage.setItem('translate_engine',val);
+    wsSend({type:'translate_engine',engine:val});
+}
 function adjustLayout(){
     const h=document.getElementById('top-fixed').offsetHeight;
     const remaining = `calc(100vh - ${h}px)`;
@@ -1702,6 +1796,7 @@ function connectWS(){
         wsSend({type:'tg_settings',channels:tgChannels});
         wsSend({type:'auto_fwd',enabled:autoFwd,channels:tgChannels});
         wsSend({type:'categories',categories});
+        wsSend({type:'translate_engine',engine:translateEngine});
         // Khi reconnect: chỉ fetch lại RSS feeds (nhanh), TG feeds sẽ nhận qua WS broadcast
         if(wsReconnectCount>0){
             setTimeout(()=>{
@@ -1755,6 +1850,9 @@ function showToastMsg(msg){
     renderCategoryList();
     renderSidebar();
     checkTelethonStatus();
+    // Khôi phục engine đã chọn từ localStorage
+    const sel=document.getElementById('engine-select');
+    if(sel) sel.value=translateEngine;
     connectWS();
     feeds.forEach(f=>fetchAndMerge(f.url,f.name,f.category,false));
 })();
@@ -1832,10 +1930,7 @@ def process_tg_items(items):
             return
 
         # Dịch toàn bộ text gốc (plain text, không có HTML)
-        try:
-            translated_desc_plain = GoogleTranslator(source='auto', target='vi').translate(desc_plain[:4000]) or desc_plain
-        except:
-            translated_desc_plain = desc_plain
+        translated_desc_plain = _translate_with_engine(desc_plain[:4000]) or desc_plain
 
         # Re-derive title từ bản dịch
         title_translated = (translated_desc_plain[:80] + '...') if len(translated_desc_plain) > 80 else translated_desc_plain
@@ -2105,7 +2200,7 @@ def poller():
         time.sleep(0.5)   # check queue thường xuyên hơn
 
 def ws_handler(ws):
-    global translate_enabled, auto_fwd_enabled, tg_channels, categories
+    global translate_enabled, auto_fwd_enabled, tg_channels, categories, translate_engine
     with lock:
         ws_clients.add(ws)
     print(f'[WS] Client kết nối, tổng={len(ws_clients)}')
@@ -2153,6 +2248,11 @@ def ws_handler(ws):
                     threading.Thread(target=tg_setup_realtime_sync, args=(tg_urls,), daemon=True).start()
             elif t == 'translate':
                 translate_enabled = msg.get('enabled', True)
+            elif t == 'translate_engine':
+                new_engine = msg.get('engine', 'gemini')
+                if new_engine in ('gemini', 'deepl', 'google'):
+                    translate_engine = new_engine
+                    print(f'[WS] Engine dịch: {translate_engine}')
             elif t == 'tg_settings':
                 with lock:
                     tg_channels = msg.get('channels', [])
@@ -2384,6 +2484,9 @@ class HttpHandler(BaseHTTPRequestHandler):
                 r = send_to_telegram(ch['token'], ch['channel_id'], ch['name'], items,
                                      category_filter=ch.get('category_filter'), channel_type=ch['type'])
                 all_results.extend(r)
+            # Giải phóng RAM: xóa bytes sau khi đã gửi xong tất cả kênh
+            for it in items:
+                it['_tg_media_bytes'] = None
             resp = json.dumps({'results': all_results}, ensure_ascii=False).encode('utf-8')
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')

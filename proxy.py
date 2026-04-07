@@ -229,57 +229,74 @@ ai_service = AIService()
 # Thay thế process_items / process_tg_items dùng sync threads đơn thuần
 class BatchPipeline:
     """
-    Pipeline async xử lý tin theo batch với timeout flush.
-    - put(item): đẩy item vào queue (non-blocking)
-    - Consumer loop: gom tối đa BATCH_SIZE item, hoặc flush sau FLUSH_TIMEOUT giây
-      → tránh delay khi traffic thấp (không cần đủ 5 item mới xử lý)
+    Pipeline xử lý tin với nhiều worker thread song song.
+
+    Thiết kế cho 45+ feed:
+    - MAX_QUEUE_SIZE: nếu queue đầy → bỏ tin cũ nhất (tránh tắc nghẽn RAM)
+    - NUM_WORKERS: nhiều worker xử lý song song, mỗi worker 1 batch
+    - FLUSH_TIMEOUT: flush batch sau 3s dù chưa đủ BATCH_SIZE
+    - Mỗi worker tự chờ queue độc lập → không tranh nhau lock
     """
-    BATCH_SIZE    = 5
-    FLUSH_TIMEOUT = 3.0   # giây: flush batch dù chưa đủ BATCH_SIZE
+    BATCH_SIZE     = 5
+    FLUSH_TIMEOUT  = 3.0
+    NUM_WORKERS    = 4       # số worker thread song song
+    MAX_QUEUE_SIZE = 200     # tối đa 200 item trong queue, quá thì drop cũ nhất
 
     def __init__(self):
-        self._q = _queue.Queue()
-        self._thread = None
+        self._q = _queue.Queue(maxsize=self.MAX_QUEUE_SIZE)
+        self._threads = []
 
     def start(self):
-        self._thread = threading.Thread(target=self._consumer_loop, daemon=True)
-        self._thread.start()
+        for i in range(self.NUM_WORKERS):
+            t = threading.Thread(target=self._worker_loop, args=(i,), daemon=True)
+            t.start()
+            self._threads.append(t)
+        print(f'[Pipeline] {self.NUM_WORKERS} workers khởi động, queue max={self.MAX_QUEUE_SIZE}')
 
     def put(self, item):
-        self._q.put(item)
+        """Non-blocking put — nếu queue đầy thì drop item cũ nhất để nhường chỗ item mới"""
+        try:
+            self._q.put_nowait(item)
+        except _queue.Full:
+            # Queue đầy → drop item cũ nhất (get + put_nowait)
+            try:
+                dropped = self._q.get_nowait()
+                print(f'[Pipeline] Queue đầy — drop tin cũ: {dropped.get("guid","?")}')
+                self._q.put_nowait(item)
+            except _queue.Empty:
+                pass  # race condition hiếm gặp, bỏ qua
 
-    def _consumer_loop(self):
+    def _worker_loop(self, worker_id):
         while True:
             batch = []
             deadline = time.time() + self.FLUSH_TIMEOUT
-            # Chờ item đầu tiên (blocking, timeout=FLUSH_TIMEOUT)
             try:
                 first = self._q.get(timeout=self.FLUSH_TIMEOUT)
                 batch.append(first)
             except _queue.Empty:
-                continue  # không có gì trong FLUSH_TIMEOUT → loop tiếp
+                continue
 
-            # Drain thêm không block cho đến hết BATCH_SIZE hoặc hết deadline
+            # Drain thêm không block cho đến hết BATCH_SIZE hoặc deadline
             while len(batch) < self.BATCH_SIZE:
                 remaining = deadline - time.time()
                 if remaining <= 0:
-                    break  # hết timeout → flush ngay dù chưa đủ batch
+                    break
                 try:
                     item = self._q.get(timeout=min(remaining, 0.1))
                     batch.append(item)
                 except _queue.Empty:
-                    break  # queue trống → flush luôn
+                    break
 
             if batch:
                 try:
-                    self._process_batch(batch)
+                    self._process_batch(batch, worker_id)
                 except Exception as e:
-                    print(f'[Pipeline] Batch lỗi: {e}')
+                    print(f'[Pipeline W{worker_id}] Batch lỗi: {e}')
 
-    def _process_batch(self, batch):
+    def _process_batch(self, batch, worker_id=0):
         """
-        Xử lý một batch: AI translate → route → broadcast UI → forward qua Telethon.
-        Không còn download bytes — Telethon gửi thẳng msg.media object hoặc URL.
+        Xử lý một batch: AI translate → broadcast UI → forward Telethon.
+        Chạy trên worker thread riêng — nhiều batch song song.
         """
         by_feed = {}
         for item in batch:
@@ -296,8 +313,8 @@ class BatchPipeline:
                 item['text_translated'] = translated
                 desc_html = translated.replace('\n', '<br>')
                 title     = (translated[:80] + '...') if len(translated) > 80 else translated
-                item['desc']      = desc_html
-                item['title']     = title
+                item['desc']       = desc_html
+                item['title']      = title
                 item['translated'] = True
                 item['show_link']  = item.get('show_link', True)
                 processed.append(item)
@@ -305,19 +322,22 @@ class BatchPipeline:
             if not processed:
                 continue
 
-            # 1. Broadcast lên UI ngay (không chờ forward)
+            # 1. Broadcast lên UI ngay
             ws_items = [{k: v for k, v in it.items()
                          if k not in ('_tg_has_media', 'text', 'text_translated')}
                         for it in processed]
             broadcast({'type': 'new_items', 'url': feed_url, 'items': ws_items})
 
-            # 2. Forward qua Telethon trên thread riêng
+            # 2. Forward Telethon trên thread riêng (không block worker)
             feed_category = processed[0].get('category', '')
             threading.Thread(
                 target=_do_forward,
                 args=(processed, feed_category, feed_url),
                 daemon=True
             ).start()
+
+    def qsize(self):
+        return self._q.qsize()
 
 def _map_category(ai_category):
     """
@@ -378,23 +398,33 @@ tg_phone_code_hash = None   # lưu phone_code_hash khi gửi OTP
 # --- HÀM TIỆN ÍCH ---
 def _translate_with_engine(text, engine=None):
     """
-    Dịch text sang tiếng Việt.
-    - Nếu engine chỉ định → dùng engine đó (override thủ công từ UI dropdown).
-    - Nếu engine lỗi → fallback về AIService rotation thay vì chỉ Google.
+    Dịch text sang tiếng Việt — dùng cho manual translate (process_items/process_tg_items).
+    Route qua ai_service để tôn trọng circuit breaker, tránh spam 429.
+    Nếu UI chọn engine cụ thể → ưu tiên engine đó, nhưng vẫn fallback nếu circuit open.
     """
     if not text or len(text.strip()) < 4:
         return text
     eng = engine or translate_engine
+    # Kiểm tra circuit breaker trước khi gọi
+    if eng == 'gemini' and ai_service._is_open('gemini'):
+        # Gemini đang bị circuit open → dùng ai_service rotation (bỏ qua Gemini)
+        translated, _ = ai_service.process(text)
+        return translated or text
+    if eng == 'deepl' and ai_service._is_open('deepl'):
+        translated, _ = ai_service.process(text)
+        return translated or text
+    # Gọi engine được chỉ định
     try:
         if eng == 'gemini' and GEMINI_API_KEY:
-            return _translate_gemini(text)
+            result = ai_service._run_gemini(text)
+            return result[0] if result else _translate_google(text)
         elif eng == 'deepl' and DEEPL_API_KEY:
-            return _translate_deepl(text)
+            result = ai_service._run_deepl(text)
+            return result[0] if result else _translate_google(text)
         else:
             return _translate_google(text)
     except Exception as e:
         print(f'[!] Dịch [{eng}] lỗi: {e}, fallback AI rotation')
-        # Fallback về AIService rotation (Gemini→DeepL→Google) thay vì chỉ Google
         translated, _ = ai_service.process(text)
         return translated or text
 
@@ -2324,6 +2354,9 @@ def poller():
             broadcast({'type': 'poll_status', 'interval': POLL_INTERVAL, 'next_in': POLL_INTERVAL})
 
         time.sleep(0.5)   # check queue thường xuyên hơn
+        # Log queue size định kỳ nếu có items chờ
+        if _pipeline.qsize() > 10:
+            print(f'[Pipeline] Queue: {_pipeline.qsize()} items đang chờ xử lý')
 
 def ws_handler(ws):
     global translate_enabled, auto_fwd_enabled, tg_channels, categories, translate_engine

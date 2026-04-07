@@ -74,10 +74,6 @@ class AIService:
         with self._lock:
             if time.time() < self._open_until[provider]:
                 return True
-            # Circuit hết cooldown → reset fail_count (half-open)
-            if self._open_until[provider] > 0:
-                self._fail_count[provider] = 0
-                self._open_until[provider] = 0.0
             return False
 
     def _record_success(self, provider):
@@ -88,9 +84,7 @@ class AIService:
     def _record_failure(self, provider, is_rate_limit=False):
         with self._lock:
             self._fail_count[provider] += 1
-            # Chỉ mở circuit khi vừa đúng ngưỡng (= FAIL_THRESHOLD), không lặp lại
-            already_open = time.time() < self._open_until[provider]
-            if self._fail_count[provider] >= self.FAIL_THRESHOLD and not already_open:
+            if self._fail_count[provider] >= self.FAIL_THRESHOLD:
                 cooldown = self.COOLDOWN * (2 if is_rate_limit else 1)
                 self._open_until[provider] = time.time() + cooldown
                 print(f'[AI] Circuit OPEN: {provider} — nghỉ {cooldown:.0f}s')
@@ -98,9 +92,6 @@ class AIService:
     def _run_gemini(self, text):
         """Dịch + classify category bằng Gemini với retry/backoff khi 429"""
         if not GEMINI_API_KEY:
-            return None
-        # Guard: không gọi API nếu circuit đã mở
-        if self._is_open('gemini'):
             return None
         prompt = (
             'Translate the following text to Vietnamese. '
@@ -149,8 +140,6 @@ class AIService:
     def _run_deepl(self, text):
         """Dịch bằng DeepL"""
         if not DEEPL_API_KEY:
-            return None
-        if self._is_open('deepl'):
             return None
         try:
             base = 'api-free.deepl.com' if DEEPL_API_KEY.endswith(':fx') else 'api.deepl.com'
@@ -240,74 +229,57 @@ ai_service = AIService()
 # Thay thế process_items / process_tg_items dùng sync threads đơn thuần
 class BatchPipeline:
     """
-    Pipeline xử lý tin với nhiều worker thread song song.
-
-    Thiết kế cho 45+ feed:
-    - MAX_QUEUE_SIZE: nếu queue đầy → bỏ tin cũ nhất (tránh tắc nghẽn RAM)
-    - NUM_WORKERS: nhiều worker xử lý song song, mỗi worker 1 batch
-    - FLUSH_TIMEOUT: flush batch sau 3s dù chưa đủ BATCH_SIZE
-    - Mỗi worker tự chờ queue độc lập → không tranh nhau lock
+    Pipeline async xử lý tin theo batch với timeout flush.
+    - put(item): đẩy item vào queue (non-blocking)
+    - Consumer loop: gom tối đa BATCH_SIZE item, hoặc flush sau FLUSH_TIMEOUT giây
+      → tránh delay khi traffic thấp (không cần đủ 5 item mới xử lý)
     """
-    BATCH_SIZE     = 5
-    FLUSH_TIMEOUT  = 3.0
-    NUM_WORKERS    = 4       # số worker thread song song
-    MAX_QUEUE_SIZE = 200     # tối đa 200 item trong queue, quá thì drop cũ nhất
+    BATCH_SIZE    = 5
+    FLUSH_TIMEOUT = 3.0   # giây: flush batch dù chưa đủ BATCH_SIZE
 
     def __init__(self):
-        self._q = _queue.Queue(maxsize=self.MAX_QUEUE_SIZE)
-        self._threads = []
+        self._q = _queue.Queue()
+        self._thread = None
 
     def start(self):
-        for i in range(self.NUM_WORKERS):
-            t = threading.Thread(target=self._worker_loop, args=(i,), daemon=True)
-            t.start()
-            self._threads.append(t)
-        print(f'[Pipeline] {self.NUM_WORKERS} workers khởi động, queue max={self.MAX_QUEUE_SIZE}')
+        self._thread = threading.Thread(target=self._consumer_loop, daemon=True)
+        self._thread.start()
 
     def put(self, item):
-        """Non-blocking put — nếu queue đầy thì drop item cũ nhất để nhường chỗ item mới"""
-        try:
-            self._q.put_nowait(item)
-        except _queue.Full:
-            # Queue đầy → drop item cũ nhất (get + put_nowait)
-            try:
-                dropped = self._q.get_nowait()
-                print(f'[Pipeline] Queue đầy — drop tin cũ: {dropped.get("guid","?")}')
-                self._q.put_nowait(item)
-            except _queue.Empty:
-                pass  # race condition hiếm gặp, bỏ qua
+        self._q.put(item)
 
-    def _worker_loop(self, worker_id):
+    def _consumer_loop(self):
         while True:
             batch = []
             deadline = time.time() + self.FLUSH_TIMEOUT
+            # Chờ item đầu tiên (blocking, timeout=FLUSH_TIMEOUT)
             try:
                 first = self._q.get(timeout=self.FLUSH_TIMEOUT)
                 batch.append(first)
             except _queue.Empty:
-                continue
+                continue  # không có gì trong FLUSH_TIMEOUT → loop tiếp
 
-            # Drain thêm không block cho đến hết BATCH_SIZE hoặc deadline
+            # Drain thêm không block cho đến hết BATCH_SIZE hoặc hết deadline
             while len(batch) < self.BATCH_SIZE:
                 remaining = deadline - time.time()
                 if remaining <= 0:
-                    break
+                    break  # hết timeout → flush ngay dù chưa đủ batch
                 try:
                     item = self._q.get(timeout=min(remaining, 0.1))
                     batch.append(item)
                 except _queue.Empty:
-                    break
+                    break  # queue trống → flush luôn
 
             if batch:
                 try:
-                    self._process_batch(batch, worker_id)
+                    self._process_batch(batch)
                 except Exception as e:
-                    print(f'[Pipeline W{worker_id}] Batch lỗi: {e}')
+                    print(f'[Pipeline] Batch lỗi: {e}')
 
-    def _process_batch(self, batch, worker_id=0):
+    def _process_batch(self, batch):
         """
-        Xử lý một batch: AI translate → broadcast UI → forward Telethon.
-        Chạy trên worker thread riêng — nhiều batch song song.
+        Xử lý một batch: AI translate → route → broadcast UI → forward qua Telethon.
+        Không còn download bytes — Telethon gửi thẳng msg.media object hoặc URL.
         """
         by_feed = {}
         for item in batch:
@@ -324,8 +296,8 @@ class BatchPipeline:
                 item['text_translated'] = translated
                 desc_html = translated.replace('\n', '<br>')
                 title     = (translated[:80] + '...') if len(translated) > 80 else translated
-                item['desc']       = desc_html
-                item['title']      = title
+                item['desc']      = desc_html
+                item['title']     = title
                 item['translated'] = True
                 item['show_link']  = item.get('show_link', True)
                 processed.append(item)
@@ -333,22 +305,19 @@ class BatchPipeline:
             if not processed:
                 continue
 
-            # 1. Broadcast lên UI ngay
+            # 1. Broadcast lên UI ngay (không chờ forward)
             ws_items = [{k: v for k, v in it.items()
                          if k not in ('_tg_has_media', 'text', 'text_translated')}
                         for it in processed]
             broadcast({'type': 'new_items', 'url': feed_url, 'items': ws_items})
 
-            # 2. Forward Telethon trên thread riêng (không block worker)
+            # 2. Forward qua Telethon trên thread riêng
             feed_category = processed[0].get('category', '')
             threading.Thread(
                 target=_do_forward,
                 args=(processed, feed_category, feed_url),
                 daemon=True
             ).start()
-
-    def qsize(self):
-        return self._q.qsize()
 
 def _map_category(ai_category):
     """
@@ -409,33 +378,23 @@ tg_phone_code_hash = None   # lưu phone_code_hash khi gửi OTP
 # --- HÀM TIỆN ÍCH ---
 def _translate_with_engine(text, engine=None):
     """
-    Dịch text sang tiếng Việt — dùng cho manual translate (process_items/process_tg_items).
-    Route qua ai_service để tôn trọng circuit breaker, tránh spam 429.
-    Nếu UI chọn engine cụ thể → ưu tiên engine đó, nhưng vẫn fallback nếu circuit open.
+    Dịch text sang tiếng Việt.
+    - Nếu engine chỉ định → dùng engine đó (override thủ công từ UI dropdown).
+    - Nếu engine lỗi → fallback về AIService rotation thay vì chỉ Google.
     """
     if not text or len(text.strip()) < 4:
         return text
     eng = engine or translate_engine
-    # Kiểm tra circuit breaker trước khi gọi
-    if eng == 'gemini' and ai_service._is_open('gemini'):
-        # Gemini đang bị circuit open → dùng ai_service rotation (bỏ qua Gemini)
-        translated, _ = ai_service.process(text)
-        return translated or text
-    if eng == 'deepl' and ai_service._is_open('deepl'):
-        translated, _ = ai_service.process(text)
-        return translated or text
-    # Gọi engine được chỉ định
     try:
         if eng == 'gemini' and GEMINI_API_KEY:
-            result = ai_service._run_gemini(text)
-            return result[0] if result else _translate_google(text)
+            return _translate_gemini(text)
         elif eng == 'deepl' and DEEPL_API_KEY:
-            result = ai_service._run_deepl(text)
-            return result[0] if result else _translate_google(text)
+            return _translate_deepl(text)
         else:
             return _translate_google(text)
     except Exception as e:
         print(f'[!] Dịch [{eng}] lỗi: {e}, fallback AI rotation')
+        # Fallback về AIService rotation (Gemini→DeepL→Google) thay vì chỉ Google
         translated, _ = ai_service.process(text)
         return translated or text
 
@@ -924,8 +883,8 @@ class WsConn:
     def recv(self):
         """Đọc một WebSocket frame, trả về string hoặc None nếu đóng."""
         try:
-            # Timeout 120s — đủ lâu để server bận init 45 feeds mà không bị cắt
-            self._sock.settimeout(120)
+            # ⚠️ Set timeout 30s để phát hiện disconnect nhanh
+            self._sock.settimeout(30)
             
             header = self._recvexact(2)
             opcode = header[0] & 0x0f
@@ -954,10 +913,7 @@ class WsConn:
                         pass
                 return self.recv()
             return data.decode('utf-8', errors='replace')
-        except socket.timeout:
-            # Timeout không phải disconnect — server đang bận, thử lại
-            return ''   # trả về chuỗi rỗng, ws_handler sẽ bỏ qua
-        except (ConnectionError, OSError, BrokenPipeError):
+        except (ConnectionError, OSError, socket.timeout, BrokenPipeError):
             print(f'[WS] recv disconnected')
             return None
         except Exception as e:
@@ -976,8 +932,6 @@ class WsConn:
             msg = self.recv()
             if msg is None:
                 break
-            if msg == '':
-                continue  # socket.timeout — không phải disconnect, chờ tiếp
             yield msg
 
 
@@ -1676,86 +1630,35 @@ function getVisible(){
     return items;
 }
 
-// --- State mở/đóng tin — dùng guid thay vì index để không bị reset khi re-render ---
-const openBodies = new Set();  // guid của các tin đang mở
-
 function renderStream(){
     const visible=getVisible(),stream=document.getElementById('stream');
     document.getElementById('item-count').textContent=visible.length+' bài';
     if(!visible.length){stream.innerHTML='<div style="color:#aaa;padding:3rem;text-align:center">Không có bài</div>';return;}
-
-    const slice=visible.slice(0,shownCount);
-
-    // Smart merge: chỉ thêm DOM node mới, không xoá node cũ còn dùng
-    const existingGuids=new Set(
-        Array.from(stream.querySelectorAll('.item[data-guid]')).map(el=>el.dataset.guid)
-    );
-    const newGuids=new Set(slice.map(it=>it.guid||''));
-
-    // Xoá node không còn trong danh sách hiển thị
-    stream.querySelectorAll('.item[data-guid]').forEach(el=>{
-        if(!newGuids.has(el.dataset.guid)) el.remove();
-    });
-
-    // Rebuild theo đúng thứ tự — dùng DocumentFragment để tránh reflow nhiều lần
-    const frag=document.createDocumentFragment();
-    slice.forEach((it,i)=>{
-        const guid=it.guid||('tmp_'+i);
-        let el=stream.querySelector(`.item[data-guid="${CSS.escape(guid)}"]`);
-        if(!el){
-            // Tin mới — tạo node
-            el=_buildItemEl(it,guid);
-            // Nếu trước đó đang mở → restore
-            if(openBodies.has(guid)){
-                const body=el.querySelector('.item-body-div');
-                if(body) body.style.display='block';
-            }
-        } else {
-            // Tin cũ — cập nhật selected state nếu cần, giữ nguyên open/close
-            el.classList.toggle('selected',selected.has(guid));
-        }
-        frag.appendChild(el);
-    });
-    stream.innerHTML='';
-    stream.appendChild(frag);
+    stream.innerHTML=visible.slice(0,shownCount).map((it,i)=>itemHTML(it,i)).join('');
 }
 
-function _buildItemEl(it,guid){
-    const isSel=selected.has(guid);
+function itemHTML(it,i){
+    const isSel=selected.has(it.guid),guid=it.guid||('tmp_'+i+'_'+Date.now());
     const titleText=it.title||(it.category?`(${it.category})`:'(không tiêu đề)');
     const safeGuid=String(guid).replace(/"/g,'&quot;').replace(/'/g,'&#39;');
     const sourceBadge=isTgSource(it.feedUrl||'')?'<span class="feed-badge badge-tg">TG</span>':'';
-    const div=document.createElement('div');
-    div.className='item'+(isSel?' selected':'');
-    div.dataset.guid=guid;
-    div.innerHTML=`
+    return `<div class="item${isSel?' selected':''}" data-guid="${safeGuid}">
         <div style="display:flex;gap:8px;padding:.85rem">
             <input type="checkbox"${isSel?' checked':''} onchange="toggleSelect('${safeGuid}',this.checked)">
             <div style="flex:1">
                 <div style="font-weight:600;font-size:.88rem;color:#1a1a1a">${titleText}${sourceBadge}</div>
                 <div style="font-size:11px;color:#aaa;margin-top:3px">${it.feedName||''}</div>
             </div>
-            <span onclick="toggleBody('${safeGuid}',this)" style="cursor:pointer;color:#ccc;user-select:none">+</span>
+            <span onclick="toggleBody(${i})" style="cursor:pointer;color:#ccc">+</span>
         </div>
-        <div class="item-body-div" style="display:none;padding:0 1.1rem .9rem;border-top:1px solid #f4f4f0;line-height:1.6">${it.desc||''}</div>
-        ${it.link?`<div class="item-footer"><a href="${it.link}" target="_blank">Xem bài gốc →</a></div>`:''}`;
-    return div;
+        <div id="b${i}" style="display:none;padding:0 1.1rem .9rem;border-top:1px solid #f4f4f0;line-height:1.6">${it.desc||''}</div>
+        ${it.link?`<div class="item-footer"><a href="${it.link}" target="_blank">Xem bài gốc →</a></div>`:''}
+    </div>`;
 }
 
-function itemHTML(it,i){
-    // Kept for compatibility — không còn dùng trong renderStream
-    return _buildItemEl(it, it.guid||('tmp_'+i)).outerHTML;
-}
-
-function toggleBody(guid, btn){
-    const el=document.querySelector(`.item[data-guid="${CSS.escape(guid)}"]`);
-    if(!el) return;
-    const body=el.querySelector('.item-body-div');
-    if(!body) return;
-    const isOpen=body.style.display!=='none';
-    body.style.display=isOpen?'none':'block';
-    if(btn) btn.textContent=isOpen?'+':'−';
-    if(isOpen) openBodies.delete(guid); else openBodies.add(guid);
+function toggleBody(i){
+    const b=document.getElementById('b'+i);
+    if(b) b.style.display=b.style.display==='none'?'block':'none';
 }
 
 function toggleSelect(guid,checked){
@@ -1773,7 +1676,7 @@ function clearSelection(){
 // --- Fetch & Poll ---
 async function fetchAndMerge(url,feedName,category,markNew){
     try{
-        let items;
+        let endpoint,items;
         if(isTgSource(url)){
             const r=await fetch('/tl_fetch?url='+encodeURIComponent(url)+'&translate='+(translateOn?'1':'0')+'&category='+encodeURIComponent(category));
             if(!r.ok) throw new Error('HTTP '+r.status);
@@ -1799,14 +1702,7 @@ async function fetchAndMerge(url,feedName,category,markNew){
 }
 
 async function manualRefreshAll(){
-    // RSS song song, TG tuần tự với delay để không flood server
-    const rssFeed=feeds.filter(f=>!isTgSource(f.url));
-    const tgFeed=feeds.filter(f=>isTgSource(f.url));
-    await Promise.all(rssFeed.map(f=>fetchAndMerge(f.url,f.name,f.category,false)));
-    for(const f of tgFeed){
-        await fetchAndMerge(f.url,f.name,f.category,false);
-        await new Promise(r=>setTimeout(r,300)); // 300ms delay giữa các TG feed
-    }
+    await Promise.all(feeds.map(f=>fetchAndMerge(f.url,f.name,f.category,false)));
 }
 
 // --- Poll timer ---
@@ -1836,34 +1732,19 @@ function connectWS(){
     ws.onopen=()=>{
         wsReady=true;document.getElementById('ws-dot').className='ws-dot on';
         document.getElementById('ws-lbl').textContent='Đang theo dõi';
-
-        const feedsPayload=feeds.map(f=>({url:f.url,name:f.name,category:f.category,
-            show_link:f.show_link!==false,auto_fwd:f.auto_fwd===true,
-            target_channels:f.target_channels||[]}));
-        const feedsMsg=JSON.stringify({type:'feeds',feeds:feedsPayload});
-        console.log('[WS] feeds message size:', feedsMsg.length, 'bytes,', feeds.length, 'feeds');
-
-        // Gửi tuần tự với delay — tránh Render LB drop frames
-        const initMsgs=[
-            {type:'feeds',feeds:feedsPayload},
-            {type:'tg_settings',channels:tgChannels},
-            {type:'auto_fwd',enabled:autoFwd,channels:tgChannels},
-            {type:'categories',categories},
-            {type:'translate_engine',engine:translateEngine},
-        ];
-        initMsgs.forEach((msg,i)=>{
-            setTimeout(()=>{
-                if(wsReady) wsSend(msg);
-            }, i*150);  // 150ms giữa mỗi message
-        });
-
-        // Fetch RSS sau khi init xong
+        wsSend({type:'feeds',feeds:feeds.map(f=>({url:f.url,name:f.name,category:f.category,show_link:f.show_link!==false,auto_fwd:f.auto_fwd===true,target_channels:f.target_channels||[]}))});
+        wsSend({type:'tg_settings',channels:tgChannels});
+        wsSend({type:'auto_fwd',enabled:autoFwd,channels:tgChannels});
+        wsSend({type:'categories',categories});
+        wsSend({type:'translate_engine',engine:translateEngine});
+        // Khi reconnect: chỉ fetch lại RSS feeds (nhanh), TG feeds sẽ nhận qua WS broadcast
         if(wsReconnectCount>0){
             setTimeout(()=>{
                 feeds.filter(f=>!isTgSource(f.url)).forEach(f=>fetchAndMerge(f.url,f.name,f.category,false));
-            }, initMsgs.length*150+500);
+            }, 1000);
         }
         wsReconnectCount++;
+        // Heartbeat từ client mỗi 10s để tránh Render LB cắt connection
         if(wsHeartbeatTimer) clearInterval(wsHeartbeatTimer);
         wsHeartbeatTimer=setInterval(()=>{
             if(wsReady) wsSend({type:'heartbeat'});
@@ -1913,11 +1794,7 @@ function showToastMsg(msg){
     const sel=document.getElementById('engine-select');
     if(sel) sel.value=translateEngine;
     connectWS();
-    // Chỉ load RSS feeds ngay lập tức
-    // TG feeds: không gọi /tl_fetch lúc init vì server đang bận setup realtime listeners
-    // TG feed history sẽ đến qua WS broadcast từ _init_tg_feed
-    const rssFeeds=feeds.filter(f=>!isTgSource(f.url));
-    rssFeeds.forEach(f=>fetchAndMerge(f.url,f.name,f.category,false));
+    feeds.forEach(f=>fetchAndMerge(f.url,f.name,f.category,false));
 })();
 </script>
 </body>
@@ -2138,14 +2015,10 @@ async def _tg_send_item(dest_channel, item, caption):
         return False
 
 
-# Semaphore giới hạn số lượng Telethon send đồng thời — tránh flood MTProto
-_send_semaphore = threading.Semaphore(3)  # tối đa 3 send song song
-
 def _do_forward(processed, category, url):
     """
-    Gửi tin lên các kênh đích qua Telethon.
+    Gửi tin lên các kênh đích qua Telethon (thay thế Bot API hoàn toàn).
     Routing: master → tất cả, category/group → chỉ kênh khớp category.
-    Dùng _send_semaphore để giới hạn concurrent sends, tránh flood.
     """
     with lock:
         do_fwd   = auto_fwd_enabled
@@ -2174,6 +2047,7 @@ def _do_forward(processed, category, url):
         if not should_send:
             continue
 
+        # dest_channel: dùng field 'username' (dạng @channel hoặc -100xxx)
         dest = ch.get('username') or ch.get('channel_id', '')
         if not dest:
             print(f'[Forward] Kênh "{ch.get("name")}" thiếu username — bỏ qua')
@@ -2182,7 +2056,8 @@ def _do_forward(processed, category, url):
         channel_name = ch.get('name', dest)
         show_link    = feed_cfg.get('show_link', True)
 
-        for it in reversed(processed):
+        for it in reversed(processed):  # gửi theo thứ tự cũ → mới
+            # Build caption
             desc_plain = strip_html(it.get('desc', '').replace('<br>', '\n')).strip()
             caption    = desc_plain
             if show_link and it.get('link'):
@@ -2190,17 +2065,11 @@ def _do_forward(processed, category, url):
             if channel_name:
                 caption += f'\n\n<i>{channel_name}</i>'
 
-            # Giới hạn concurrent sends qua semaphore
-            with _send_semaphore:
-                try:
-                    ok = tg_run(_tg_send_item(dest, it, caption))
-                except Exception as e:
-                    print(f'[Forward] tg_run lỗi: {e}')
-                    ok = False
+            ok = tg_run(_tg_send_item(dest, it, caption))
             if ok:
                 total_sent += 1
-            # Delay chống flood Telegram (0.3s đủ cho text, media cần nhiều hơn)
-            time.sleep(0.3)
+            # Delay nhỏ giữa các tin để tránh flood
+            time.sleep(0.5)
 
     if total_sent > 0:
         broadcast({'type': 'auto_fwd_sent', 'count': total_sent, 'url': url})
@@ -2404,9 +2273,6 @@ def poller():
             broadcast({'type': 'poll_status', 'interval': POLL_INTERVAL, 'next_in': POLL_INTERVAL})
 
         time.sleep(0.5)   # check queue thường xuyên hơn
-        # Log queue size định kỳ nếu có items chờ
-        if _pipeline.qsize() > 10:
-            print(f'[Pipeline] Queue: {_pipeline.qsize()} items đang chờ xử lý')
 
 def ws_handler(ws):
     global translate_enabled, auto_fwd_enabled, tg_channels, categories, translate_engine
@@ -2440,10 +2306,7 @@ def ws_handler(ws):
 
             t = msg.get('type')
             if t == 'heartbeat':
-                continue
-
-            # Debug log — xác nhận server nhận được message
-            print(f'[WS] msg #{msg_count}: type={t} size={len(raw)}b')
+                continue  # Bỏ qua heartbeat client gửi lên (nếu có)
 
             if t == 'feeds':
                 urls = msg.get('feeds', [])
@@ -2457,10 +2320,7 @@ def ws_handler(ws):
                             known_guids[u['url']] = None
                 tg_urls = [u['url'] for u in urls if is_tg_source(u['url'])]
                 if tg_urls and TELETHON_AVAILABLE and tg_client:
-                    # QUAN TRỌNG: chạy trên thread riêng, KHÔNG block ws_handler
-                    # tg_setup_realtime_sync có thể mất vài giây với nhiều feed
-                    threading.Thread(target=tg_setup_realtime_sync,
-                                     args=(tg_urls,), daemon=True).start()
+                    threading.Thread(target=tg_setup_realtime_sync, args=(tg_urls,), daemon=True).start()
             elif t == 'translate':
                 translate_enabled = msg.get('enabled', True)
             elif t == 'translate_engine':

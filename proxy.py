@@ -1630,35 +1630,86 @@ function getVisible(){
     return items;
 }
 
+// --- State mở/đóng tin — dùng guid thay vì index để không bị reset khi re-render ---
+const openBodies = new Set();  // guid của các tin đang mở
+
 function renderStream(){
     const visible=getVisible(),stream=document.getElementById('stream');
     document.getElementById('item-count').textContent=visible.length+' bài';
     if(!visible.length){stream.innerHTML='<div style="color:#aaa;padding:3rem;text-align:center">Không có bài</div>';return;}
-    stream.innerHTML=visible.slice(0,shownCount).map((it,i)=>itemHTML(it,i)).join('');
+
+    const slice=visible.slice(0,shownCount);
+
+    // Smart merge: chỉ thêm DOM node mới, không xoá node cũ còn dùng
+    const existingGuids=new Set(
+        Array.from(stream.querySelectorAll('.item[data-guid]')).map(el=>el.dataset.guid)
+    );
+    const newGuids=new Set(slice.map(it=>it.guid||''));
+
+    // Xoá node không còn trong danh sách hiển thị
+    stream.querySelectorAll('.item[data-guid]').forEach(el=>{
+        if(!newGuids.has(el.dataset.guid)) el.remove();
+    });
+
+    // Rebuild theo đúng thứ tự — dùng DocumentFragment để tránh reflow nhiều lần
+    const frag=document.createDocumentFragment();
+    slice.forEach((it,i)=>{
+        const guid=it.guid||('tmp_'+i);
+        let el=stream.querySelector(`.item[data-guid="${CSS.escape(guid)}"]`);
+        if(!el){
+            // Tin mới — tạo node
+            el=_buildItemEl(it,guid);
+            // Nếu trước đó đang mở → restore
+            if(openBodies.has(guid)){
+                const body=el.querySelector('.item-body-div');
+                if(body) body.style.display='block';
+            }
+        } else {
+            // Tin cũ — cập nhật selected state nếu cần, giữ nguyên open/close
+            el.classList.toggle('selected',selected.has(guid));
+        }
+        frag.appendChild(el);
+    });
+    stream.innerHTML='';
+    stream.appendChild(frag);
 }
 
-function itemHTML(it,i){
-    const isSel=selected.has(it.guid),guid=it.guid||('tmp_'+i+'_'+Date.now());
+function _buildItemEl(it,guid){
+    const isSel=selected.has(guid);
     const titleText=it.title||(it.category?`(${it.category})`:'(không tiêu đề)');
     const safeGuid=String(guid).replace(/"/g,'&quot;').replace(/'/g,'&#39;');
     const sourceBadge=isTgSource(it.feedUrl||'')?'<span class="feed-badge badge-tg">TG</span>':'';
-    return `<div class="item${isSel?' selected':''}" data-guid="${safeGuid}">
+    const div=document.createElement('div');
+    div.className='item'+(isSel?' selected':'');
+    div.dataset.guid=guid;
+    div.innerHTML=`
         <div style="display:flex;gap:8px;padding:.85rem">
             <input type="checkbox"${isSel?' checked':''} onchange="toggleSelect('${safeGuid}',this.checked)">
             <div style="flex:1">
                 <div style="font-weight:600;font-size:.88rem;color:#1a1a1a">${titleText}${sourceBadge}</div>
                 <div style="font-size:11px;color:#aaa;margin-top:3px">${it.feedName||''}</div>
             </div>
-            <span onclick="toggleBody(${i})" style="cursor:pointer;color:#ccc">+</span>
+            <span onclick="toggleBody('${safeGuid}',this)" style="cursor:pointer;color:#ccc;user-select:none">+</span>
         </div>
-        <div id="b${i}" style="display:none;padding:0 1.1rem .9rem;border-top:1px solid #f4f4f0;line-height:1.6">${it.desc||''}</div>
-        ${it.link?`<div class="item-footer"><a href="${it.link}" target="_blank">Xem bài gốc →</a></div>`:''}
-    </div>`;
+        <div class="item-body-div" style="display:none;padding:0 1.1rem .9rem;border-top:1px solid #f4f4f0;line-height:1.6">${it.desc||''}</div>
+        ${it.link?`<div class="item-footer"><a href="${it.link}" target="_blank">Xem bài gốc →</a></div>`:''}`;
+    return div;
 }
 
-function toggleBody(i){
-    const b=document.getElementById('b'+i);
-    if(b) b.style.display=b.style.display==='none'?'block':'none';
+function itemHTML(it,i){
+    // Kept for compatibility — không còn dùng trong renderStream
+    return _buildItemEl(it, it.guid||('tmp_'+i)).outerHTML;
+}
+
+function toggleBody(guid, btn){
+    const el=document.querySelector(`.item[data-guid="${CSS.escape(guid)}"]`);
+    if(!el) return;
+    const body=el.querySelector('.item-body-div');
+    if(!body) return;
+    const isOpen=body.style.display!=='none';
+    body.style.display=isOpen?'none':'block';
+    if(btn) btn.textContent=isOpen?'+':'−';
+    if(isOpen) openBodies.delete(guid); else openBodies.add(guid);
 }
 
 function toggleSelect(guid,checked){

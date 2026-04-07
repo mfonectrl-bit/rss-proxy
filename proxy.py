@@ -1847,9 +1847,9 @@ function connectWS(){
 
         // Gửi feeds sau 400ms — đủ để Render proxy hoàn tất handshake
         // Các message còn lại gửi tuần tự sau đó
-        setTimeout(()=>{ if(wsReady) wsSend({type:'feeds',feeds:feedsPayload}); }, 400);
-        setTimeout(()=>{ if(wsReady) wsSend({type:'tg_settings',channels:tgChannels}); }, 600);
-        setTimeout(()=>{ if(wsReady) wsSend({type:'auto_fwd',enabled:autoFwd,channels:tgChannels}); }, 750);
+        setTimeout(()=>{ if(wsReady) wsSend({type:'feeds',feeds:feedsPayload}); }, 800);
+        setTimeout(()=>{ if(wsReady) wsSend({type:'tg_settings',channels:tgChannels}); }, 800);
+        setTimeout(()=>{ if(wsReady) wsSend({type:'auto_fwd',enabled:autoFwd,channels:tgChannels}); }, 800);
         setTimeout(()=>{ if(wsReady) wsSend({type:'categories',categories}); }, 900);
         setTimeout(()=>{ if(wsReady) wsSend({type:'translate_engine',engine:translateEngine}); }, 1050);
 

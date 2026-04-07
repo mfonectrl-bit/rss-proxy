@@ -74,6 +74,10 @@ class AIService:
         with self._lock:
             if time.time() < self._open_until[provider]:
                 return True
+            # Circuit hết cooldown → reset fail_count (half-open)
+            if self._open_until[provider] > 0:
+                self._fail_count[provider] = 0
+                self._open_until[provider] = 0.0
             return False
 
     def _record_success(self, provider):
@@ -84,7 +88,9 @@ class AIService:
     def _record_failure(self, provider, is_rate_limit=False):
         with self._lock:
             self._fail_count[provider] += 1
-            if self._fail_count[provider] >= self.FAIL_THRESHOLD:
+            # Chỉ mở circuit khi vừa đúng ngưỡng (= FAIL_THRESHOLD), không lặp lại
+            already_open = time.time() < self._open_until[provider]
+            if self._fail_count[provider] >= self.FAIL_THRESHOLD and not already_open:
                 cooldown = self.COOLDOWN * (2 if is_rate_limit else 1)
                 self._open_until[provider] = time.time() + cooldown
                 print(f'[AI] Circuit OPEN: {provider} — nghỉ {cooldown:.0f}s')
@@ -92,6 +98,9 @@ class AIService:
     def _run_gemini(self, text):
         """Dịch + classify category bằng Gemini với retry/backoff khi 429"""
         if not GEMINI_API_KEY:
+            return None
+        # Guard: không gọi API nếu circuit đã mở
+        if self._is_open('gemini'):
             return None
         prompt = (
             'Translate the following text to Vietnamese. '
@@ -140,6 +149,8 @@ class AIService:
     def _run_deepl(self, text):
         """Dịch bằng DeepL"""
         if not DEEPL_API_KEY:
+            return None
+        if self._is_open('deepl'):
             return None
         try:
             base = 'api-free.deepl.com' if DEEPL_API_KEY.endswith(':fx') else 'api.deepl.com'

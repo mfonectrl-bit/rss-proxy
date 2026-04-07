@@ -1836,19 +1836,34 @@ function connectWS(){
     ws.onopen=()=>{
         wsReady=true;document.getElementById('ws-dot').className='ws-dot on';
         document.getElementById('ws-lbl').textContent='Đang theo dõi';
-        wsSend({type:'feeds',feeds:feeds.map(f=>({url:f.url,name:f.name,category:f.category,show_link:f.show_link!==false,auto_fwd:f.auto_fwd===true,target_channels:f.target_channels||[]}))});
-        wsSend({type:'tg_settings',channels:tgChannels});
-        wsSend({type:'auto_fwd',enabled:autoFwd,channels:tgChannels});
-        wsSend({type:'categories',categories});
-        wsSend({type:'translate_engine',engine:translateEngine});
-        // Khi reconnect: chỉ fetch lại RSS feeds (nhanh), TG feeds sẽ nhận qua WS broadcast
+
+        const feedsPayload=feeds.map(f=>({url:f.url,name:f.name,category:f.category,
+            show_link:f.show_link!==false,auto_fwd:f.auto_fwd===true,
+            target_channels:f.target_channels||[]}));
+        const feedsMsg=JSON.stringify({type:'feeds',feeds:feedsPayload});
+        console.log('[WS] feeds message size:', feedsMsg.length, 'bytes,', feeds.length, 'feeds');
+
+        // Gửi tuần tự với delay — tránh Render LB drop frames
+        const initMsgs=[
+            {type:'feeds',feeds:feedsPayload},
+            {type:'tg_settings',channels:tgChannels},
+            {type:'auto_fwd',enabled:autoFwd,channels:tgChannels},
+            {type:'categories',categories},
+            {type:'translate_engine',engine:translateEngine},
+        ];
+        initMsgs.forEach((msg,i)=>{
+            setTimeout(()=>{
+                if(wsReady) wsSend(msg);
+            }, i*150);  // 150ms giữa mỗi message
+        });
+
+        // Fetch RSS sau khi init xong
         if(wsReconnectCount>0){
             setTimeout(()=>{
                 feeds.filter(f=>!isTgSource(f.url)).forEach(f=>fetchAndMerge(f.url,f.name,f.category,false));
-            }, 1000);
+            }, initMsgs.length*150+500);
         }
         wsReconnectCount++;
-        // Heartbeat từ client mỗi 10s để tránh Render LB cắt connection
         if(wsHeartbeatTimer) clearInterval(wsHeartbeatTimer);
         wsHeartbeatTimer=setInterval(()=>{
             if(wsReady) wsSend({type:'heartbeat'});
@@ -2425,7 +2440,10 @@ def ws_handler(ws):
 
             t = msg.get('type')
             if t == 'heartbeat':
-                continue  # Bỏ qua heartbeat client gửi lên (nếu có)
+                continue
+
+            # Debug log — xác nhận server nhận được message
+            print(f'[WS] msg #{msg_count}: type={t} size={len(raw)}b')
 
             if t == 'feeds':
                 urls = msg.get('feeds', [])

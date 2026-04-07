@@ -1920,6 +1920,32 @@ def _split_text(text, max_len):
     return [c for c in chunks if c]
 
 
+async def _resolve_dest(dest_channel):
+    """
+    Resolve kênh đích về Telethon entity.
+    - @username → dùng trực tiếp (Telethon tự resolve)
+    - ID số (-100xxx hoặc xxx) → dùng PeerChannel để Telethon nhận ra
+    Trả về entity đã resolve, hoặc raise nếu không tìm được.
+    """
+    dest = str(dest_channel).strip()
+    # Nếu là ID số (có thể có dấu -)
+    if dest.lstrip('-').isdigit():
+        channel_id = int(dest)
+        # Telethon dùng PeerChannel với ID không có prefix -100
+        if str(channel_id).startswith('-100'):
+            channel_id = int(str(channel_id)[4:])  # bỏ prefix -100
+        from telethon.tl.types import PeerChannel
+        try:
+            entity = await tg_client.get_entity(PeerChannel(channel_id))
+            return entity
+        except Exception:
+            # Fallback: thử get_input_entity với ID gốc
+            entity = await tg_client.get_input_entity(int(dest))
+            return entity
+    # Username (@channel hoặc channel)
+    return dest
+
+
 async def _tg_send_item(dest_channel, item, caption):
     """
     Gửi 1 item lên kênh đích qua Telethon (không dùng Bot API).
@@ -1932,29 +1958,30 @@ async def _tg_send_item(dest_channel, item, caption):
     - Nếu không có media → send_message(text)
 
     Không bao giờ download bytes về RAM.
+    Hỗ trợ cả @username lẫn ID số (-100xxx).
     """
     if not tg_client:
         return False
     try:
-        source   = item.get('_source', '')
-        msg_id   = item.get('_tg_msg_id')
-        chat     = item.get('_tg_chat')
-        grouped  = item.get('_tg_grouped_id')
+        # Resolve entity trước — xử lý cả @username lẫn -100xxx
+        dest      = await _resolve_dest(dest_channel)
+        source    = item.get('_source', '')
+        msg_id    = item.get('_tg_msg_id')
+        chat      = item.get('_tg_chat')
+        grouped   = item.get('_tg_grouped_id')
         has_media = item.get('_tg_has_media', False)
-        rss_media = item.get('_rss_media_url')   # URL ảnh/video từ RSS
+        rss_media = item.get('_rss_media_url')
 
         if source == 'telethon' and has_media and msg_id and chat:
             # --- TG nguồn có media: dùng msg.media object trực tiếp ---
             with tg_semaphore:
                 if grouped:
-                    # Album: lấy các msg trong group (range quét)
                     all_msgs = await tg_client.get_messages(chat, ids=list(range(msg_id, msg_id + 10)))
                     if not isinstance(all_msgs, list):
                         all_msgs = [all_msgs] if all_msgs else []
                     group_msgs = [m for m in all_msgs
                                   if m and m.grouped_id == grouped and m.media]
                     if not group_msgs:
-                        # fallback: chỉ lấy msg chính
                         single = await tg_client.get_messages(chat, ids=msg_id)
                         group_msgs = [single] if single and single.media else []
                 else:
@@ -1965,30 +1992,22 @@ async def _tg_send_item(dest_channel, item, caption):
             if group_msgs:
                 media_list = [m.media for m in group_msgs[:10]]
                 if len(media_list) == 1:
-                    await tg_client.send_file(dest_channel, media_list[0], caption=caption, parse_mode='html')
+                    await tg_client.send_file(dest, media_list[0], caption=caption, parse_mode='html')
                 else:
-                    # Album: caption chỉ gắn vào media đầu tiên
-                    await tg_client.send_file(dest_channel, media_list,
-                                              caption=caption, parse_mode='html')
+                    await tg_client.send_file(dest, media_list, caption=caption, parse_mode='html')
                 return True
             # Không lấy được media → fallback text
-            await tg_client.send_message(dest_channel, caption, parse_mode='html',
-                                         link_preview=False)
+            await tg_client.send_message(dest, caption, parse_mode='html', link_preview=False)
             return True
 
         elif rss_media:
-            # --- RSS có URL media: để Telegram tự fetch ---
-            await tg_client.send_file(dest_channel, rss_media,
-                                      caption=caption, parse_mode='html')
+            await tg_client.send_file(dest, rss_media, caption=caption, parse_mode='html')
             return True
 
         else:
-            # --- Chỉ text ---
-            # Chia nhỏ nếu dài hơn 4096 ký tự
             chunks = _split_text(caption, 4096)
             for chunk in chunks:
-                await tg_client.send_message(dest_channel, chunk, parse_mode='html',
-                                             link_preview=False)
+                await tg_client.send_message(dest, chunk, parse_mode='html', link_preview=False)
             return True
 
     except Exception as e:

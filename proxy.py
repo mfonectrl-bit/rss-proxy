@@ -43,102 +43,51 @@ translate_engine = _default_engine()  # có thể thay đổi qua WS message
 # Không còn phụ thuộc 1 API, tránh rate limit, classify category luôn khi dùng Gemini
 class AIService:
     """
-    Multi-AI rotation engine với Circuit Breaker + Exponential Backoff.
-
-    Luồng xử lý:
-      process(text) → (translated_text, category)
-
-    Circuit Breaker (per provider):
-      - Nếu provider bị lỗi liên tiếp >= FAIL_THRESHOLD lần → "mở mạch" (skip) trong COOLDOWN giây
-      - Sau COOLDOWN → thử lại 1 lần (half-open), nếu OK → đóng mạch, nếu vẫn lỗi → gia hạn thêm COOLDOWN
-
-    Exponential Backoff (chỉ cho Gemini 429):
-      - Lần 1: chờ 2s → retry
-      - Lần 2: chờ 4s → retry
-      - Lần 3: mở circuit, fallback sang provider tiếp theo
+    Multi-AI rotation engine.
+    - process(text) → (translated_text, category)
+    - Tự động fallback: Gemini → DeepL → Google
+    - Nếu text đã là tiếng Việt → trả về nguyên, category='default'
     """
-    FAIL_THRESHOLD = 3        # số lần lỗi liên tiếp để mở circuit
-    COOLDOWN       = 60.0     # giây circuit ở trạng thái mở trước khi thử lại
-    MAX_RETRY_429  = 2        # số lần retry Gemini khi gặp 429 trước khi fallback
-    BACKOFF_BASE   = 2.0      # giây backoff cơ bản (nhân đôi mỗi lần)
-
     def __init__(self):
+        # Thứ tự ưu tiên: Gemini > DeepL > Google
         self._providers = ['gemini', 'deepl', 'google']
-        # Circuit breaker state per provider
-        self._fail_count  = {p: 0   for p in self._providers}
-        self._open_until  = {p: 0.0 for p in self._providers}  # timestamp circuit mở đến khi nào
-        self._lock = threading.Lock()
+        self._index = 0
 
-    def _is_open(self, provider):
-        """Trả về True nếu circuit đang mở (provider bị skip)"""
-        with self._lock:
-            if time.time() < self._open_until[provider]:
-                return True
-            return False
-
-    def _record_success(self, provider):
-        with self._lock:
-            self._fail_count[provider] = 0
-            self._open_until[provider] = 0.0
-
-    def _record_failure(self, provider, is_rate_limit=False):
-        with self._lock:
-            self._fail_count[provider] += 1
-            if self._fail_count[provider] >= self.FAIL_THRESHOLD:
-                cooldown = self.COOLDOWN * (2 if is_rate_limit else 1)
-                self._open_until[provider] = time.time() + cooldown
-                print(f'[AI] Circuit OPEN: {provider} — nghỉ {cooldown:.0f}s')
+    def _next_provider(self):
+        fn = self._providers[self._index]
+        self._index = (self._index + 1) % len(self._providers)
+        return fn
 
     def _run_gemini(self, text):
-        """Dịch + classify category bằng Gemini với retry/backoff khi 429"""
+        """Dịch + phân loại category bằng Gemini (trả JSON)"""
         if not GEMINI_API_KEY:
             return None
-        prompt = (
-            'Translate the following text to Vietnamese. '
-            'Also classify it into one of: politics, health, tech, finance, entertainment, default. '
-            'Return ONLY valid JSON, no markdown, no explanation: '
-            '{"text":"<translated>","category":"<category>"}.\n\nTEXT: ' + text[:3000]
-        )
-        payload = json.dumps({
-            'contents': [{'parts': [{'text': prompt}]}],
-            'generationConfig': {'temperature': 0.1, 'maxOutputTokens': 2048}
-        }).encode('utf-8')
-        url = (f'https://generativelanguage.googleapis.com/v1beta/models/'
-               f'gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}')
-
-        for attempt in range(self.MAX_RETRY_429 + 1):
-            try:
-                req  = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
-                resp = urllib.request.urlopen(req, timeout=15)
-                data = json.loads(resp.read())
-                raw  = data['candidates'][0]['content']['parts'][0]['text'].strip()
-                raw  = re.sub(r'^```[a-z]*\n?', '', raw).rstrip('`').strip()
-                result = json.loads(raw)
-                self._record_success('gemini')
-                return result.get('text', ''), result.get('category', 'default')
-            except urllib.error.HTTPError as e:
-                if e.code == 429:
-                    if attempt < self.MAX_RETRY_429:
-                        wait = self.BACKOFF_BASE * (2 ** attempt)
-                        print(f'[AI] Gemini 429 — backoff {wait:.0f}s (lần {attempt+1}/{self.MAX_RETRY_429})')
-                        time.sleep(wait)
-                        continue
-                    else:
-                        print(f'[AI] Gemini 429 — đã retry {self.MAX_RETRY_429} lần, mở circuit')
-                        self._record_failure('gemini', is_rate_limit=True)
-                        return None
-                else:
-                    print(f'[AI] Gemini HTTP {e.code}: {e}')
-                    self._record_failure('gemini')
-                    return None
-            except Exception as e:
-                print(f'[AI] Gemini lỗi: {e}')
-                self._record_failure('gemini')
-                return None
-        return None
+        try:
+            prompt = (
+                'Translate the following text to Vietnamese. '
+                'Also classify it into one of: politics, health, tech, finance, entertainment, default. '
+                'Return ONLY valid JSON, no markdown, no explanation: '
+                '{"text":"<translated>","category":"<category>"}.\n\nTEXT: ' + text[:3000]
+            )
+            payload = json.dumps({
+                'contents': [{'parts': [{'text': prompt}]}],
+                'generationConfig': {'temperature': 0.1, 'maxOutputTokens': 2048}
+            }).encode('utf-8')
+            url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}'
+            req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
+            resp = urllib.request.urlopen(req, timeout=15)
+            data = json.loads(resp.read())
+            raw = data['candidates'][0]['content']['parts'][0]['text'].strip()
+            # Strip markdown code fences nếu có
+            raw = re.sub(r'^```[a-z]*\n?', '', raw).rstrip('`').strip()
+            result = json.loads(raw)
+            return result.get('text', ''), result.get('category', 'default')
+        except Exception as e:
+            print(f'[AI] Gemini lỗi: {e}')
+            return None
 
     def _run_deepl(self, text):
-        """Dịch bằng DeepL"""
+        """Dịch bằng DeepL (không classify category)"""
         if not DEEPL_API_KEY:
             return None
         try:
@@ -155,44 +104,32 @@ class AIService:
             resp = urllib.request.urlopen(req, timeout=15)
             data = json.loads(resp.read())
             translated = data['translations'][0]['text']
-            self._record_success('deepl')
             return translated, 'default'
-        except urllib.error.HTTPError as e:
-            print(f'[AI] DeepL HTTP {e.code}: {e}')
-            self._record_failure('deepl', is_rate_limit=(e.code == 429))
-            return None
         except Exception as e:
             print(f'[AI] DeepL lỗi: {e}')
-            self._record_failure('deepl')
             return None
 
     def _run_google(self, text):
-        """Google Translate — fallback cuối, luôn thành công"""
+        """Google Translate fallback — luôn thành công"""
         try:
-            result = _translate_google(text)
-            self._record_success('google')
-            return result, 'default'
+            return _translate_google(text), 'default'
         except Exception as e:
             print(f'[AI] Google lỗi: {e}')
-            self._record_failure('google')
             return text, 'default'
 
     def process(self, text):
         """
-        Xử lý text qua AI rotation với circuit breaker.
+        Xử lý text qua AI rotation.
         Trả về (translated_text, category).
-        Provider bị open circuit → bị skip, thử provider tiếp theo.
+        Nếu text đã là tiếng Việt → (text, 'default') không tốn API call.
         """
         if not text or len(text.strip()) < 4:
             return text, 'default'
+        # Kiểm tra nếu đã là tiếng Việt
         if is_vietnamese(text[:400]):
             return text, 'default'
-
+        # Thử từng provider theo thứ tự ưu tiên
         for provider in self._providers:
-            if self._is_open(provider):
-                remaining = max(0, self._open_until[provider] - time.time())
-                print(f'[AI] Skip {provider} (circuit open, còn {remaining:.0f}s)')
-                continue
             result = None
             if provider == 'gemini':
                 result = self._run_gemini(text)
@@ -204,22 +141,7 @@ class AIService:
                 translated, category = result
                 if translated:
                     return translated, category
-        # Tất cả fail → trả về text gốc
-        print('[AI] Tất cả provider thất bại, giữ nguyên text gốc')
         return text, 'default'
-
-    def status(self):
-        """Trả về dict trạng thái circuit breaker để debug/monitoring"""
-        now = time.time()
-        with self._lock:
-            return {
-                p: {
-                    'fail_count': self._fail_count[p],
-                    'open': now < self._open_until[p],
-                    'cooldown_remaining': max(0, round(self._open_until[p] - now))
-                }
-                for p in self._providers
-            }
 
 # Singleton AI service — dùng chung toàn bộ app
 ai_service = AIService()
@@ -229,13 +151,11 @@ ai_service = AIService()
 # Thay thế process_items / process_tg_items dùng sync threads đơn thuần
 class BatchPipeline:
     """
-    Pipeline async xử lý tin theo batch với timeout flush.
-    - put(item): đẩy item vào queue (non-blocking)
-    - Consumer loop: gom tối đa BATCH_SIZE item, hoặc flush sau FLUSH_TIMEOUT giây
-      → tránh delay khi traffic thấp (không cần đủ 5 item mới xử lý)
+    Pipeline async xử lý tin theo batch.
+    - producer(item): đẩy item vào queue
+    - Batch consumer chạy trên thread riêng: gom tối đa BATCH_SIZE item/lượt, xử lý AI, broadcast + forward
     """
-    BATCH_SIZE    = 5
-    FLUSH_TIMEOUT = 3.0   # giây: flush batch dù chưa đủ BATCH_SIZE
+    BATCH_SIZE = 5
 
     def __init__(self):
         self._q = _queue.Queue()
@@ -246,29 +166,24 @@ class BatchPipeline:
         self._thread.start()
 
     def put(self, item):
+        """Đẩy item vào queue. item = dict với keys: text, media, feed_url, category, show_link, guid, ..."""
         self._q.put(item)
 
     def _consumer_loop(self):
         while True:
             batch = []
-            deadline = time.time() + self.FLUSH_TIMEOUT
-            # Chờ item đầu tiên (blocking, timeout=FLUSH_TIMEOUT)
             try:
-                first = self._q.get(timeout=self.FLUSH_TIMEOUT)
+                # Chờ item đầu tiên (blocking)
+                first = self._q.get(timeout=1)
                 batch.append(first)
+                # Drain thêm không block
+                while len(batch) < self.BATCH_SIZE:
+                    try:
+                        batch.append(self._q.get_nowait())
+                    except _queue.Empty:
+                        break
             except _queue.Empty:
-                continue  # không có gì trong FLUSH_TIMEOUT → loop tiếp
-
-            # Drain thêm không block cho đến hết BATCH_SIZE hoặc hết deadline
-            while len(batch) < self.BATCH_SIZE:
-                remaining = deadline - time.time()
-                if remaining <= 0:
-                    break  # hết timeout → flush ngay dù chưa đủ batch
-                try:
-                    item = self._q.get(timeout=min(remaining, 0.1))
-                    batch.append(item)
-                except _queue.Empty:
-                    break  # queue trống → flush luôn
+                continue
 
             if batch:
                 try:
@@ -278,9 +193,11 @@ class BatchPipeline:
 
     def _process_batch(self, batch):
         """
-        Xử lý một batch: AI translate → route → broadcast UI → forward qua Telethon.
-        Không còn download bytes — Telethon gửi thẳng msg.media object hoặc URL.
+        Xử lý một batch: AI translate → route → broadcast UI → forward Telegram.
+        Với TG items có media: download media trước rồi mới forward (_download_and_forward).
+        Với RSS items: forward trực tiếp (_do_forward).
         """
+        # Group by feed_url để broadcast theo từng nguồn
         by_feed = {}
         for item in batch:
             fu = item.get('feed_url', '')
@@ -291,33 +208,45 @@ class BatchPipeline:
             for item in items:
                 text = item.get('text', '')
                 translated, ai_category = ai_service.process(text)
+                # Ưu tiên category từ feed config; fallback về AI category
                 if not item.get('category'):
                     item['category'] = _map_category(ai_category)
                 item['text_translated'] = translated
+                # Rebuild desc/title theo format UI
                 desc_html = translated.replace('\n', '<br>')
-                title     = (translated[:80] + '...') if len(translated) > 80 else translated
-                item['desc']      = desc_html
-                item['title']     = title
+                title = (translated[:80] + '...') if len(translated) > 80 else translated
+                item['desc'] = desc_html
+                item['title'] = title
                 item['translated'] = True
-                item['show_link']  = item.get('show_link', True)
+                item['show_link'] = item.get('show_link', True)
                 processed.append(item)
 
             if not processed:
                 continue
 
-            # 1. Broadcast lên UI ngay (không chờ forward)
+            # 1. Broadcast lên UI (không cần chờ forward)
             ws_items = [{k: v for k, v in it.items()
-                         if k not in ('_tg_has_media', 'text', 'text_translated')}
+                         if k not in ('_tg_media_bytes', '_tg_has_media', 'text', 'text_translated')}
                         for it in processed]
             broadcast({'type': 'new_items', 'url': feed_url, 'items': ws_items})
 
-            # 2. Forward qua Telethon trên thread riêng
+            # 2. Forward — tách luồng để không block pipeline
             feed_category = processed[0].get('category', '')
-            threading.Thread(
-                target=_do_forward,
-                args=(processed, feed_category, feed_url),
-                daemon=True
-            ).start()
+            is_tg = any(it.get('_source') == 'telethon' for it in processed)
+            if is_tg:
+                # TG: download media trước rồi forward
+                threading.Thread(
+                    target=_download_and_forward,
+                    args=(processed, feed_category, feed_url),
+                    daemon=True
+                ).start()
+            else:
+                # RSS: forward trực tiếp (không có bytes media để download)
+                threading.Thread(
+                    target=_do_forward,
+                    args=(processed, feed_category, feed_url),
+                    daemon=True
+                ).start()
 
 def _map_category(ai_category):
     """
@@ -556,6 +485,17 @@ def html_to_telegram(html, channel_name='', link=''):
 
     return text + footer
 
+def tg_api(bot_token, method, payload):
+    url = f'https://api.telegram.org/bot{bot_token}/{method}'
+    data = json.dumps(payload).encode('utf-8')
+    req = urllib.request.Request(url, data=data, headers={'Content-Type':'application/json'})
+    try:
+        resp = urllib.request.urlopen(req, timeout=15)
+        return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        return json.loads(e.read())
+    except Exception as e:
+        return {'ok': False, 'description': str(e)}
 
 def extract_media(desc_html):
     if not desc_html:
@@ -571,6 +511,367 @@ def extract_media(desc_html):
     imgs = list(dict.fromkeys(imgs))
     videos = list(dict.fromkeys(videos))
     return imgs, videos
+
+def tg_api_multipart(bot_token, method, fields, file_field, file_data, file_name, file_mime):
+    """Gửi multipart/form-data qua Bot API"""
+    boundary = b'----TGBoundary7x'
+    parts = []
+    for k, v in fields.items():
+        parts.append(
+            b'--' + boundary + b'\r\n' +
+            f'Content-Disposition: form-data; name="{k}"\r\n\r\n'.encode() +
+            str(v).encode('utf-8') + b'\r\n'
+        )
+    parts.append(
+        b'--' + boundary + b'\r\n' +
+        f'Content-Disposition: form-data; name="{file_field}"; filename="{file_name}"\r\n'.encode() +
+        f'Content-Type: {file_mime}\r\n\r\n'.encode() +
+        file_data + b'\r\n'
+    )
+    parts.append(b'--' + boundary + b'--\r\n')
+    body = b''.join(parts)
+    url = f'https://api.telegram.org/bot{bot_token}/{method}'
+    req = urllib.request.Request(url, data=body,
+        headers={'Content-Type': f'multipart/form-data; boundary={boundary.decode()}'})
+    try:
+        resp = urllib.request.urlopen(req, timeout=30)
+        return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        try:
+            return json.loads(e.read())
+        except:
+            return {'ok': False, 'description': str(e)}
+    except Exception as e:
+        return {'ok': False, 'description': str(e)}
+
+def _send_text_fallback(bot_token, channel_id, caption, max_text, results, title):
+    """Gửi text thuần khi không có media hoặc media fail"""
+    chunks = _split_text(caption, max_text)
+    sent_id = None
+    ok = True
+    for chunk in chunks:
+        payload = {'chat_id': channel_id, 'text': chunk, 'parse_mode': 'HTML',
+                   'disable_web_page_preview': True}
+        if sent_id:
+            payload['reply_to_message_id'] = sent_id
+        resp = tg_api(bot_token, 'sendMessage', payload)
+        if resp.get('ok') and not sent_id:
+            sent_id = resp.get('result', {}).get('message_id')
+        if not resp.get('ok'):
+            ok = False
+    results.append({'title': title, 'ok': ok, 'error': '' if ok else 'Lỗi gửi'})
+
+def send_to_telegram(bot_token, channel_id, channel_name, items, category_filter=None, channel_type='channel'):
+    results = []
+    for item in items:
+        item_cat = item.get('category', '')
+        if channel_type != 'master' and category_filter and item_cat != category_filter:
+            continue
+
+        title          = item.get('title', '').strip()
+        desc           = item.get('desc', '')
+        link           = item.get('link', '')
+        tg_media_bytes = item.get('_tg_media_bytes')
+        # show_link mặc định True nếu không có trong item
+        show_link      = item.get('show_link', True)
+
+        body    = html_to_telegram(desc, channel_name, link if show_link else '')
+        caption = (body or '').strip()
+        MAX_CAP  = 1024
+        MAX_TEXT = 4096
+
+        try:
+            if tg_media_bytes:
+                r = _send_media_then_text(bot_token, channel_id, tg_media_bytes, caption, MAX_CAP, MAX_TEXT, title, use_bytes=True)
+                # Giải phóng RAM: xóa bytes ngay sau khi gửi
+                item['_tg_media_bytes'] = None
+                results.append(r)
+            else:
+                imgs, videos = extract_media(desc)
+
+                # Xác định media để gửi:
+                # - Nếu có ảnh trực tiếp (img tag) → gửi ảnh kèm caption (thumbnail lên trên)
+                # - Nếu chỉ có video URL (thường là link trang web, không gửi được) → gửi text
+                # - Video file thật (.mp4 trực tiếp) thì thử gửi, nếu fail thì fallback text
+                send_photo_url = imgs[0] if imgs else None
+                send_video_url = None
+                if videos:
+                    v = videos[0].lower()
+                    if any(v.endswith(ext) for ext in ('.mp4', '.webm', '.mov', '.mkv')):
+                        send_video_url = videos[0]
+
+                if send_video_url:
+                    # Check kích thước video trước — nếu > 20MB thì dùng thumbnail ảnh thay thế
+                    video_too_large = False
+                    try:
+                        req_head = urllib.request.Request(send_video_url, method='HEAD',
+                            headers={'User-Agent': 'Mozilla/5.0'})
+                        with urllib.request.urlopen(req_head, timeout=5) as r:
+                            content_length = int(r.headers.get('Content-Length', 0))
+                            if content_length > 20 * 1024 * 1024:  # > 20MB
+                                video_too_large = True
+                    except Exception:
+                        pass  # Không check được size thì cứ thử gửi
+
+                    if video_too_large:
+                        # Video quá lớn → dùng thumbnail ảnh nếu có, không thì fallback text
+                        if send_photo_url:
+                            resp = tg_api(bot_token, 'sendPhoto', {
+                                'chat_id': channel_id, 'photo': send_photo_url,
+                                'caption': caption[:MAX_CAP], 'parse_mode': 'HTML'
+                            })
+                            if resp.get('ok'):
+                                msg_id = resp.get('result', {}).get('message_id')
+                                if len(caption) > MAX_CAP and msg_id:
+                                    for chunk in _split_text(caption, MAX_TEXT):
+                                        r2 = tg_api(bot_token, 'sendMessage', {
+                                            'chat_id': channel_id, 'text': chunk,
+                                            'parse_mode': 'HTML', 'disable_web_page_preview': True,
+                                            'reply_to_message_id': msg_id
+                                        })
+                                        if r2.get('ok'):
+                                            msg_id = r2.get('result', {}).get('message_id', msg_id)
+                                results.append({'title': title, 'ok': True, 'error': ''})
+                            else:
+                                _send_text_fallback(bot_token, channel_id, caption, MAX_TEXT, results, title)
+                        else:
+                            _send_text_fallback(bot_token, channel_id, caption, MAX_TEXT, results, title)
+                    else:
+                        # Thử gửi video
+                        resp = tg_api(bot_token, 'sendVideo', {
+                            'chat_id': channel_id, 'video': send_video_url,
+                            'caption': caption[:MAX_CAP], 'parse_mode': 'HTML'
+                        })
+                        if resp.get('ok'):
+                            results.append({'title': title, 'ok': True, 'error': ''})
+                        elif send_photo_url:
+                            # Video fail → thử thumbnail ảnh
+                            resp2 = tg_api(bot_token, 'sendPhoto', {
+                                'chat_id': channel_id, 'photo': send_photo_url,
+                                'caption': caption[:MAX_CAP], 'parse_mode': 'HTML'
+                            })
+                            if resp2.get('ok'):
+                                results.append({'title': title, 'ok': True, 'error': ''})
+                            else:
+                                _send_text_fallback(bot_token, channel_id, caption, MAX_TEXT, results, title)
+                        else:
+                            _send_text_fallback(bot_token, channel_id, caption, MAX_TEXT, results, title)
+
+                elif send_photo_url:
+                    # Chỉ có ảnh (không có video) — gửi ảnh kèm caption
+                    resp = tg_api(bot_token, 'sendPhoto', {
+                        'chat_id': channel_id, 'photo': send_photo_url,
+                        'caption': caption[:MAX_CAP], 'parse_mode': 'HTML'
+                    })
+                    if resp.get('ok'):
+                        msg_id = resp.get('result', {}).get('message_id')
+                        if len(caption) > MAX_CAP and msg_id:
+                            reply_id = msg_id
+                            for chunk in _split_text(caption, MAX_TEXT):
+                                r2 = tg_api(bot_token, 'sendMessage', {
+                                    'chat_id': channel_id, 'text': chunk,
+                                    'parse_mode': 'HTML', 'disable_web_page_preview': True,
+                                    'reply_to_message_id': reply_id
+                                })
+                                if r2.get('ok'):
+                                    reply_id = r2.get('result', {}).get('message_id', reply_id)
+                        results.append({'title': title, 'ok': True, 'error': ''})
+                    else:
+                        _send_text_fallback(bot_token, channel_id, caption, MAX_TEXT, results, title)
+                else:
+                    # Không có media — gửi text thuần
+                    _send_text_fallback(bot_token, channel_id, caption, MAX_TEXT, results, title)
+        except Exception as e:
+            results.append({'title': title, 'ok': False, 'error': str(e)})
+    return results
+
+def _split_text(text, max_len):
+    """Chia text thành các chunk <= max_len, cắt ở ranh giới dòng/câu nếu được"""
+    if len(text) <= max_len:
+        return [text]
+    chunks = []
+    while text:
+        if len(text) <= max_len:
+            chunks.append(text)
+            break
+        # Tìm điểm cắt tốt nhất: dòng mới → dấu chấm câu → space
+        cut = text.rfind('\n', 0, max_len)
+        if cut < max_len // 2:
+            cut = text.rfind('. ', 0, max_len)
+        if cut < max_len // 2:
+            cut = text.rfind(' ', 0, max_len)
+        if cut < max_len // 2:
+            cut = max_len
+        chunks.append(text[:cut].rstrip())
+        text = text[cut:].lstrip('\n ')
+    return chunks
+
+def _send_media_then_text(bot_token, channel_id, media_list, caption, max_cap, max_text, title, use_bytes=False):
+    """
+    Gửi media (1 hoặc nhiều) trong 1 tin duy nhất dùng sendMediaGroup.
+    Nếu caption quá dài: gửi media với footer (link + tên kênh), reply nội dung đầy đủ.
+    """
+    if len(caption) <= max_cap:
+        short_cap = caption
+        need_reply = False
+    else:
+        lines = caption.split('\n')
+        footer_lines = []
+        for l in reversed(lines):
+            if l.strip():
+                footer_lines.insert(0, l)
+                if len(footer_lines) >= 2:
+                    break
+        footer = '\n'.join(footer_lines)
+        short_cap = footer if len(footer) <= max_cap else ''
+        need_reply = True
+
+    media_msg_id = None
+    ok = True
+    err = ''
+
+    if use_bytes:
+        # --- Telethon bytes: dùng sendMediaGroup với attach:// ---
+        if len(media_list) == 1:
+            # 1 media: gửi đơn kèm caption
+            mtype, data, mime = media_list[0]
+            method = 'sendPhoto' if mtype == 'photo' else 'sendVideo'
+            field  = 'photo'    if mtype == 'photo' else 'video'
+            ext    = 'jpg'      if mtype == 'photo' else 'mp4'
+            resp = tg_api_multipart(bot_token, method,
+                {'chat_id': channel_id, 'caption': short_cap, 'parse_mode': 'HTML'},
+                field, data, f'media.{ext}', mime)
+            ok  = resp.get('ok', False)
+            err = resp.get('description', '')
+            if ok:
+                media_msg_id = resp.get('result', {}).get('message_id')
+        else:
+            # Nhiều media: dùng sendMediaGroup multipart
+            boundary = b'----TGBoundary8x'
+            parts = []
+
+            # Build media JSON array với attach:// references
+            media_json = []
+            for idx, (mtype, data, mime) in enumerate(media_list[:10]):
+                attach_name = f'file{idx}'
+                entry = {
+                    'type':  'photo' if mtype == 'photo' else 'video',
+                    'media': f'attach://{attach_name}',
+                }
+                if idx == 0:
+                    entry['caption']    = short_cap
+                    entry['parse_mode'] = 'HTML'
+                media_json.append(entry)
+
+            # Field: chat_id
+            parts.append(
+                b'--' + boundary + b'\r\n' +
+                b'Content-Disposition: form-data; name="chat_id"\r\n\r\n' +
+                str(channel_id).encode() + b'\r\n'
+            )
+            # Field: media (JSON array)
+            parts.append(
+                b'--' + boundary + b'\r\n' +
+                b'Content-Disposition: form-data; name="media"\r\n' +
+                b'Content-Type: application/json\r\n\r\n' +
+                json.dumps(media_json, ensure_ascii=False).encode('utf-8') + b'\r\n'
+            )
+            # File fields
+            for idx, (mtype, data, mime) in enumerate(media_list[:10]):
+                attach_name = f'file{idx}'
+                ext = 'jpg' if mtype == 'photo' else 'mp4'
+                parts.append(
+                    b'--' + boundary + b'\r\n' +
+                    f'Content-Disposition: form-data; name="{attach_name}"; filename="media{idx}.{ext}"\r\n'.encode() +
+                    f'Content-Type: {mime}\r\n\r\n'.encode() +
+                    data + b'\r\n'
+                )
+            parts.append(b'--' + boundary + b'--\r\n')
+            body = b''.join(parts)
+
+            url_api = f'https://api.telegram.org/bot{bot_token}/sendMediaGroup'
+            req = urllib.request.Request(url_api, data=body,
+                headers={'Content-Type': f'multipart/form-data; boundary={boundary.decode()}'})
+            try:
+                resp_raw = urllib.request.urlopen(req, timeout=60)
+                resp = json.loads(resp_raw.read())
+            except urllib.error.HTTPError as e:
+                try:
+                    resp = json.loads(e.read())
+                except:
+                    resp = {'ok': False, 'description': str(e)}
+            except Exception as e:
+                resp = {'ok': False, 'description': str(e)}
+
+            ok  = resp.get('ok', False)
+            err = resp.get('description', '')
+            if ok and isinstance(resp.get('result'), list) and resp['result']:
+                media_msg_id = resp['result'][0].get('message_id')
+
+    else:
+        # --- URL media (dùng cho sendMediaGroup nhiều ảnh từ URL) ---
+        if len(media_list) == 1:
+            mtype, murl = media_list[0]
+            method = 'sendPhoto' if mtype == 'photo' else 'sendVideo'
+            resp = tg_api(bot_token, method, {
+                'chat_id': channel_id, mtype: murl,
+                'caption': short_cap, 'parse_mode': 'HTML'
+            })
+            ok  = resp.get('ok', False)
+            err = resp.get('description', '')
+            if ok:
+                media_msg_id = resp.get('result', {}).get('message_id')
+        else:
+            media_group = []
+            for idx, (mtype, murl) in enumerate(media_list[:10]):
+                entry = {'type': 'photo' if mtype == 'photo' else 'video', 'media': murl}
+                if idx == 0:
+                    entry['caption']    = short_cap
+                    entry['parse_mode'] = 'HTML'
+                media_group.append(entry)
+            resp = tg_api(bot_token, 'sendMediaGroup', {'chat_id': channel_id, 'media': media_group})
+            ok  = resp.get('ok') if isinstance(resp, dict) else bool(resp)
+            err = resp.get('description', '') if isinstance(resp, dict) else ''
+            if ok and isinstance(resp.get('result'), list) and resp['result']:
+                media_msg_id = resp['result'][0].get('message_id')
+
+    # Nếu caption bị cắt, reply text đầy đủ
+    if ok and need_reply and media_msg_id:
+        chunks = _split_text(caption, max_text)
+        reply_id = media_msg_id
+        for chunk in chunks:
+            payload = {'chat_id': channel_id, 'text': chunk, 'parse_mode': 'HTML',
+                       'disable_web_page_preview': True, 'reply_to_message_id': reply_id}
+            resp2 = tg_api(bot_token, 'sendMessage', payload)
+            if resp2.get('ok'):
+                reply_id = resp2.get('result', {}).get('message_id', reply_id)
+
+    # Giải phóng RAM: xóa bytes khỏi media_list sau khi gửi xong
+    if use_bytes and ok:
+        for i in range(len(media_list)):
+            try:
+                media_list[i] = (media_list[i][0], None, media_list[i][2])
+            except Exception:
+                pass
+
+    return {'title': title, 'ok': ok, 'error': err}
+
+# --- TELETHON FUNCTIONS ---
+
+def is_tg_source(url):
+    """Kiểm tra xem URL có phải nguồn Telegram không"""
+    return url.startswith('@') or 't.me/' in url or url.startswith('https://t.me/')
+
+def normalize_tg_channel(url):
+    """Chuẩn hóa về dạng username, vd: @channel hoặc channel"""
+    url = url.strip()
+    if url.startswith('https://t.me/'):
+        url = url[len('https://t.me/'):]
+    elif url.startswith('t.me/'):
+        url = url[len('t.me/'):]
+    if not url.startswith('@'):
+        url = '@' + url
+    return url
 
 def run_tg_loop():
     global tg_loop
@@ -1139,15 +1440,13 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
 <div class="modal-bg" id="channel-modal">
 <div class="modal">
 <h2>Quản lý Kênh Telegram</h2>
-<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:12px;color:#1e40af">
-  ⚡ Hệ thống dùng <b>Telethon</b> để gửi — nhập <b>@username</b> hoặc <b>-100xxx</b> của kênh đích. Không cần Bot Token.
-</div>
 <select id="ch-select-modal" onchange="loadChannelToForm(this.value)"></select>
-<input type="text" id="ch-username" placeholder="@kênh_đích hoặc -100xxxxxxxxx">
-<input type="text" id="ch-name" placeholder="Tên hiển thị (tuỳ chọn)">
+<input type="text" id="ch-token" placeholder="Bot API Token">
+<input type="text" id="ch-channel" placeholder="Channel ID">
+<input type="text" id="ch-name" placeholder="Tên kênh">
 <select id="ch-type">
-<option value="master">Master (Tất cả tin)</option>
-<option value="category">Category (theo chủ đề)</option>
+<option value="master">Master (Tất cả)</option>
+<option value="category">Category</option>
 <option value="group">Group</option>
 </select>
 <select id="ch-category"></select>
@@ -1433,35 +1732,29 @@ function renderChannelManager(){
 
 function loadChannelToForm(idx){
     selectedChannelIndex=parseInt(idx);
-    const form={username:document.getElementById('ch-username'),
+    const form={token:document.getElementById('ch-token'),channel:document.getElementById('ch-channel'),
         name:document.getElementById('ch-name'),type:document.getElementById('ch-type'),category:document.getElementById('ch-category')};
     if(selectedChannelIndex>=0&&tgChannels[selectedChannelIndex]){
         const ch=tgChannels[selectedChannelIndex];
-        form.username.value=ch.username||ch.channel_id||'';
-        form.name.value=ch.name;form.type.value=ch.type;
-        form.category.value=ch.category_filter||'';
+        form.token.value=ch.token;form.channel.value=ch.channel_id;form.name.value=ch.name;
+        form.type.value=ch.type;form.category.value=ch.category_filter||'';
         document.getElementById('btn-ch-del').style.display='inline-block';
     } else {
-        form.username.value='';form.name.value='';
+        form.token.value='';form.channel.value='';form.name.value='';
         form.type.value='master';form.category.value='';
         document.getElementById('btn-ch-del').style.display='none';
     }
 }
 
 function saveTgSettings(){
-    const username=document.getElementById('ch-username').value.trim();
-    const name=document.getElementById('ch-name').value.trim()||username;
-    const type=document.getElementById('ch-type').value;
-    const category=document.getElementById('ch-category').value;
-    if(!username){alert('Nhập @username hoặc channel ID');return;}
-    // Chuẩn hoá: thêm @ nếu chưa có và không phải ID số
-    const normUsername = (!username.startsWith('@') && !username.startsWith('-') && !/^\d/.test(username))
-        ? '@'+username : username;
-    const chObj={username:normUsername,name,type,category_filter:category};
+    const form={token:document.getElementById('ch-token').value.trim(),channel:document.getElementById('ch-channel').value.trim(),
+        name:document.getElementById('ch-name').value.trim(),type:document.getElementById('ch-type').value,
+        category:document.getElementById('ch-category').value};
+    if(!form.token||!form.channel){alert('Thiếu Token hoặc Channel ID');return;}
     if(selectedChannelIndex>=0){
-        tgChannels[selectedChannelIndex]=chObj;
+        tgChannels[selectedChannelIndex]={token:form.token,channel_id:form.channel,name:form.name,type:form.type,category_filter:form.category};
     } else {
-        tgChannels.push(chObj);
+        tgChannels.push({token:form.token,channel_id:form.channel,name:form.name,type:form.type,category_filter:form.category});
     }
     saveTgChannels();renderChannelManager();
     wsSend({type:'tg_settings',channels:tgChannels});
@@ -1900,142 +2193,24 @@ def broadcast(msg):
     with lock:
         ws_clients.difference_update(dead)
 
-def _split_text(text, max_len):
-    """Chia text dài thành các chunk không quá max_len ký tự, ưu tiên cắt theo dòng"""
-    if len(text) <= max_len:
-        return [text]
-    chunks = []
-    while text:
-        if len(text) <= max_len:
-            chunks.append(text)
-            break
-        # Tìm điểm cắt tốt nhất: ưu tiên newline, rồi khoảng trắng
-        cut = text.rfind('\n', 0, max_len)
-        if cut < max_len // 2:
-            cut = text.rfind(' ', 0, max_len)
-        if cut < 0:
-            cut = max_len
-        chunks.append(text[:cut].strip())
-        text = text[cut:].strip()
-    return [c for c in chunks if c]
-
-
-async def _resolve_dest(dest_channel):
-    """
-    Resolve kênh đích về Telethon entity.
-    - @username → dùng trực tiếp (Telethon tự resolve)
-    - ID số (-100xxx hoặc xxx) → dùng PeerChannel để Telethon nhận ra
-    Trả về entity đã resolve, hoặc raise nếu không tìm được.
-    """
-    dest = str(dest_channel).strip()
-    # Nếu là ID số (có thể có dấu -)
-    if dest.lstrip('-').isdigit():
-        channel_id = int(dest)
-        # Telethon dùng PeerChannel với ID không có prefix -100
-        if str(channel_id).startswith('-100'):
-            channel_id = int(str(channel_id)[4:])  # bỏ prefix -100
-        from telethon.tl.types import PeerChannel
-        try:
-            entity = await tg_client.get_entity(PeerChannel(channel_id))
-            return entity
-        except Exception:
-            # Fallback: thử get_input_entity với ID gốc
-            entity = await tg_client.get_input_entity(int(dest))
-            return entity
-    # Username (@channel hoặc channel)
-    return dest
-
-
-async def _tg_send_item(dest_channel, item, caption):
-    """
-    Gửi 1 item lên kênh đích qua Telethon (không dùng Bot API).
-
-    Logic:
-    - Nếu là tin TG nguồn có media → dùng msg.media object gốc (forward không download)
-      * grouped media (album) → gom tất cả msg trong group, send_file với list media
-      * single media → send_file(media)
-    - Nếu là tin RSS có media URL → send_file(url) — Telegram tự fetch
-    - Nếu không có media → send_message(text)
-
-    Không bao giờ download bytes về RAM.
-    Hỗ trợ cả @username lẫn ID số (-100xxx).
-    """
-    if not tg_client:
-        return False
-    try:
-        # Resolve entity trước — xử lý cả @username lẫn -100xxx
-        dest      = await _resolve_dest(dest_channel)
-        source    = item.get('_source', '')
-        msg_id    = item.get('_tg_msg_id')
-        chat      = item.get('_tg_chat')
-        grouped   = item.get('_tg_grouped_id')
-        has_media = item.get('_tg_has_media', False)
-        rss_media = item.get('_rss_media_url')
-
-        if source == 'telethon' and has_media and msg_id and chat:
-            # --- TG nguồn có media: dùng msg.media object trực tiếp ---
-            with tg_semaphore:
-                if grouped:
-                    all_msgs = await tg_client.get_messages(chat, ids=list(range(msg_id, msg_id + 10)))
-                    if not isinstance(all_msgs, list):
-                        all_msgs = [all_msgs] if all_msgs else []
-                    group_msgs = [m for m in all_msgs
-                                  if m and m.grouped_id == grouped and m.media]
-                    if not group_msgs:
-                        single = await tg_client.get_messages(chat, ids=msg_id)
-                        group_msgs = [single] if single and single.media else []
-                else:
-                    msgs = await tg_client.get_messages(chat, ids=msg_id)
-                    msg  = msgs if not isinstance(msgs, list) else (msgs[0] if msgs else None)
-                    group_msgs = [msg] if msg and msg.media else []
-
-            if group_msgs:
-                media_list = [m.media for m in group_msgs[:10]]
-                if len(media_list) == 1:
-                    await tg_client.send_file(dest, media_list[0], caption=caption, parse_mode='html')
-                else:
-                    await tg_client.send_file(dest, media_list, caption=caption, parse_mode='html')
-                return True
-            # Không lấy được media → fallback text
-            await tg_client.send_message(dest, caption, parse_mode='html', link_preview=False)
-            return True
-
-        elif rss_media:
-            await tg_client.send_file(dest, rss_media, caption=caption, parse_mode='html')
-            return True
-
-        else:
-            chunks = _split_text(caption, 4096)
-            for chunk in chunks:
-                await tg_client.send_message(dest, chunk, parse_mode='html', link_preview=False)
-            return True
-
-    except Exception as e:
-        print(f'[TG Send] Lỗi gửi {dest_channel}: {e}')
-        return False
-
-
 def _do_forward(processed, category, url):
-    """
-    Gửi tin lên các kênh đích qua Telethon (thay thế Bot API hoàn toàn).
-    Routing: master → tất cả, category/group → chỉ kênh khớp category.
-    """
+    """Gửi tin lên Telegram nếu auto-forward bật và feed cho phép"""
     with lock:
-        do_fwd   = auto_fwd_enabled
-        cfgs     = list(tg_channels)
+        do_fwd = auto_fwd_enabled
+        cfgs = list(tg_channels)
+        # Lấy config của feed này
         feed_cfg = next((u for u in watched_urls if u['url'] == url), {})
     if not do_fwd or not cfgs:
         return
+    # Kiểm tra feed có bật auto_fwd không (mặc định True để tương thích feed cũ)
     if not feed_cfg.get('auto_fwd', True):
         return
-    if not TELETHON_AVAILABLE or tg_client is None:
-        print('[Forward] Telethon chưa kết nối — bỏ qua forward')
-        return
+    # Lấy danh sách kênh đích của feed (nếu có)
+    target_channels = feed_cfg.get('target_channels', [])  # list index trong tgChannels
 
-    target_channels = feed_cfg.get('target_channels', [])
     total_sent = 0
-
     for ch_idx, ch in enumerate(cfgs):
+        # Nếu feed có target_channels thì chỉ gửi đến các kênh được chọn
         if target_channels and ch_idx not in target_channels:
             continue
         should_send = False
@@ -2044,33 +2219,12 @@ def _do_forward(processed, category, url):
         elif ch['type'] in ['category', 'group']:
             if ch.get('category_filter') == category:
                 should_send = True
-        if not should_send:
-            continue
-
-        # dest_channel: dùng field 'username' (dạng @channel hoặc -100xxx)
-        dest = ch.get('username') or ch.get('channel_id', '')
-        if not dest:
-            print(f'[Forward] Kênh "{ch.get("name")}" thiếu username — bỏ qua')
-            continue
-
-        channel_name = ch.get('name', dest)
-        show_link    = feed_cfg.get('show_link', True)
-
-        for it in reversed(processed):  # gửi theo thứ tự cũ → mới
-            # Build caption
-            desc_plain = strip_html(it.get('desc', '').replace('<br>', '\n')).strip()
-            caption    = desc_plain
-            if show_link and it.get('link'):
-                caption += f'\n\n<a href="{it["link"]}">Xem bài gốc →</a>'
-            if channel_name:
-                caption += f'\n\n<i>{channel_name}</i>'
-
-            ok = tg_run(_tg_send_item(dest, it, caption))
-            if ok:
-                total_sent += 1
-            # Delay nhỏ giữa các tin để tránh flood
-            time.sleep(0.5)
-
+        if should_send:
+            r = send_to_telegram(ch['token'], ch['channel_id'], ch['name'],
+                                 list(reversed(processed)),
+                                 category_filter=ch.get('category_filter'),
+                                 channel_type=ch['type'])
+            total_sent += sum(1 for x in r if x['ok'])
     if total_sent > 0:
         broadcast({'type': 'auto_fwd_sent', 'count': total_sent, 'url': url})
 
@@ -2117,18 +2271,10 @@ def _poll_one(url_obj):
                 for it in new_items:
                     it['show_link'] = show_link
                     it['feed_url']  = url
+                    # Với RSS: text = title + desc plaintext để AI dịch
                     raw_text = it.get('title', '') + '\n' + strip_html(it.get('desc', ''))
                     it['text']    = raw_text.strip()
                     it['_source'] = 'rss'
-                    # Trích URL media từ desc để Telethon send_file (không download)
-                    imgs, videos = extract_media(it.get('desc', ''))
-                    if videos:
-                        v = videos[0].lower()
-                        it['_rss_media_url'] = videos[0] if any(v.endswith(e) for e in ('.mp4','.webm','.mov','.mkv')) else None
-                    elif imgs:
-                        it['_rss_media_url'] = imgs[0]
-                    else:
-                        it['_rss_media_url'] = None
                     _pipeline.put(it)
         return True
     except Exception as ex:
@@ -2163,6 +2309,52 @@ def _init_tg_feed(url_obj):
         print(f'[TG] Load lịch sử {channel}: {len(items)} tin')
     except Exception as e:
         print(f'[!] Load lịch sử lỗi {channel}: {e}')
+
+def _download_and_forward(processed, category, feed_url):
+    """Download media cho các item có _tg_has_media, sau đó forward"""
+    for it in processed:
+        if not it.get('_tg_has_media') or not it.get('_tg_msg_id') or not tg_client:
+            continue
+        try:
+            msg_id     = it['_tg_msg_id']
+            channel    = normalize_tg_channel(feed_url)
+            grouped_id = it.get('_tg_grouped_id')
+
+            # get_messages dùng semaphore (nhẹ, nhanh)
+            with tg_semaphore:
+                if grouped_id:
+                    all_msgs = tg_run(tg_client.get_messages(channel, ids=list(range(msg_id, msg_id + 10))))
+                    if not isinstance(all_msgs, list):
+                        all_msgs = [all_msgs] if all_msgs else []
+                    group_msgs = [m for m in all_msgs if m and m.grouped_id == grouped_id and m.media]
+                    if not group_msgs:
+                        single = tg_run(tg_client.get_messages(channel, ids=msg_id))
+                        group_msgs = [single] if single and single.media else []
+                else:
+                    msgs = tg_run(tg_client.get_messages(channel, ids=msg_id))
+                    msg  = msgs if not isinstance(msgs, list) else (msgs[0] if msgs else None)
+                    group_msgs = [msg] if msg and msg.media else []
+
+            # download_media KHÔNG dùng semaphore — tránh giữ lock quá lâu khi download file lớn
+            media_bytes = []
+            for m in group_msgs[:10]:
+                try:
+                    data = tg_run(tg_client.download_media(m.media, file=bytes))
+                    if data:
+                        if isinstance(m.media, MessageMediaPhoto):
+                            media_bytes.append(('photo', data, 'image/jpeg'))
+                        elif isinstance(m.media, MessageMediaDocument):
+                            mime = getattr(m.media.document, 'mime_type', 'application/octet-stream')
+                            if mime.startswith('video') or mime.startswith('image'):
+                                media_bytes.append(('video' if mime.startswith('video') else 'photo', data, mime))
+                except Exception as e:
+                    print(f'[TG] Download media item lỗi: {e}')
+
+            if media_bytes:
+                it['_tg_media_bytes'] = media_bytes
+        except Exception as e:
+            print(f'[TG] Download media auto-fwd lỗi: {e}')
+    _do_forward(processed, category, feed_url)
 
 def _process_tg_queue():
     """
@@ -2508,55 +2700,60 @@ class HttpHandler(BaseHTTPRequestHandler):
                 self._json({'ok': False, 'state': 'error', 'msg': str(e)})
 
         elif p.path == '/tg_forward':
-            # Forward thủ công từ UI — dùng Telethon, không Bot API, không download
             body = self._read_json()
-            channels  = body.get('channels', [])
+            channels = body.get('channels', [])
             items_raw = body.get('items', [])
             if not channels:
-                self._json({'error': 'missing channels'}, 400); return
-            if not TELETHON_AVAILABLE or tg_client is None:
-                self._json({'error': 'Telethon chưa kết nối'}, 503); return
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(b'{"error": "missing channels"}')
+                return
+
+            # Với TG source: download media lúc forward (chỉ những tin được chọn)
+            items = []
+            for it in items_raw:
+                feed_url = it.get('feedUrl', '')
+                # Lấy show_link từ watched_urls
+                with lock:
+                    show_link = next((u.get('show_link', True) for u in watched_urls if u['url'] == feed_url), True)
+                it = {**it, 'show_link': show_link}
+
+                if is_tg_source(feed_url) and TELETHON_AVAILABLE and tg_client is not None:
+                    try:
+                        link = it.get('link', '')
+                        msg_id = int(link.rstrip('/').split('/')[-1])
+                        channel = normalize_tg_channel(feed_url)
+                        with tg_semaphore:
+                            msgs = tg_run(tg_client.get_messages(channel, ids=msg_id))
+                        msg = msgs if not isinstance(msgs, list) else (msgs[0] if msgs else None)
+                        media_bytes = []
+                        if msg and msg.media:
+                            try:
+                                # download_media không dùng semaphore — tránh timeout khi file lớn
+                                data = tg_run(tg_client.download_media(msg.media, file=bytes))
+                                if data:
+                                    if isinstance(msg.media, MessageMediaPhoto):
+                                        media_bytes.append(('photo', data, 'image/jpeg'))
+                                    elif isinstance(msg.media, MessageMediaDocument):
+                                        mime = getattr(msg.media.document, 'mime_type', 'application/octet-stream')
+                                        if mime.startswith('video') or mime.startswith('image'):
+                                            media_bytes.append(('video' if mime.startswith('video') else 'photo', data, mime))
+                            except Exception as me:
+                                print(f'[!] Download media lỗi: {me}')
+                        it = {**it, '_tg_media_bytes': media_bytes if media_bytes else None}
+                    except Exception as e:
+                        print(f'[!] Re-fetch media lỗi: {e}')
+                items.append(it)
 
             all_results = []
             for ch in channels:
-                dest = ch.get('username') or ch.get('channel_id', '')
-                if not dest:
-                    all_results.append({'title': ch.get('name','?'), 'ok': False, 'error': 'Thiếu username kênh đích'})
-                    continue
-                channel_name = ch.get('name', dest)
-                for it in items_raw:
-                    feed_url = it.get('feedUrl', '')
-                    with lock:
-                        show_link = next((u.get('show_link', True) for u in watched_urls if u['url'] == feed_url), True)
-                    # Build caption
-                    desc_plain = strip_html((it.get('desc','') or '').replace('<br>','\n')).strip()
-                    caption    = desc_plain
-                    if show_link and it.get('link'):
-                        caption += f'\n\n<a href="{it["link"]}">Xem bài gốc →</a>'
-                    if channel_name:
-                        caption += f'\n\n<i>{channel_name}</i>'
-                    # Reconstruct item để _tg_send_item nhận diện được
-                    send_item = {**it, '_source': 'telethon' if is_tg_source(feed_url) else 'rss'}
-                    if is_tg_source(feed_url):
-                        try:
-                            link   = it.get('link','')
-                            msg_id = int(link.rstrip('/').split('/')[-1])
-                            chat   = normalize_tg_channel(feed_url).lstrip('@')
-                            send_item['_tg_msg_id']   = msg_id
-                            send_item['_tg_chat']     = chat
-                            send_item['_tg_has_media'] = True  # thử gửi media, send_item sẽ fallback text nếu không có
-                        except Exception:
-                            send_item['_tg_has_media'] = False
-                    else:
-                        imgs, _ = extract_media(it.get('desc',''))
-                        send_item['_rss_media_url'] = imgs[0] if imgs else None
-                    try:
-                        ok = tg_run(_tg_send_item(dest, send_item, caption))
-                        all_results.append({'title': it.get('title',''), 'ok': ok, 'error': '' if ok else 'Gửi thất bại'})
-                    except Exception as e:
-                        all_results.append({'title': it.get('title',''), 'ok': False, 'error': str(e)})
-                    time.sleep(0.3)  # delay nhỏ giữa các tin
-
+                r = send_to_telegram(ch['token'], ch['channel_id'], ch['name'], items,
+                                     category_filter=ch.get('category_filter'), channel_type=ch['type'])
+                all_results.extend(r)
+            # Giải phóng RAM: xóa bytes sau khi đã gửi xong tất cả kênh
+            for it in items:
+                it['_tg_media_bytes'] = None
             resp = json.dumps({'results': all_results}, ensure_ascii=False).encode('utf-8')
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')

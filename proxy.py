@@ -924,8 +924,8 @@ class WsConn:
     def recv(self):
         """Đọc một WebSocket frame, trả về string hoặc None nếu đóng."""
         try:
-            # ⚠️ Set timeout 30s để phát hiện disconnect nhanh
-            self._sock.settimeout(30)
+            # Timeout 120s — đủ lâu để server bận init 45 feeds mà không bị cắt
+            self._sock.settimeout(120)
             
             header = self._recvexact(2)
             opcode = header[0] & 0x0f
@@ -954,7 +954,10 @@ class WsConn:
                         pass
                 return self.recv()
             return data.decode('utf-8', errors='replace')
-        except (ConnectionError, OSError, socket.timeout, BrokenPipeError):
+        except socket.timeout:
+            # Timeout không phải disconnect — server đang bận, thử lại
+            return ''   # trả về chuỗi rỗng, ws_handler sẽ bỏ qua
+        except (ConnectionError, OSError, BrokenPipeError):
             print(f'[WS] recv disconnected')
             return None
         except Exception as e:
@@ -973,6 +976,8 @@ class WsConn:
             msg = self.recv()
             if msg is None:
                 break
+            if msg == '':
+                continue  # socket.timeout — không phải disconnect, chờ tiếp
             yield msg
 
 
@@ -1768,7 +1773,7 @@ function clearSelection(){
 // --- Fetch & Poll ---
 async function fetchAndMerge(url,feedName,category,markNew){
     try{
-        let endpoint,items;
+        let items;
         if(isTgSource(url)){
             const r=await fetch('/tl_fetch?url='+encodeURIComponent(url)+'&translate='+(translateOn?'1':'0')+'&category='+encodeURIComponent(category));
             if(!r.ok) throw new Error('HTTP '+r.status);
@@ -1794,7 +1799,14 @@ async function fetchAndMerge(url,feedName,category,markNew){
 }
 
 async function manualRefreshAll(){
-    await Promise.all(feeds.map(f=>fetchAndMerge(f.url,f.name,f.category,false)));
+    // RSS song song, TG tuần tự với delay để không flood server
+    const rssFeed=feeds.filter(f=>!isTgSource(f.url));
+    const tgFeed=feeds.filter(f=>isTgSource(f.url));
+    await Promise.all(rssFeed.map(f=>fetchAndMerge(f.url,f.name,f.category,false)));
+    for(const f of tgFeed){
+        await fetchAndMerge(f.url,f.name,f.category,false);
+        await new Promise(r=>setTimeout(r,300)); // 300ms delay giữa các TG feed
+    }
 }
 
 // --- Poll timer ---
@@ -1886,7 +1898,11 @@ function showToastMsg(msg){
     const sel=document.getElementById('engine-select');
     if(sel) sel.value=translateEngine;
     connectWS();
-    feeds.forEach(f=>fetchAndMerge(f.url,f.name,f.category,false));
+    // Chỉ load RSS feeds ngay lập tức
+    // TG feeds: không gọi /tl_fetch lúc init vì server đang bận setup realtime listeners
+    // TG feed history sẽ đến qua WS broadcast từ _init_tg_feed
+    const rssFeeds=feeds.filter(f=>!isTgSource(f.url));
+    rssFeeds.forEach(f=>fetchAndMerge(f.url,f.name,f.category,false));
 })();
 </script>
 </body>
@@ -2107,10 +2123,14 @@ async def _tg_send_item(dest_channel, item, caption):
         return False
 
 
+# Semaphore giới hạn số lượng Telethon send đồng thời — tránh flood MTProto
+_send_semaphore = threading.Semaphore(3)  # tối đa 3 send song song
+
 def _do_forward(processed, category, url):
     """
-    Gửi tin lên các kênh đích qua Telethon (thay thế Bot API hoàn toàn).
+    Gửi tin lên các kênh đích qua Telethon.
     Routing: master → tất cả, category/group → chỉ kênh khớp category.
+    Dùng _send_semaphore để giới hạn concurrent sends, tránh flood.
     """
     with lock:
         do_fwd   = auto_fwd_enabled
@@ -2139,7 +2159,6 @@ def _do_forward(processed, category, url):
         if not should_send:
             continue
 
-        # dest_channel: dùng field 'username' (dạng @channel hoặc -100xxx)
         dest = ch.get('username') or ch.get('channel_id', '')
         if not dest:
             print(f'[Forward] Kênh "{ch.get("name")}" thiếu username — bỏ qua')
@@ -2148,8 +2167,7 @@ def _do_forward(processed, category, url):
         channel_name = ch.get('name', dest)
         show_link    = feed_cfg.get('show_link', True)
 
-        for it in reversed(processed):  # gửi theo thứ tự cũ → mới
-            # Build caption
+        for it in reversed(processed):
             desc_plain = strip_html(it.get('desc', '').replace('<br>', '\n')).strip()
             caption    = desc_plain
             if show_link and it.get('link'):
@@ -2157,11 +2175,17 @@ def _do_forward(processed, category, url):
             if channel_name:
                 caption += f'\n\n<i>{channel_name}</i>'
 
-            ok = tg_run(_tg_send_item(dest, it, caption))
+            # Giới hạn concurrent sends qua semaphore
+            with _send_semaphore:
+                try:
+                    ok = tg_run(_tg_send_item(dest, it, caption))
+                except Exception as e:
+                    print(f'[Forward] tg_run lỗi: {e}')
+                    ok = False
             if ok:
                 total_sent += 1
-            # Delay nhỏ giữa các tin để tránh flood
-            time.sleep(0.5)
+            # Delay chống flood Telegram (0.3s đủ cho text, media cần nhiều hơn)
+            time.sleep(0.3)
 
     if total_sent > 0:
         broadcast({'type': 'auto_fwd_sent', 'count': total_sent, 'url': url})
@@ -2415,7 +2439,10 @@ def ws_handler(ws):
                             known_guids[u['url']] = None
                 tg_urls = [u['url'] for u in urls if is_tg_source(u['url'])]
                 if tg_urls and TELETHON_AVAILABLE and tg_client:
-                    threading.Thread(target=tg_setup_realtime_sync, args=(tg_urls,), daemon=True).start()
+                    # QUAN TRỌNG: chạy trên thread riêng, KHÔNG block ws_handler
+                    # tg_setup_realtime_sync có thể mất vài giây với nhiều feed
+                    threading.Thread(target=tg_setup_realtime_sync,
+                                     args=(tg_urls,), daemon=True).start()
             elif t == 'translate':
                 translate_enabled = msg.get('enabled', True)
             elif t == 'translate_engine':

@@ -1835,52 +1835,55 @@ function connectWS(){
     ws=new WebSocket(WS_URL);
     let feedsAckReceived=false;
     let feedsAckTimer=null;
+    let feedsPayload=null;
 
     ws.onopen=()=>{
         wsReady=true;
         document.getElementById('ws-dot').className='ws-dot on';
         document.getElementById('ws-lbl').textContent='Đang kết nối...';
-
-        const feedsPayload=feeds.map(f=>({url:f.url,name:f.name,category:f.category,
+        feedsPayload=feeds.map(f=>({url:f.url,name:f.name,category:f.category,
             show_link:f.show_link!==false,auto_fwd:f.auto_fwd===true,
             target_channels:f.target_channels||[]}));
-
-        // Gửi feeds sau 400ms — đủ để Render proxy hoàn tất handshake
-        // Các message còn lại gửi tuần tự sau đó
-        setTimeout(()=>{ if(wsReady) wsSend({type:'feeds',feeds:feedsPayload}); }, 800);
-        setTimeout(()=>{ if(wsReady) wsSend({type:'tg_settings',channels:tgChannels}); }, 800);
-        setTimeout(()=>{ if(wsReady) wsSend({type:'auto_fwd',enabled:autoFwd,channels:tgChannels}); }, 800);
-        setTimeout(()=>{ if(wsReady) wsSend({type:'categories',categories}); }, 900);
-        setTimeout(()=>{ if(wsReady) wsSend({type:'translate_engine',engine:translateEngine}); }, 1050);
-
-        // Retry feeds nếu không nhận ACK sau 3.5 giây
-        feedsAckTimer=setTimeout(()=>{
-            if(feedsAckReceived) return;
-            console.warn('[WS] feeds_ack timeout — retry...');
-            document.getElementById('ws-lbl').textContent='Đang thử lại...';
-            if(wsReady) wsSend({type:'feeds',feeds:feedsPayload});
-            // Retry lần 2 sau thêm 3 giây
-            feedsAckTimer=setTimeout(()=>{
-                if(feedsAckReceived) return;
-                console.warn('[WS] feeds_ack timeout lần 2 — reconnect');
-                ws.close();
-            }, 3000);
-        }, 3500);
-
-        // Fetch RSS sau khi init xong
-        if(wsReconnectCount>0){
-            setTimeout(()=>{
-                feeds.filter(f=>!isTgSource(f.url)).forEach(f=>fetchAndMerge(f.url,f.name,f.category,false));
-            }, 1500);
-        }
         wsReconnectCount++;
         if(wsHeartbeatTimer) clearInterval(wsHeartbeatTimer);
         wsHeartbeatTimer=setInterval(()=>{ if(wsReady) wsSend({type:'heartbeat'}); }, 10000);
+        // KHÔNG gửi feeds ở đây — chờ server gửi 'connected' frame rồi mới gửi
+        // Điều này đảm bảo Render proxy đã sẵn sàng nhận frames
     };
+
+    function _sendInitMessages(){
+        if(!wsReady||!feedsPayload) return;
+        feedsAckReceived=false;
+        wsSend({type:'feeds',feeds:feedsPayload});
+        setTimeout(()=>{ if(wsReady) wsSend({type:'tg_settings',channels:tgChannels}); }, 100);
+        setTimeout(()=>{ if(wsReady) wsSend({type:'auto_fwd',enabled:autoFwd,channels:tgChannels}); }, 200);
+        setTimeout(()=>{ if(wsReady) wsSend({type:'categories',categories}); }, 300);
+        setTimeout(()=>{ if(wsReady) wsSend({type:'translate_engine',engine:translateEngine}); }, 400);
+        // Retry nếu không nhận feeds_ack sau 4 giây
+        if(feedsAckTimer) clearTimeout(feedsAckTimer);
+        feedsAckTimer=setTimeout(()=>{
+            if(feedsAckReceived) return;
+            console.warn('[WS] feeds_ack timeout — retry');
+            document.getElementById('ws-lbl').textContent='Thử lại...';
+            _sendInitMessages();
+        }, 4000);
+        // Fetch RSS sau khi init
+        if(wsReconnectCount>1){
+            setTimeout(()=>{
+                feeds.filter(f=>!isTgSource(f.url)).forEach(f=>fetchAndMerge(f.url,f.name,f.category,false));
+            }, 600);
+        }
+    }
 
     ws.onmessage=e=>{
         const msg=JSON.parse(e.data);
         if(msg.type==='heartbeat') return;
+        if(msg.type==='connected'){
+            // Server sẵn sàng — gửi init messages ngay
+            console.log('[WS] Server ready, gửi feeds...');
+            _sendInitMessages();
+            return;
+        }
         if(msg.type==='feeds_ack'){
             feedsAckReceived=true;
             if(feedsAckTimer){clearTimeout(feedsAckTimer);feedsAckTimer=null;}
@@ -2374,11 +2377,19 @@ def poller():
     - Telethon: event-driven (real-time), poller chỉ xử lý queue + init history
     - RSS thường: parallel threads, interval 30s
     - tg.i-c-a.su: sequential, interval POLL_INTERVAL (60s)
+
+    QUAN TRỌNG: không sleep trong main loop — dùng thread pool cho init TG feeds
     """
     global poll_next_time
     FAST_INTERVAL   = 30
     fast_next: dict = {}
     tg_inited: set  = set()   # các TG feed đã được load history
+    tg_init_pending: set = set()  # đang init, tránh double-start
+
+    def _init_tg_feed_delayed(url_obj, delay):
+        """Init 1 feed sau delay giây — chạy trên thread riêng"""
+        time.sleep(delay)
+        _init_tg_feed(url_obj)
 
     while True:
         now = time.time()
@@ -2388,14 +2399,23 @@ def poller():
         # --- Xử lý queue real-time từ Telethon ---
         _process_tg_queue()
 
-        # --- Init history cho TG feed mới ---
+        # --- Init history cho TG feed mới (NON-BLOCKING) ---
         tg_urls = [u for u in urls if is_tg_source(u['url'])]
-        new_tg = [u for u in tg_urls if u['url'] not in tg_inited and TELETHON_AVAILABLE and tg_client is not None]
-        # Khởi tạo từng feed tuần tự với delay — tránh flood API khi có nhiều feed
-        for url_obj in new_tg:
+        new_tg = [u for u in tg_urls
+                  if u['url'] not in tg_inited
+                  and u['url'] not in tg_init_pending
+                  and TELETHON_AVAILABLE and tg_client is not None]
+        for idx, url_obj in enumerate(new_tg):
             tg_inited.add(url_obj['url'])
-            threading.Thread(target=_init_tg_feed, args=(url_obj,), daemon=True).start()
-            time.sleep(1.0)   # delay 1s/feed — 45 feed = 45s khởi động, chấp nhận được
+            tg_init_pending.add(url_obj['url'])
+            # Stagger: mỗi feed delay thêm 2s so với feed trước — tránh flood
+            # Nhưng KHÔNG block poller loop
+            delay = idx * 2.0
+            def _run(u=url_obj, d=delay):
+                time.sleep(d)
+                _init_tg_feed(u)
+                tg_init_pending.discard(u['url'])
+            threading.Thread(target=_run, daemon=True).start()
 
         # --- RSS thường (parallel) ---
         rss_urls = [u for u in urls if not is_tg_source(u['url']) and not _is_ica_source(u['url'])]
@@ -2415,8 +2435,7 @@ def poller():
             poll_next_time = time.time() + POLL_INTERVAL
             broadcast({'type': 'poll_status', 'interval': POLL_INTERVAL, 'next_in': POLL_INTERVAL})
 
-        time.sleep(0.5)   # check queue thường xuyên hơn
-        # Log queue size định kỳ nếu có items chờ
+        time.sleep(0.5)
         if _pipeline.qsize() > 10:
             print(f'[Pipeline] Queue: {_pipeline.qsize()} items đang chờ xử lý')
 
@@ -2426,6 +2445,13 @@ def ws_handler(ws):
         ws_clients.add(ws)
     print(f'[WS] Client kết nối, tổng={len(ws_clients)}')
     msg_count = 0
+
+    # Gửi frame ngay lập tức sau khi connect để Render LB không đóng connection
+    # Render free tier đóng connection nếu không có activity trong ~5s đầu
+    try:
+        ws.send(json.dumps({'type': 'connected', 'ts': time.time()}, ensure_ascii=False))
+    except Exception:
+        pass
 
     # Heartbeat thread: gửi JSON mỗi 15s để giữ connection sống qua Render LB
     def keepalive():
@@ -2452,9 +2478,10 @@ def ws_handler(ws):
 
             t = msg.get('type')
             if t == 'heartbeat':
+                msg_count -= 1  # không đếm heartbeat vào msg_count
                 continue
 
-            # Debug log — xác nhận server nhận được message
+            # Debug log
             print(f'[WS] msg #{msg_count}: type={t} size={len(raw)}b')
 
             if t == 'feeds':

@@ -41,140 +41,6 @@ translate_engine = _default_engine()  # có thể thay đổi qua WS message
 # ================= AI SERVICE (Multi-AI Rotation) =================
 # Kiến trúc mới: xoay vòng Gemini → DeepL → Google
 # Không còn phụ thuộc 1 API, tránh rate limit, classify category luôn khi dùng Gemini
-class AIService:
-    """
-    Multi-AI rotation engine với Circuit Breaker.
-    Thiết kế cho nhiều worker thread — KHÔNG blocking khi provider fail.
-    - Khi 429/lỗi → mở circuit ngay, fallback NGAY LẬP TỨC (không sleep)
-    - Semaphore giới hạn concurrent API calls tránh flood rate limit
-    - Circuit tự reset sau COOLDOWN giây
-    """
-    FAIL_THRESHOLD = 2        # 2 lỗi liên tiếp → mở circuit
-    COOLDOWN       = 120.0    # giây nghỉ khi circuit mở
-    MAX_CONCURRENT = 2        # tối đa 2 AI calls đồng thời
-
-    def __init__(self):
-        self._providers  = ['gemini', 'deepl', 'google']
-        self._fail_count = {p: 0   for p in self._providers}
-        self._open_until = {p: 0.0 for p in self._providers}
-        self._lock       = threading.Lock()
-        self._semaphore  = threading.Semaphore(self.MAX_CONCURRENT)
-
-    def _is_open(self, provider):
-        with self._lock:
-            if time.time() < self._open_until[provider]:
-                return True
-            if self._open_until[provider] > 0:
-                self._fail_count[provider] = 0
-                self._open_until[provider] = 0.0
-            return False
-
-    def _record_success(self, provider):
-        with self._lock:
-            self._fail_count[provider] = 0
-            self._open_until[provider] = 0.0
-
-    def _record_failure(self, provider, is_rate_limit=False):
-        with self._lock:
-            self._fail_count[provider] += 1
-            already_open = time.time() < self._open_until[provider]
-            if self._fail_count[provider] >= self.FAIL_THRESHOLD and not already_open:
-                self._open_until[provider] = time.time() + self.COOLDOWN
-                print(f'[AI] Circuit OPEN: {provider} — nghỉ {self.COOLDOWN:.0f}s')
-
-    def _run_gemini(self, text):
-        if not GEMINI_API_KEY or self._is_open('gemini'):
-            return None
-        prompt = (
-            'Translate the following text to Vietnamese. '
-            'Also classify it into one of: politics, health, tech, finance, entertainment, default. '
-            'Return ONLY valid JSON, no markdown, no explanation: '
-            '{"text":"<translated>","category":"<category>"}. TEXT: ' + text[:3000]
-        )
-        payload = json.dumps({
-            'contents': [{'parts': [{'text': prompt}]}],
-            'generationConfig': {'temperature': 0.1, 'maxOutputTokens': 2048}
-        }).encode('utf-8')
-        url = (f'https://generativelanguage.googleapis.com/v1beta/models/'
-               f'gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}')
-        try:
-            req  = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
-            resp = urllib.request.urlopen(req, timeout=15)
-            data = json.loads(resp.read())
-            raw  = data['candidates'][0]['content']['parts'][0]['text'].strip()
-            raw  = re.sub(r'^```[a-z]*\n?', '', raw).rstrip('`').strip()
-            result = json.loads(raw)
-            self._record_success('gemini')
-            return result.get('text', ''), result.get('category', 'default')
-        except urllib.error.HTTPError as e:
-            # 429 → mở circuit NGAY, không sleep, không retry
-            self._record_failure('gemini', is_rate_limit=(e.code == 429))
-            return None
-        except Exception as e:
-            print(f'[AI] Gemini lỗi: {e}')
-            self._record_failure('gemini')
-            return None
-
-    def _run_deepl(self, text):
-        if not DEEPL_API_KEY or self._is_open('deepl'):
-            return None
-        try:
-            base = 'api-free.deepl.com' if DEEPL_API_KEY.endswith(':fx') else 'api.deepl.com'
-            payload = urllib.parse.urlencode({
-                'auth_key': DEEPL_API_KEY,
-                'text': text[:3000],
-                'target_lang': 'VI',
-            }).encode('utf-8')
-            req = urllib.request.Request(
-                f'https://{base}/v2/translate', data=payload,
-                headers={'Content-Type': 'application/x-www-form-urlencoded'}
-            )
-            resp = urllib.request.urlopen(req, timeout=15)
-            data = json.loads(resp.read())
-            self._record_success('deepl')
-            return data['translations'][0]['text'], 'default'
-        except urllib.error.HTTPError as e:
-            self._record_failure('deepl', is_rate_limit=(e.code == 429))
-            return None
-        except Exception as e:
-            print(f'[AI] DeepL lỗi: {e}')
-            self._record_failure('deepl')
-            return None
-
-    def _run_google(self, text):
-        try:
-            result = _translate_google(text)
-            self._record_success('google')
-            return result, 'default'
-        except Exception:
-            return text, 'default'
-
-    def process(self, text):
-        """Dịch text — KHÔNG blocking, fallback ngay khi provider fail."""
-        if not text or len(text.strip()) < 4:
-            return text, 'default'
-        if is_vietnamese(text[:400]):
-            return text, 'default'
-
-        with self._semaphore:  # giới hạn MAX_CONCURRENT calls đồng thời
-            for provider in self._providers:
-                if self._is_open(provider):
-                    continue
-                result = None
-                if provider == 'gemini':   result = self._run_gemini(text)
-                elif provider == 'deepl':  result = self._run_deepl(text)
-                elif provider == 'google': result = self._run_google(text)
-                if result and result[0]:
-                    return result[0], result[1]
-        return text, 'default'
-
-    def status(self):
-        now = time.time()
-        with self._lock:
-            return {p: {'open': now < self._open_until[p],
-                        'cooldown_remaining': max(0, round(self._open_until[p] - now))}
-                    for p in self._providers}
-
 
 class BatchPipeline:
     """
@@ -256,9 +122,9 @@ class BatchPipeline:
             processed = []
             for item in items:
                 text = item.get('text', '')
-                translated, ai_category = ai_service.process(text)
+                translated = _fast_translate(text)
                 if not item.get('category'):
-                    item['category'] = _map_category(ai_category)
+                    item['category'] = item.get('category') or 'Khác' 
                 item['text_translated'] = translated
                 desc_html = translated.replace('\n', '<br>')
                 title     = (translated[:80] + '...') if len(translated) > 80 else translated
@@ -288,21 +154,6 @@ class BatchPipeline:
     def qsize(self):
         return self._q.qsize()
 
-def _map_category(ai_category):
-    """
-    Map AI category về category hệ thống.
-    AI trả về: politics, health, tech, finance, entertainment, default
-    Hệ thống dùng: Sức khỏe, Tài chính, Công nghệ, Giải trí, Xã hội, Khác
-    """
-    mapping = {
-        'politics':      'Xã hội',
-        'health':        'Sức khỏe',
-        'tech':          'Công nghệ',
-        'finance':       'Tài chính',
-        'entertainment': 'Giải trí',
-        'default':       'Khác',
-    }
-    return mapping.get(ai_category, 'Khác')
 
 # Khởi động pipeline — sẽ gọi sau khi các hàm broadcast/forward được định nghĩa
 _pipeline = BatchPipeline()
@@ -346,36 +197,23 @@ tg_phone_code_hash = None   # lưu phone_code_hash khi gửi OTP
 
 # --- HÀM TIỆN ÍCH ---
 def _translate_with_engine(text, engine=None):
-    """
-    Dịch text sang tiếng Việt — dùng cho manual translate (process_items/process_tg_items).
-    Route qua ai_service để tôn trọng circuit breaker, tránh spam 429.
-    Nếu UI chọn engine cụ thể → ưu tiên engine đó, nhưng vẫn fallback nếu circuit open.
-    """
+    """Dịch text — dùng engine được chọn, fallback Google."""
     if not text or len(text.strip()) < 4:
         return text
     eng = engine or translate_engine
-    # Kiểm tra circuit breaker trước khi gọi
-    if eng == 'gemini' and ai_service._is_open('gemini'):
-        # Gemini đang bị circuit open → dùng ai_service rotation (bỏ qua Gemini)
-        translated, _ = ai_service.process(text)
-        return translated or text
-    if eng == 'deepl' and ai_service._is_open('deepl'):
-        translated, _ = ai_service.process(text)
-        return translated or text
-    # Gọi engine được chỉ định
     try:
         if eng == 'gemini' and GEMINI_API_KEY:
-            result = ai_service._run_gemini(text)
-            return result[0] if result else _translate_google(text)
+            return _translate_gemini(text)
         elif eng == 'deepl' and DEEPL_API_KEY:
-            result = ai_service._run_deepl(text)
-            return result[0] if result else _translate_google(text)
+            return _translate_deepl(text)
         else:
             return _translate_google(text)
     except Exception as e:
-        print(f'[!] Dịch [{eng}] lỗi: {e}, fallback AI rotation')
-        translated, _ = ai_service.process(text)
-        return translated or text
+        print(f'[!] Dịch [{eng}] lỗi: {e}, fallback Google')
+        try:
+            return _translate_google(text)
+        except Exception:
+            return text
 
 def _translate_gemini(text):
     """Dịch bằng Gemini API (gemini-2.0-flash — nhanh và miễn phí)"""
@@ -488,6 +326,18 @@ def maybe_translate(title, desc):
     if is_vietnamese(sample):
         return title, desc, False
     return (translate_text(title) if title else title), (translate_text(desc) if desc else desc), True
+
+def _fast_translate(text):
+    """
+    Dịch nhanh cho pipeline — không classification, không AI phức tạp.
+    Dùng engine được chọn trong UI, fallback Google nếu lỗi.
+    Bỏ qua nếu text đã là tiếng Việt.
+    """
+    if not text or len(text.strip()) < 4:
+        return text
+    if is_vietnamese(text[:400]):
+        return text
+    return _translate_with_engine(text)
 
 def html_to_telegram(html, channel_name='', link=''):
     if not html:
@@ -2252,7 +2102,7 @@ def _process_tg_queue():
     """
     Xử lý tin mới từ Telethon real-time queue.
     Kiến trúc mới: dedup → đẩy vào BatchPipeline (async, non-blocking).
-    Pipeline sẽ gom batch, gọi AIService rotation, broadcast + forward.
+    Pipeline sẽ gom batch, dịch, broadcast + forward.
     """
     with tg_new_items_lock:
         if not tg_new_items_queue:

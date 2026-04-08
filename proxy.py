@@ -43,38 +43,27 @@ translate_engine = _default_engine()  # có thể thay đổi qua WS message
 # Không còn phụ thuộc 1 API, tránh rate limit, classify category luôn khi dùng Gemini
 class AIService:
     """
-    Multi-AI rotation engine với Circuit Breaker + Exponential Backoff.
-
-    Luồng xử lý:
-      process(text) → (translated_text, category)
-
-    Circuit Breaker (per provider):
-      - Nếu provider bị lỗi liên tiếp >= FAIL_THRESHOLD lần → "mở mạch" (skip) trong COOLDOWN giây
-      - Sau COOLDOWN → thử lại 1 lần (half-open), nếu OK → đóng mạch, nếu vẫn lỗi → gia hạn thêm COOLDOWN
-
-    Exponential Backoff (chỉ cho Gemini 429):
-      - Lần 1: chờ 2s → retry
-      - Lần 2: chờ 4s → retry
-      - Lần 3: mở circuit, fallback sang provider tiếp theo
+    Multi-AI rotation engine với Circuit Breaker.
+    Thiết kế cho nhiều worker thread — KHÔNG blocking khi provider fail.
+    - Khi 429/lỗi → mở circuit ngay, fallback NGAY LẬP TỨC (không sleep)
+    - Semaphore giới hạn concurrent API calls tránh flood rate limit
+    - Circuit tự reset sau COOLDOWN giây
     """
-    FAIL_THRESHOLD = 3        # số lần lỗi liên tiếp để mở circuit
-    COOLDOWN       = 60.0     # giây circuit ở trạng thái mở trước khi thử lại
-    MAX_RETRY_429  = 2        # số lần retry Gemini khi gặp 429 trước khi fallback
-    BACKOFF_BASE   = 2.0      # giây backoff cơ bản (nhân đôi mỗi lần)
+    FAIL_THRESHOLD = 2        # 2 lỗi liên tiếp → mở circuit
+    COOLDOWN       = 120.0    # giây nghỉ khi circuit mở
+    MAX_CONCURRENT = 2        # tối đa 2 AI calls đồng thời
 
     def __init__(self):
-        self._providers = ['gemini', 'deepl', 'google']
-        # Circuit breaker state per provider
-        self._fail_count  = {p: 0   for p in self._providers}
-        self._open_until  = {p: 0.0 for p in self._providers}  # timestamp circuit mở đến khi nào
-        self._lock = threading.Lock()
+        self._providers  = ['gemini', 'deepl', 'google']
+        self._fail_count = {p: 0   for p in self._providers}
+        self._open_until = {p: 0.0 for p in self._providers}
+        self._lock       = threading.Lock()
+        self._semaphore  = threading.Semaphore(self.MAX_CONCURRENT)
 
     def _is_open(self, provider):
-        """Trả về True nếu circuit đang mở (provider bị skip)"""
         with self._lock:
             if time.time() < self._open_until[provider]:
                 return True
-            # Circuit hết cooldown → reset fail_count (half-open)
             if self._open_until[provider] > 0:
                 self._fail_count[provider] = 0
                 self._open_until[provider] = 0.0
@@ -88,25 +77,19 @@ class AIService:
     def _record_failure(self, provider, is_rate_limit=False):
         with self._lock:
             self._fail_count[provider] += 1
-            # Chỉ mở circuit khi vừa đúng ngưỡng (= FAIL_THRESHOLD), không lặp lại
             already_open = time.time() < self._open_until[provider]
             if self._fail_count[provider] >= self.FAIL_THRESHOLD and not already_open:
-                cooldown = self.COOLDOWN * (2 if is_rate_limit else 1)
-                self._open_until[provider] = time.time() + cooldown
-                print(f'[AI] Circuit OPEN: {provider} — nghỉ {cooldown:.0f}s')
+                self._open_until[provider] = time.time() + self.COOLDOWN
+                print(f'[AI] Circuit OPEN: {provider} — nghỉ {self.COOLDOWN:.0f}s')
 
     def _run_gemini(self, text):
-        """Dịch + classify category bằng Gemini với retry/backoff khi 429"""
-        if not GEMINI_API_KEY:
-            return None
-        # Guard: không gọi API nếu circuit đã mở
-        if self._is_open('gemini'):
+        if not GEMINI_API_KEY or self._is_open('gemini'):
             return None
         prompt = (
             'Translate the following text to Vietnamese. '
             'Also classify it into one of: politics, health, tech, finance, entertainment, default. '
             'Return ONLY valid JSON, no markdown, no explanation: '
-            '{"text":"<translated>","category":"<category>"}.\n\nTEXT: ' + text[:3000]
+            '{"text":"<translated>","category":"<category>"}. TEXT: ' + text[:3000]
         )
         payload = json.dumps({
             'contents': [{'parts': [{'text': prompt}]}],
@@ -114,43 +97,26 @@ class AIService:
         }).encode('utf-8')
         url = (f'https://generativelanguage.googleapis.com/v1beta/models/'
                f'gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}')
-
-        for attempt in range(self.MAX_RETRY_429 + 1):
-            try:
-                req  = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
-                resp = urllib.request.urlopen(req, timeout=15)
-                data = json.loads(resp.read())
-                raw  = data['candidates'][0]['content']['parts'][0]['text'].strip()
-                raw  = re.sub(r'^```[a-z]*\n?', '', raw).rstrip('`').strip()
-                result = json.loads(raw)
-                self._record_success('gemini')
-                return result.get('text', ''), result.get('category', 'default')
-            except urllib.error.HTTPError as e:
-                if e.code == 429:
-                    if attempt < self.MAX_RETRY_429:
-                        wait = self.BACKOFF_BASE * (2 ** attempt)
-                        print(f'[AI] Gemini 429 — backoff {wait:.0f}s (lần {attempt+1}/{self.MAX_RETRY_429})')
-                        time.sleep(wait)
-                        continue
-                    else:
-                        print(f'[AI] Gemini 429 — đã retry {self.MAX_RETRY_429} lần, mở circuit')
-                        self._record_failure('gemini', is_rate_limit=True)
-                        return None
-                else:
-                    print(f'[AI] Gemini HTTP {e.code}: {e}')
-                    self._record_failure('gemini')
-                    return None
-            except Exception as e:
-                print(f'[AI] Gemini lỗi: {e}')
-                self._record_failure('gemini')
-                return None
-        return None
+        try:
+            req  = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
+            resp = urllib.request.urlopen(req, timeout=15)
+            data = json.loads(resp.read())
+            raw  = data['candidates'][0]['content']['parts'][0]['text'].strip()
+            raw  = re.sub(r'^```[a-z]*\n?', '', raw).rstrip('`').strip()
+            result = json.loads(raw)
+            self._record_success('gemini')
+            return result.get('text', ''), result.get('category', 'default')
+        except urllib.error.HTTPError as e:
+            # 429 → mở circuit NGAY, không sleep, không retry
+            self._record_failure('gemini', is_rate_limit=(e.code == 429))
+            return None
+        except Exception as e:
+            print(f'[AI] Gemini lỗi: {e}')
+            self._record_failure('gemini')
+            return None
 
     def _run_deepl(self, text):
-        """Dịch bằng DeepL"""
-        if not DEEPL_API_KEY:
-            return None
-        if self._is_open('deepl'):
+        if not DEEPL_API_KEY or self._is_open('deepl'):
             return None
         try:
             base = 'api-free.deepl.com' if DEEPL_API_KEY.endswith(':fx') else 'api.deepl.com'
@@ -165,11 +131,9 @@ class AIService:
             )
             resp = urllib.request.urlopen(req, timeout=15)
             data = json.loads(resp.read())
-            translated = data['translations'][0]['text']
             self._record_success('deepl')
-            return translated, 'default'
+            return data['translations'][0]['text'], 'default'
         except urllib.error.HTTPError as e:
-            print(f'[AI] DeepL HTTP {e.code}: {e}')
             self._record_failure('deepl', is_rate_limit=(e.code == 429))
             return None
         except Exception as e:
@@ -178,66 +142,40 @@ class AIService:
             return None
 
     def _run_google(self, text):
-        """Google Translate — fallback cuối, luôn thành công"""
         try:
             result = _translate_google(text)
             self._record_success('google')
             return result, 'default'
-        except Exception as e:
-            print(f'[AI] Google lỗi: {e}')
-            self._record_failure('google')
+        except Exception:
             return text, 'default'
 
     def process(self, text):
-        """
-        Xử lý text qua AI rotation với circuit breaker.
-        Trả về (translated_text, category).
-        Provider bị open circuit → bị skip, thử provider tiếp theo.
-        """
+        """Dịch text — KHÔNG blocking, fallback ngay khi provider fail."""
         if not text or len(text.strip()) < 4:
             return text, 'default'
         if is_vietnamese(text[:400]):
             return text, 'default'
 
-        for provider in self._providers:
-            if self._is_open(provider):
-                remaining = max(0, self._open_until[provider] - time.time())
-                print(f'[AI] Skip {provider} (circuit open, còn {remaining:.0f}s)')
-                continue
-            result = None
-            if provider == 'gemini':
-                result = self._run_gemini(text)
-            elif provider == 'deepl':
-                result = self._run_deepl(text)
-            elif provider == 'google':
-                result = self._run_google(text)
-            if result:
-                translated, category = result
-                if translated:
-                    return translated, category
-        # Tất cả fail → trả về text gốc
-        print('[AI] Tất cả provider thất bại, giữ nguyên text gốc')
+        with self._semaphore:  # giới hạn MAX_CONCURRENT calls đồng thời
+            for provider in self._providers:
+                if self._is_open(provider):
+                    continue
+                result = None
+                if provider == 'gemini':   result = self._run_gemini(text)
+                elif provider == 'deepl':  result = self._run_deepl(text)
+                elif provider == 'google': result = self._run_google(text)
+                if result and result[0]:
+                    return result[0], result[1]
         return text, 'default'
 
     def status(self):
-        """Trả về dict trạng thái circuit breaker để debug/monitoring"""
         now = time.time()
         with self._lock:
-            return {
-                p: {
-                    'fail_count': self._fail_count[p],
-                    'open': now < self._open_until[p],
-                    'cooldown_remaining': max(0, round(self._open_until[p] - now))
-                }
-                for p in self._providers
-            }
+            return {p: {'open': now < self._open_until[p],
+                        'cooldown_remaining': max(0, round(self._open_until[p] - now))}
+                    for p in self._providers}
 
-# Singleton AI service — dùng chung toàn bộ app
-ai_service = AIService()
 
-# ================= ASYNC PIPELINE (Batch Queue) =================
-# Hàng đợi async cho tin Telethon real-time + RSS
-# Thay thế process_items / process_tg_items dùng sync threads đơn thuần
 class BatchPipeline:
     """
     Pipeline xử lý tin với nhiều worker thread song song.

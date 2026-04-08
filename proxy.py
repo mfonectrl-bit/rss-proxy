@@ -2627,7 +2627,20 @@ if __name__ == '__main__':
     if not os.environ.get('PORT'):
         import webbrowser
         webbrowser.open(f'http://localhost:{HTTP_PORT}')
+    print(f'[i] Khởi động HTTP server trên port {HTTP_PORT}...')
     try:
-        ThreadingHTTPServer(('', HTTP_PORT), HttpHandler).serve_forever()
+        server = ThreadingHTTPServer(('', HTTP_PORT), HttpHandler)
+        print(f'[i] HTTP server đang lắng nghe port {HTTP_PORT}')
+        server.serve_forever()
     except KeyboardInterrupt:
         print('Dừng.')
+    except OSError as e:
+        # Address already in use — đợi rồi thử lại
+        print(f'[!] Port {HTTP_PORT} bị chiếm: {e} — thử lại sau 3s')
+        time.sleep(3)
+        server = ThreadingHTTPServer(('', HTTP_PORT), HttpHandler)
+        print(f'[i] HTTP server khởi động lại thành công')
+        server.serve_forever()
+    except Exception as e:
+        print(f'[!] HTTP server lỗi nghiêm trọng: {type(e).__name__}: {e}')
+        raise

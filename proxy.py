@@ -142,9 +142,13 @@ class BatchPipeline:
                         for it in processed]
             broadcast({'type': 'new_items', 'url': feed_url, 'items': ws_items})
 
-            # 2. Forward Telethon qua pool (có giới hạn)
+            # 2. Forward — thread riêng, KHÔNG dùng pool để không bị block bởi init history
             feed_category = processed[0].get('category', '')
-            _thread_pool.submit(_do_forward, processed, feed_category, feed_url)
+            threading.Thread(
+                target=_do_forward,
+                args=(processed, feed_category, feed_url),
+                daemon=True
+            ).start()
 
     def qsize(self):
         return self._q.qsize()
@@ -1579,7 +1583,11 @@ async function fetchAndMerge(url,feedName,category,markNew){
                 it.isNew=markNew;allItems.push(it);
             }
         });
-        allItems.sort((a,b)=>b.ts-a.ts);renderStream();
+        allItems.sort((a,b)=>b.ts-a.ts);
+        // Giới hạn 50 bài/feed
+        const MAX_PER_FEED=50;const fc={};
+        allItems=allItems.filter(it=>{const u=it.feedUrl||'';fc[u]=(fc[u]||0)+1;return fc[u]<=MAX_PER_FEED;});
+        renderStream();
     }catch(e){console.warn('fetch error',url,e);}
 }
 
@@ -1692,7 +1700,18 @@ function connectWS(){
             if(filterUrl!==null&&filterUrl!==msg.url) newBadges[msg.url]=(newBadges[msg.url]||0)+parsed.length;
             const existing=new Set(allItems.map(it=>it.guid));
             parsed.forEach(it=>{if(!existing.has(it.guid)) allItems.push(it);});
-            allItems.sort((a,b)=>b.ts-a.ts);renderSidebar();renderStream();
+            allItems.sort((a,b)=>b.ts-a.ts);
+
+            // Giới hạn tối đa 50 bài/feed — xóa bài cũ nhất khi vượt ngưỡng
+            const MAX_PER_FEED=50;
+            const feedCounts={};
+            allItems=allItems.filter(it=>{
+                const url=it.feedUrl||'';
+                feedCounts[url]=(feedCounts[url]||0)+1;
+                return feedCounts[url]<=MAX_PER_FEED;
+            });
+
+            renderSidebar();renderStream();
         }
         if(msg.type==='poll_status'){pollInterval=msg.interval;pollNextIn=msg.next_in;}
         if(msg.type==='auto_fwd_sent'){showToastMsg(`Auto-forward: đã gửi ${msg.count} tin mới lên Telegram`);}
@@ -2079,8 +2098,9 @@ def _is_ica_source(url):
 
 def _init_tg_feed(url_obj):
     """
-    Load lịch sử 1 lần khi thêm kênh TG mới.
-    Số bài lấy về dựa theo history_limit của từng feed (mặc định 20).
+    Load lịch sử 1 lần khi thêm kênh TG mới — chỉ để hiển thị UI.
+    KHÔNG dịch ở đây (tránh chiếm thread pool, block forward).
+    KHÔNG forward (đây là tin cũ).
     """
     url           = url_obj['url']
     category      = url_obj.get('category', '')
@@ -2088,7 +2108,6 @@ def _init_tg_feed(url_obj):
     channel       = normalize_tg_channel(url)
 
     if history_limit == 0:
-        # Feed cấu hình không lấy lịch sử — chỉ init known_guids rỗng
         with lock:
             known_guids[url] = set()
         print(f'[TG] Bỏ qua lịch sử {channel} (history_limit=0)')
@@ -2099,15 +2118,16 @@ def _init_tg_feed(url_obj):
         for it in items:
             if not it.get('category'):
                 it['category'] = category
+
+        # Lưu known_guids để dedup tin mới sau này
         with lock:
             known_guids[url] = {it['guid'] for it in items if it['guid']}
-        # Dịch để hiển thị UI (không forward — chỉ lịch sử)
-        if translate_enabled and TRANSLATE_AVAILABLE:
-            items = process_tg_items(items)
+
+        # Broadcast thẳng lên UI không qua dịch — nhanh, không tốn pool
         ws_items = [{k: v for k, v in it.items() if k != '_tg_media_bytes'} for it in items]
         if ws_items:
             broadcast({'type': 'new_items', 'url': url, 'items': ws_items})
-        print(f'[TG] Load lịch sử {channel}: {len(items)} tin')
+        print(f'[TG] Load lịch sử {channel}: {len(items)} tin (history_limit={history_limit})')
     except Exception as e:
         print(f'[!] Load lịch sử lỗi {channel}: {e}')
 

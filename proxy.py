@@ -876,6 +876,9 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
 /* Ảnh trong item body luôn xuống hàng */
 [id^="b"] img{display:block;max-width:100%;height:auto;margin:8px 0;border-radius:6px}
 [id^="b"] br{display:block;content:"";margin:2px 0}
+.item-body-div img{display:block;max-width:100%;height:auto;margin:8px 0;border-radius:6px}
+.item-body-div br{display:block;content:"";margin:2px 0}
+.item-body-div p{margin:4px 0}
 /* Telethon auth */
 .tg-auth-box{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:14px 18px;margin-bottom:10px}
 .tg-auth-box.error{background:#fef2f2;border-color:#fecaca}

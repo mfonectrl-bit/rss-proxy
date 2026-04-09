@@ -1322,7 +1322,12 @@ async function forwardSelected(){
     const checkboxes=document.querySelectorAll('#fwd-ch-list input:checked');
     const channelIndices=Array.from(checkboxes).map(cb=>parseInt(cb.value));
     if(channelIndices.length===0){alert('Chọn ít nhất 1 kênh');return;}
-    const items=allItems.filter(it=>selected.has(it.guid)).map(it=>({guid:it.guid,title:it.title,desc:it.desc,link:it.link,category:it.category,feedUrl:it.feedUrl}));
+    const items=allItems.filter(it=>selected.has(it.guid)).map(it=>{
+        const feedCfg=feeds.find(f=>f.url===it.feedUrl)||{};
+        return {guid:it.guid,title:it.title,desc:it.desc,link:it.link,
+                category:it.category,feedUrl:it.feedUrl,
+                show_link:feedCfg.show_link!==false};  // lấy show_link từ feed config
+    });
     const channelsToSend=channelIndices.map(i=>tgChannels[i]);
     try{
         const r=await fetch('/tg_forward',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channels:channelsToSend,items})});
@@ -2488,8 +2493,14 @@ class HttpHandler(BaseHTTPRequestHandler):
                 channel_name = ch.get('name', dest)
                 for it in items_raw:
                     feed_url = it.get('feedUrl', '')
-                    with lock:
-                        show_link = next((u.get('show_link', True) for u in watched_urls if u['url'] == feed_url), True)
+                    # Ưu tiên show_link từ client gửi lên
+                    # Fallback: tra cứu trong watched_urls (nếu client không gửi)
+                    if 'show_link' in it:
+                        show_link = it.get('show_link', True)
+                    else:
+                        with lock:
+                            show_link = next((u.get('show_link', True) for u in watched_urls if u['url'] == feed_url), True)
+                    print(f'[Forward] feed={feed_url} show_link={show_link}')
                     # Build caption
                     desc_plain = strip_html((it.get('desc','') or '').replace('<br>','\n')).strip()
                     caption    = desc_plain

@@ -936,6 +936,15 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
   <input type="checkbox" id="new-show-link" checked style="width:16px;height:16px;cursor:pointer">
   Hiển thị link "Xem bài gốc →" khi forward
 </label>
+<div style="margin-bottom:10px">
+  <label style="font-size:12px;color:#555;font-weight:600;display:block;margin-bottom:4px">Số bài lịch sử lấy về khi khởi động:</label>
+  <select id="new-history-limit" style="width:100%;padding:7px;border:1px solid #d0d0c8;border-radius:8px;font-size:13px">
+    <option value="20">20 bài (mặc định)</option>
+    <option value="10">10 bài</option>
+    <option value="5">5 bài</option>
+    <option value="0">Không lấy lịch sử</option>
+  </select>
+</div>
 <!-- Dropdown chọn kênh đích -->
 <div id="feed-channel-wrap" style="margin-bottom:10px;display:none">
   <div style="font-size:12px;color:#555;margin-bottom:6px;font-weight:600">Forward tới kênh:</div>
@@ -1187,7 +1196,8 @@ async function tlSignIn2fa(){
 function updateTelethonBadge(connected){
     const badge=document.getElementById('tg-auth-badge');
     if(connected){
-        badge.textContent='⚡ Telethon: đã kết nối';badge.style.color='#16a34a';
+        badge.innerHTML='⚡ Telethon: đã kết nối <span style="color:#aaa;font-weight:400">(Tổng số feeds: '+feeds.length+')</span>';
+        badge.style.color='#16a34a';
     } else {
         badge.textContent='Telethon: chưa kết nối';badge.style.color='#aaa';
     }
@@ -1371,7 +1381,7 @@ function deleteFeed(i){
     const url=feeds[i].url;feeds.splice(i,1);saveFeeds();
     allItems=allItems.filter(it=>it.feedUrl!==url);
     if(filterUrl===url)filterUrl=null;
-    wsSend({type:'feeds',feeds:feeds.map(f=>({url:f.url,name:f.name,category:f.category,show_link:f.show_link!==false,auto_fwd:f.auto_fwd===true,target_channels:f.target_channels||[]}))});
+    wsSend({type:'feeds',feeds:feeds.map(f=>({url:f.url,name:f.name,category:f.category,show_link:f.show_link!==false,auto_fwd:f.auto_fwd===true,target_channels:f.target_channels||[],history_limit:f.history_limit!=null?f.history_limit:20}))});
     renderSidebar();renderStream();
 }
 
@@ -1399,6 +1409,7 @@ function openEditFeed(i){
     document.getElementById('new-category').value=f.category||'Khác';
     document.getElementById('new-show-link').checked=f.show_link!==false;
     document.getElementById('new-auto-fwd').checked=f.auto_fwd===true;
+    document.getElementById('new-history-limit').value=String(f.history_limit!=null?f.history_limit:20);
     document.getElementById('modal-title').textContent='Sửa feed';
     document.getElementById('btn-add-feed').textContent='Cập nhật';
     const hint=document.getElementById('feed-type-hint');
@@ -1414,6 +1425,7 @@ function openModal(){
     document.getElementById('new-category').value=categories[0]||'Khác';
     document.getElementById('new-show-link').checked=true;
     document.getElementById('new-auto-fwd').checked=false;
+    document.getElementById('new-history-limit').value='20';
     document.getElementById('modal-title').textContent='Thêm feed';
     document.getElementById('btn-add-feed').textContent='Thêm';
     document.getElementById('feed-type-hint').style.display='none';
@@ -1428,13 +1440,14 @@ function addFeed(){
           cat=document.getElementById('new-category').value,
           show_link=document.getElementById('new-show-link').checked,
           auto_fwd=document.getElementById('new-auto-fwd').checked,
+          history_limit=parseInt(document.getElementById('new-history-limit').value)||20,
           target_channels=getSelectedFeedChannels();
     if(!name||!url){alert('Nhập đủ tên và URL');return;}
-    const feedObj={name,url,category:cat,show_link,auto_fwd,target_channels};
+    const feedObj={name,url,category:cat,show_link,auto_fwd,target_channels,history_limit};
     if(editFeedIndex>=0){feeds[editFeedIndex]=feedObj;}
     else{feeds.push(feedObj);}
     saveFeeds();
-    wsSend({type:'feeds',feeds:feeds.map(f=>({url:f.url,name:f.name,category:f.category,show_link:f.show_link!==false,auto_fwd:f.auto_fwd===true,target_channels:f.target_channels||[]}))});
+    wsSend({type:'feeds',feeds:feeds.map(f=>({url:f.url,name:f.name,category:f.category,show_link:f.show_link!==false,auto_fwd:f.auto_fwd===true,target_channels:f.target_channels||[],history_limit:f.history_limit!=null?f.history_limit:20}))});
     closeModal();
     if(editFeedIndex<0) fetchAndMerge(url,name,cat,true);
     else{allItems=allItems.filter(it=>it.feedUrl!==url);fetchAndMerge(url,name,cat,false);}
@@ -1615,7 +1628,8 @@ function connectWS(){
         document.getElementById('ws-lbl').textContent='Đang kết nối...';
         feedsPayload=feeds.map(f=>({url:f.url,name:f.name,category:f.category,
             show_link:f.show_link!==false,auto_fwd:f.auto_fwd===true,
-            target_channels:f.target_channels||[]}));
+            target_channels:f.target_channels||[],
+            history_limit:f.history_limit!=null?f.history_limit:20}));
         wsReconnectCount++;
         if(wsHeartbeatTimer) clearInterval(wsHeartbeatTimer);
         wsHeartbeatTimer=setInterval(()=>{ if(wsReady) wsSend({type:'heartbeat'}); }, 10000);
@@ -2066,14 +2080,22 @@ def _is_ica_source(url):
 def _init_tg_feed(url_obj):
     """
     Load lịch sử 1 lần khi thêm kênh TG mới.
-    Chỉ dùng để hiển thị trên UI (không forward).
-    Dịch bằng process_tg_items (sync) vì đây là init one-shot, không cần pipeline.
+    Số bài lấy về dựa theo history_limit của từng feed (mặc định 20).
     """
-    url      = url_obj['url']
-    category = url_obj.get('category', '')
-    channel  = normalize_tg_channel(url)
+    url           = url_obj['url']
+    category      = url_obj.get('category', '')
+    history_limit = int(url_obj.get('history_limit', 20))
+    channel       = normalize_tg_channel(url)
+
+    if history_limit == 0:
+        # Feed cấu hình không lấy lịch sử — chỉ init known_guids rỗng
+        with lock:
+            known_guids[url] = set()
+        print(f'[TG] Bỏ qua lịch sử {channel} (history_limit=0)')
+        return
+
     try:
-        items = tg_load_history_sync(channel, limit=20)
+        items = tg_load_history_sync(channel, limit=history_limit)
         for it in items:
             if not it.get('category'):
                 it['category'] = category

@@ -58,9 +58,9 @@ class BatchPipeline:
     - Mỗi worker tự chờ queue độc lập → không tranh nhau lock
     """
     BATCH_SIZE     = 5
-    FLUSH_TIMEOUT  = 3.0
-    NUM_WORKERS    = 4       # số worker thread song song
-    MAX_QUEUE_SIZE = 200     # tối đa 200 item trong queue, quá thì drop cũ nhất
+    FLUSH_TIMEOUT  = 0.5   # giây: flush nhanh để UI cập nhật ngay
+    NUM_WORKERS    = 4
+    MAX_QUEUE_SIZE = 200
 
     def __init__(self):
         self._q = _queue.Queue(maxsize=self.MAX_QUEUE_SIZE)
@@ -1665,6 +1665,15 @@ function connectWS(){
                 feeds.filter(f=>!isTgSource(f.url)).forEach(f=>fetchAndMerge(f.url,f.name,f.category,false));
             }, 600);
         }
+        // Lần đầu connect: fetch TG history sau 8s để đảm bảo server đã init xong
+        // Tránh miss broadcast khi _init_tg_feed chạy trước khi WS ổn định
+        if(wsReconnectCount===0){
+            setTimeout(()=>{
+                feeds.filter(f=>isTgSource(f.url)).forEach(f=>
+                    fetchAndMerge(f.url,f.name,f.category,false)
+                );
+            }, 8000);
+        }
     }
 
     ws.onmessage=e=>{
@@ -2198,14 +2207,13 @@ def poller():
         for idx, url_obj in enumerate(new_tg):
             tg_inited.add(url_obj['url'])
             tg_init_pending.add(url_obj['url'])
-            # Stagger: mỗi feed delay thêm 2s so với feed trước — tránh flood
-            # Nhưng KHÔNG block poller loop
             delay = idx * 2.0
             def _run(u=url_obj, d=delay):
                 time.sleep(d)
                 _init_tg_feed(u)
                 tg_init_pending.discard(u['url'])
-            _thread_pool.submit(_run)
+            # Dùng thread riêng (không qua pool) để không chiếm slot của forward/poll
+            threading.Thread(target=_run, daemon=True).start()
 
         # --- RSS thường (parallel) ---
         rss_urls = [u for u in urls if not is_tg_source(u['url']) and not _is_ica_source(u['url'])]

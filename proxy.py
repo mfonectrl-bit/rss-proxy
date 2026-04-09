@@ -29,23 +29,17 @@ TG_CONFIG_FILE   = 'tg_config.json'
 _thread_pool = ThreadPoolExecutor(max_workers=20)
 
 # --- Engine dịch ---
-# Đọc API keys từ env var
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '').strip()
+# Gemini đã bị loại bỏ — 429 rate limit quá thấp (15 req/phút), không dùng được với nhiều feed
 DEEPL_API_KEY  = os.environ.get('DEEPL_API_KEY', '').strip()
 
-# Engine mặc định: gemini nếu có key, deepl nếu có key, google nếu không có gì
 def _default_engine():
-    if GEMINI_API_KEY:
-        return 'gemini'
     if DEEPL_API_KEY:
         return 'deepl'
     return 'google'
 
-translate_engine = _default_engine()  # có thể thay đổi qua WS message
+translate_engine = _default_engine()
 
 # ================= AI SERVICE (Multi-AI Rotation) =================
-# Kiến trúc mới: xoay vòng Gemini → DeepL → Google
-# Không còn phụ thuộc 1 API, tránh rate limit, classify category luôn khi dùng Gemini
 
 class BatchPipeline:
     """
@@ -168,7 +162,7 @@ except ImportError as e:
     TRANSLATE_AVAILABLE = False
     print(f'[!] Thư viện dịch chưa cài: {e}')
 
-print(f'[i] Engine dịch mặc định: {_default_engine()} | Gemini={"có" if GEMINI_API_KEY else "không"} | DeepL={"có" if DEEPL_API_KEY else "không"}')
+print(f'[i] Engine dịch mặc định: {_default_engine()} | DeepL={"có" if DEEPL_API_KEY else "không"}')
 
 try:
     from telethon import TelegramClient, events
@@ -198,14 +192,12 @@ tg_phone_code_hash = None   # lưu phone_code_hash khi gửi OTP
 
 # --- HÀM TIỆN ÍCH ---
 def _translate_with_engine(text, engine=None):
-    """Dịch text — dùng engine được chọn, fallback Google."""
+    """Dịch text — DeepL nếu có key, Google làm fallback."""
     if not text or len(text.strip()) < 4:
         return text
     eng = engine or translate_engine
     try:
-        if eng == 'gemini' and GEMINI_API_KEY:
-            return _translate_gemini(text)
-        elif eng == 'deepl' and DEEPL_API_KEY:
+        if eng == 'deepl' and DEEPL_API_KEY:
             return _translate_deepl(text)
         else:
             return _translate_google(text)
@@ -216,22 +208,6 @@ def _translate_with_engine(text, engine=None):
         except Exception:
             return text
 
-def _translate_gemini(text):
-    """Dịch bằng Gemini API (gemini-2.0-flash — nhanh và miễn phí)"""
-    prompt = (
-        'Dịch đoạn văn bản sau sang tiếng Việt. '
-        'Giữ nguyên tên riêng, thuật ngữ chuyên ngành, số liệu và ký hiệu. '
-        'Chỉ trả về bản dịch, không giải thích thêm.\n\n' + text[:4000]
-    )
-    payload = json.dumps({
-        'contents': [{'parts': [{'text': prompt}]}],
-        'generationConfig': {'temperature': 0.1, 'maxOutputTokens': 2048}
-    }).encode('utf-8')
-    url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}'
-    req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
-    resp = urllib.request.urlopen(req, timeout=15)
-    data = json.loads(resp.read())
-    return data['candidates'][0]['content']['parts'][0]['text'].strip()
 
 def _translate_deepl(text):
     """Dịch bằng DeepL Free API"""
@@ -908,8 +884,7 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
   🌐 Dịch:
   <select id="engine-select" onchange="setTranslateEngine(this.value)"
     style="padding:4px 8px;border:1px solid #fcd34d;border-radius:7px;font-size:12px;background:#fff;cursor:pointer">
-    <option value="gemini">Gemini (tốt nhất)</option>
-    <option value="deepl">DeepL</option>
+    <option value="deepl">DeepL (tốt nhất)</option>
     <option value="google">Google Translate</option>
   </select>
 </span>
@@ -1090,7 +1065,7 @@ let tgChannels=JSON.parse(localStorage.getItem('tg_channels')||'null')||[];
 let categories=JSON.parse(localStorage.getItem('categories')||'null')||DEFAULT_CATEGORIES;
 let allItems=[],newBadges={},filterUrl=null,searchQ='',ws=null,wsReady=false,shownCount=PAGE_SIZE;
 let translateOn=JSON.parse(localStorage.getItem('translate_on')??'true');
-let translateEngine=localStorage.getItem('translate_engine')||'gemini';
+let translateEngine=localStorage.getItem('translate_engine')||'deepl';
 let selected=new Set(),autoFwd=JSON.parse(localStorage.getItem('auto_fwd')??'false');
 let editFeedIndex=-1,selectedChannelIndex=-1;
 let pollInterval=60,pollNextIn=0;
@@ -2304,8 +2279,8 @@ def ws_handler(ws):
             elif t == 'translate':
                 translate_enabled = msg.get('enabled', True)
             elif t == 'translate_engine':
-                new_engine = msg.get('engine', 'gemini')
-                if new_engine in ('gemini', 'deepl', 'google'):
+                new_engine = msg.get('engine', 'deepl')
+                if new_engine in ('deepl', 'google'):
                     translate_engine = new_engine
                     print(f'[WS] Engine dịch: {translate_engine}')
             elif t == 'tg_settings':

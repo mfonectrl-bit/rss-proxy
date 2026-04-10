@@ -537,13 +537,20 @@ _tg_new_message_handler = None
 _resolved_channels_cache = set()
 
 async def _tg_setup_realtime(feed_urls):
-    """Setup real-time listener cho danh sách feed URLs"""
+    """
+    Setup real-time listener cho danh sách feed URLs.
+    
+    Chiến lược với nhiều feed:
+    1. Đăng ký NGAY với các channel đã resolve (từ cache) — không delay
+    2. Resolve các channel mới song song (asyncio.gather) — không tuần tự
+    3. Sau khi resolve xong → cập nhật handler với danh sách đầy đủ
+    """
     global _tg_new_message_handler, _resolved_channels_cache
 
     if not tg_client or not await tg_client.is_user_authorized():
         return
 
-    # Xóa TẤT CẢ event handlers hiện tại để tránh duplicate
+    # Xóa event handlers cũ
     try:
         for callback, event in tg_client.list_event_handlers():
             tg_client.remove_event_handler(callback, event)
@@ -556,26 +563,47 @@ async def _tg_setup_realtime(feed_urls):
 
     raw_channels = [normalize_tg_channel(u).lstrip('@') for u in feed_urls]
 
-    # Resolve channel — dùng cache để tránh gọi API lặp lại mỗi lần WS reconnect
-    channels_list = []
-    for ch in raw_channels:
-        if ch in _resolved_channels_cache:
-            channels_list.append(ch)
-            continue
-        try:
-            await tg_client.get_input_entity(ch)
-            _resolved_channels_cache.add(ch)
-            channels_list.append(ch)
-        except Exception as e:
-            print(f'[TG] Bỏ qua channel không hợp lệ @{ch}: {e}')
+    # Tách: đã có cache vs cần resolve mới
+    cached       = [ch for ch in raw_channels if ch in _resolved_channels_cache]
+    need_resolve = [ch for ch in raw_channels if ch not in _resolved_channels_cache]
 
-    if not channels_list:
-        print('[TG] Không có channel hợp lệ nào để đăng ký real-time')
-        return
+    # Đăng ký ngay với cached channels (không đợi resolve mới)
+    if cached:
+        print(f'[TG] Đăng ký real-time ngay: {len(cached)} channels (cached)')
+        await _register_handler(cached)
 
-    print(f'[TG] Đăng ký real-time cho: {channels_list}')
+    # Resolve channels mới song song
+    if need_resolve:
+        print(f'[TG] Resolve {len(need_resolve)} channels mới...')
 
-    # Set lưu grouped_id đã xử lý để không tạo duplicate item
+        async def _resolve_one(ch):
+            try:
+                await tg_client.get_input_entity(ch)
+                _resolved_channels_cache.add(ch)
+                return ch
+            except Exception as e:
+                print(f'[TG] Bỏ qua @{ch}: {e}')
+                return None
+
+        results = await asyncio.gather(*[_resolve_one(ch) for ch in need_resolve])
+        newly_resolved = [ch for ch in results if ch]
+
+        if newly_resolved:
+            all_channels = cached + newly_resolved
+            print(f'[TG] Đăng ký real-time đầy đủ: {len(all_channels)} channels')
+            await _register_handler(all_channels)
+
+async def _register_handler(channels_list):
+    """Đăng ký event handler cho danh sách channels"""
+    global _tg_new_message_handler
+
+    # Xóa handler cũ
+    try:
+        for callback, event in tg_client.list_event_handlers():
+            tg_client.remove_event_handler(callback, event)
+    except Exception:
+        pass
+
     handled_groups = set()
 
     async def handler(event):
@@ -585,8 +613,6 @@ async def _tg_setup_realtime(feed_urls):
         chat_username = getattr(event.chat, 'username', None)
         if not chat_username:
             return
-
-        # Bỏ qua nếu là tin phụ trong group (đã có tin chính)
         if msg.grouped_id and msg.grouped_id in handled_groups:
             return
 
@@ -617,7 +643,7 @@ async def _tg_setup_realtime(feed_urls):
             'pubDate': pub, 'translated': False, 'category': category,
             '_tg_media_bytes': None, '_tg_has_media': has_media,
             '_tg_msg_id': msg.id, '_tg_chat': chat_username,
-            '_tg_grouped_id': msg.grouped_id,  # None nếu không phải group
+            '_tg_grouped_id': msg.grouped_id,
             '_source': 'telethon', '_feed_url': feed_url,
         }
         with tg_new_items_lock:
@@ -626,6 +652,7 @@ async def _tg_setup_realtime(feed_urls):
 
     tg_client.add_event_handler(handler, events.NewMessage(chats=channels_list))
     _tg_new_message_handler = handler
+    print(f'[TG] Đăng ký real-time cho: {channels_list}')
 
 def tg_setup_realtime_sync(feed_urls):
     """Wrapper đồng bộ để gọi từ thread thường"""

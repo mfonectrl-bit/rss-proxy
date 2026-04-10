@@ -17,6 +17,36 @@ import struct
 import socket
 import xml.etree.ElementTree as ET
 
+import json
+import os
+
+FEEDS_FILE = 'feeds.json'
+
+def save_feeds_to_file(urls):
+    try:
+        with open(FEEDS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(urls, f, ensure_ascii=False, indent=2)
+        print(f'[CONFIG] Đã lưu {len(urls)} feeds vào feeds.json')
+        return True
+    except Exception as e:
+        print(f'[CONFIG] Lưu feeds.json lỗi: {e}')
+        return False
+
+def load_feeds_from_file():
+    if not os.path.exists(FEEDS_FILE):
+        print(f'[CONFIG] Chưa có feeds.json → Mở web thiết lập feeds lần đầu')
+        return []
+    try:
+        with open(FEEDS_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        print(f'[CONFIG] ✅ Load thành công {len(data)} feeds từ feeds.json')
+        return data
+    except Exception as e:
+        print(f'[CONFIG] Đọc feeds.json lỗi: {e}')
+        return []
+
+
+
 # --- CẤU HÌNH ---
 POLL_INTERVAL    = 60
 HTTP_PORT = int(os.environ.get("PORT", 8765))
@@ -2244,6 +2274,9 @@ def poller():
             now = time.time()
             with lock:
                 urls = list(watched_urls)
+        
+            if len(urls) == 0:
+                print("[WARN] watched_urls đang rỗng! Poller chưa có feed nào để chạy.")
 
             # --- Xử lý queue real-time từ Telethon ---
             _process_tg_queue()
@@ -2347,6 +2380,8 @@ def ws_handler(ws):
                 urls = msg.get('feeds', [])
                 print(f'[WS] ✅ Nhận được {len(urls)} feeds từ client')
 
+                save_feeds_to_file(urls)
+                
                 with lock:
                     watched_urls.clear()
                     watched_urls.extend(urls)
@@ -2668,6 +2703,20 @@ if __name__ == '__main__':
     # Khởi động BatchPipeline (async AI rotation + batch processing)
     print("[MAIN] Chuẩn bị khởi động poller thread...")
     threading.Thread(target=poller, daemon=True, name="RSS-Poller").start()
+        # === PERSIST FEEDS - TỰ ĐỘNG LOAD KHI RESTART ===
+    default_feeds = load_feeds_from_file()
+    if default_feeds:
+        with lock:
+            watched_urls.clear()
+            watched_urls.extend(default_feeds)
+            
+            for u in default_feeds:
+                url = u.get('url')
+                if url and url not in known_guids:
+                    known_guids[url] = set()
+        
+        print(f'[CONFIG] ✅ ĐÃ TỰ ĐỘNG KÍCH HOẠT {len(default_feeds)} FEEDS TỪ FILE')
+
     print("[MAIN] Poller thread đã được start")
     
     _pipeline.start()

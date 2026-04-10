@@ -11,39 +11,119 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from urllib.parse import urlparse, parse_qs
 from concurrent.futures import ThreadPoolExecutor
-import hashlib
-import base64
 import struct
-import socket
 import xml.etree.ElementTree as ET
-
-import json
-import os
 
 FEEDS_FILE = 'feeds.json'
 
+# --- GitHub Persistence ---
+# Đặt các biến này trong Render Environment Variables:
+#   GITHUB_TOKEN  : Personal Access Token (scope: repo)
+#   GITHUB_REPO   : tên repo dạng "username/repo-name"
+#   GITHUB_BRANCH : nhánh chứa code, thường là "main" hoặc "master"
+GITHUB_TOKEN  = os.environ.get('GITHUB_TOKEN', '').strip()
+GITHUB_REPO   = os.environ.get('GITHUB_REPO', '').strip()
+GITHUB_BRANCH = os.environ.get('GITHUB_BRANCH', 'main').strip()
+GITHUB_PATH   = 'feeds.json'   # đường dẫn file trong repo
+
+_github_save_lock = threading.Lock()
+
+def _github_api(method, path, payload=None):
+    """Gọi GitHub API, trả về (status_code, response_dict)"""
+    url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/{path}'
+    data = json.dumps(payload).encode('utf-8') if payload else None
+    req = urllib.request.Request(url, data=data, method=method, headers={
+        'Authorization': f'token {GITHUB_TOKEN}',
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json',
+        'User-Agent': 'RSSReader/1.0',
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return resp.status, json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        return e.code, {}
+    except Exception as e:
+        return 0, {'error': str(e)}
+
 def save_feeds_to_file(urls):
+    """Lưu feeds.json lên GitHub repo (ghi đè) + backup local"""
+    # Luôn lưu local làm backup
     try:
         with open(FEEDS_FILE, 'w', encoding='utf-8') as f:
             json.dump(urls, f, ensure_ascii=False, indent=2)
-        print(f'[CONFIG] Đã lưu {len(urls)} feeds vào feeds.json')
+    except Exception:
+        pass
+
+    if not GITHUB_TOKEN or not GITHUB_REPO:
+        print('[CONFIG] Chưa cấu hình GITHUB_TOKEN/GITHUB_REPO — chỉ lưu local')
         return True
-    except Exception as e:
-        print(f'[CONFIG] Lưu feeds.json lỗi: {e}')
-        return False
+
+    with _github_save_lock:
+        try:
+            content_b64 = __import__('base64').b64encode(
+                json.dumps(urls, ensure_ascii=False, indent=2).encode('utf-8')
+            ).decode('ascii')
+
+            # Lấy SHA hiện tại (cần để update file)
+            status, existing = _github_api('GET', GITHUB_PATH)
+            sha = existing.get('sha') if status == 200 else None
+
+            payload = {
+                'message': f'[auto] update feeds.json ({len(urls)} feeds)',
+                'content': content_b64,
+                'branch': GITHUB_BRANCH,
+            }
+            if sha:
+                payload['sha'] = sha
+
+            status, resp = _github_api('PUT', GITHUB_PATH, payload)
+            if status in (200, 201):
+                print(f'[CONFIG] ✅ Đã lưu {len(urls)} feeds lên GitHub')
+                return True
+            else:
+                print(f'[CONFIG] GitHub lưu lỗi HTTP {status}: {resp}')
+                return False
+        except Exception as e:
+            print(f'[CONFIG] GitHub lưu lỗi: {e}')
+            return False
 
 def load_feeds_from_file():
-    if not os.path.exists(FEEDS_FILE):
-        print(f'[CONFIG] Chưa có feeds.json → Mở web thiết lập feeds lần đầu')
-        return []
-    try:
-        with open(FEEDS_FILE, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        print(f'[CONFIG] ✅ Load thành công {len(data)} feeds từ feeds.json')
-        return data
-    except Exception as e:
-        print(f'[CONFIG] Đọc feeds.json lỗi: {e}')
-        return []
+    """Load feeds.json từ GitHub repo, fallback về local nếu lỗi"""
+    if GITHUB_TOKEN and GITHUB_REPO:
+        try:
+            status, resp = _github_api('GET', GITHUB_PATH)
+            if status == 200 and resp.get('content'):
+                import base64 as _b64
+                raw = _b64.b64decode(resp['content']).decode('utf-8')
+                data = json.loads(raw)
+                print(f'[CONFIG] ✅ Load thành công {len(data)} feeds từ GitHub')
+                # Cập nhật local cache
+                try:
+                    with open(FEEDS_FILE, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                except Exception:
+                    pass
+                return data
+            elif status == 404:
+                print('[CONFIG] feeds.json chưa có trên GitHub — sẽ tạo khi lưu lần đầu')
+            else:
+                print(f'[CONFIG] GitHub load lỗi HTTP {status} — thử đọc local')
+        except Exception as e:
+            print(f'[CONFIG] GitHub load lỗi: {e} — thử đọc local')
+
+    # Fallback: đọc local
+    if os.path.exists(FEEDS_FILE):
+        try:
+            with open(FEEDS_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            print(f'[CONFIG] ✅ Load thành công {len(data)} feeds từ local')
+            return data
+        except Exception as e:
+            print(f'[CONFIG] Đọc local lỗi: {e}')
+
+    print('[CONFIG] Chưa có feeds — mở web để thêm feed lần đầu')
+    return []
 
 
 
@@ -606,22 +686,15 @@ async def _tg_setup_realtime(feed_urls):
     if need_resolve:
         print(f'[TG] Resolve {len(need_resolve)} channels mới...')
 
-        async def _resolve_one(ch):
-            try:
-                await tg_client.get_input_entity(ch)
-                _resolved_channels_cache.add(ch)
-                return ch
-            except Exception as e:
-                print(f'[TG] Bỏ qua @{ch}: {e}')
-                return None
-
+        newly_resolved = []
         for ch in need_resolve:
             try:
                 await tg_client.get_input_entity(ch)
-                await asyncio.sleep(1)
+                _resolved_channels_cache.add(ch)
+                newly_resolved.append(ch)
             except Exception as e:
-                print(e)
-        newly_resolved = [ch for ch in results if ch]
+                print(f'[TG] Bỏ qua @{ch}: {e}')
+            await asyncio.sleep(0.5)
 
         if newly_resolved:
             all_channels = cached + newly_resolved
@@ -684,6 +757,8 @@ async def _register_handler(channels_list):
         with tg_new_items_lock:
             tg_new_items_queue.append(item)
         print(f'[TG] Tin mới real-time: @{chat_username} #{msg.id}')
+        # Xử lý ngay — không chờ poller 0.5s
+        threading.Thread(target=_process_tg_queue, daemon=True).start()
 
     tg_client.add_event_handler(handler, events.NewMessage(chats=channels_list))
     _tg_new_message_handler = handler
@@ -1624,9 +1699,11 @@ function clearSelection(){
 // --- Fetch & Poll ---
 async function fetchAndMerge(url,feedName,category,markNew){
     try{
+        const feedCfg=feeds.find(f=>f.url===url)||{};
+        const historyLimit=feedCfg.history_limit!=null?feedCfg.history_limit:20;
         let items;
         if(isTgSource(url)){
-            const r=await fetch('/tl_fetch?url='+encodeURIComponent(url)+'&translate='+(translateOn?'1':'0')+'&category='+encodeURIComponent(category));
+            const r=await fetch('/tl_fetch?url='+encodeURIComponent(url)+'&translate='+(translateOn?'1':'0')+'&category='+encodeURIComponent(category)+'&history_limit='+historyLimit);
             if(!r.ok) throw new Error('HTTP '+r.status);
             const data=await r.json();
             items=data.items||[];
@@ -2098,15 +2175,16 @@ def _poll_one(url_obj):
     """
     Poll một feed, trả về True nếu thành công.
     """
-    url       = url_obj['url']
-    category  = url_obj.get('category', '')
-    show_link = url_obj.get('show_link', True)
+    url           = url_obj['url']
+    category      = url_obj.get('category', '')
+    show_link     = url_obj.get('show_link', True)
+    history_limit = int(url_obj.get('history_limit', 20))
     try:
         if is_tg_source(url):
             if not TELETHON_AVAILABLE or tg_client is None:
                 return False
             channel = normalize_tg_channel(url)
-            items = tg_fetch_channel(channel, limit=20)
+            items = tg_fetch_channel(channel, limit=history_limit)
             for it in items:
                 if not it.get('category'):
                     it['category'] = category
@@ -2369,7 +2447,13 @@ def ws_handler(ws):
             pass
 
         # Main message loop
-        for raw in ws:
+        while True:
+            try:
+                raw = ws.recv()
+            except Exception:
+                break
+            if raw is None:
+                break
             try:
                 msg = json.loads(raw)
             except:
@@ -2495,13 +2579,14 @@ class HttpHandler(BaseHTTPRequestHandler):
             url = qs.get('url', [None])[0]
             do_tl = qs.get('translate', ['1'])[0] == '1'
             category = qs.get('category', [''])[0]
+            history_limit = int(qs.get('history_limit', ['20'])[0])
             if not url:
                 self.send_error(400); return
             if not TELETHON_AVAILABLE or tg_client is None:
                 self._json({'error': 'Telethon chưa kết nối'}, 503); return
             try:
                 channel = normalize_tg_channel(url)
-                items = tg_fetch_channel(channel, limit=20)
+                items = tg_fetch_channel(channel, limit=history_limit)
                 for it in items:
                     if not it.get('category'):
                         it['category'] = category
@@ -2705,27 +2790,20 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
         super().handle_error(request, client_address)
 
 if __name__ == '__main__':
-    # Khởi động BatchPipeline (async AI rotation + batch processing)
-    print("[MAIN] Chuẩn bị khởi động poller thread...")
-    threading.Thread(target=poller, daemon=True, name="RSS-Poller").start()
-        # === PERSIST FEEDS - TỰ ĐỘNG LOAD KHI RESTART ===
+    # === PERSIST FEEDS - TỰ ĐỘNG LOAD KHI RESTART ===
     default_feeds = load_feeds_from_file()
     if default_feeds:
         with lock:
             watched_urls.clear()
             watched_urls.extend(default_feeds)
-            
             for u in default_feeds:
                 url = u.get('url')
                 if url and url not in known_guids:
                     known_guids[url] = set()
-        
         print(f'[CONFIG] ✅ ĐÃ TỰ ĐỘNG KÍCH HOẠT {len(default_feeds)} FEEDS TỪ FILE')
 
-    print("[MAIN] Poller thread đã được start")
-    
     _pipeline.start()
-    print('[i] BatchPipeline: OK (AI rotation + batch processing)')
+    print('[i] BatchPipeline: OK')
 
     # Khởi động asyncio loop cho Telethon trên thread riêng
     if TELETHON_AVAILABLE:
@@ -2735,8 +2813,6 @@ if __name__ == '__main__':
         print('[i] Telethon loop: OK')
 
         session_str = os.environ.get('TG_SESSION_STRING', '').strip()
-
-        # Đọc config từ env vars trước, fallback về file
         env_api_id   = os.environ.get('TG_API_ID', '').strip()
         env_api_hash = os.environ.get('TG_API_HASH', '').strip()
         env_phone    = os.environ.get('TG_PHONE', '').strip()
@@ -2753,6 +2829,10 @@ if __name__ == '__main__':
                 if result.get('state') == 'connected':
                     src = 'session string' if session_str else 'session file'
                     print(f'[i] Telethon: đăng nhập thành công ({src})')
+                    # Setup realtime cho TG feeds đã load từ file
+                    tg_urls = [u['url'] for u in watched_urls if is_tg_source(u.get('url', ''))]
+                    if tg_urls:
+                        _thread_pool.submit(tg_setup_realtime_sync, tg_urls)
                 else:
                     print(f'[!] Telethon auto-login: {result.get("msg")}')
             except Exception as e:
@@ -2760,7 +2840,9 @@ if __name__ == '__main__':
         else:
             print('[i] Chưa có config — cần đăng nhập qua giao diện web')
 
-    threading.Thread(target=poller, daemon=True).start()
+    # Khởi động poller (1 lần duy nhất)
+    threading.Thread(target=poller, daemon=True, name="RSS-Poller").start()
+    print("[MAIN] Poller thread đã được start")
 
     print(f'=== RSS + Telegram Reader === http://localhost:{HTTP_PORT}')
     print(f'Dịch: {"bật" if TRANSLATE_AVAILABLE else "chưa cài thư viện"}')

@@ -2302,50 +2302,51 @@ def ws_handler(ws):
     global translate_enabled, auto_fwd_enabled, tg_channels, categories, translate_engine
     with lock:
         ws_clients.add(ws)
+    
     print(f'[WS] Client kết nối, tổng={len(ws_clients)}')
-    msg_count = 0
 
-    # Gửi frame ngay lập tức sau khi connect để Render LB không đóng connection
-    # Render free tier đóng connection nếu không có activity trong ~5s đầu
-    try:
-        ws.send(json.dumps({'type': 'connected', 'ts': time.time()}, ensure_ascii=False))
-    except Exception:
-        pass
-
-    # Heartbeat thread: gửi JSON mỗi 15s để giữ connection sống qua Render LB
+    # Heartbeat thread giữ connection sống trên Render
     def keepalive():
-        """Gửi heartbeat JSON mỗi 15s để giữ connection qua Render LB"""
         while True:
-            time.sleep(15)  # Render LB timeout ~55s → gửi mỗi 15s là an toàn
+            time.sleep(15)
             if getattr(ws, '_closed', False):
                 break
             try:
-                # Gửi JSON qua DATA frame (0x81) thay vì PING frame (0x89)
                 hb = json.dumps({'type': 'heartbeat', 'ts': time.time()}, ensure_ascii=False)
-                ws.send(hb)  # Dùng WsConn.send() đã có sẵn
+                ws.send(hb)
             except Exception:
-                break  # Thoát thread khi connection mất
-    threading.Thread(target=keepalive, daemon=True).start()  # ← đúng chỗ: ngoài hàm
+                break
+
+    threading.Thread(target=keepalive, daemon=True).start()
 
     try:
+        # Gửi connected ngay
+        ws.send(json.dumps({'type': 'connected', 'ts': time.time()}, ensure_ascii=False))
+        
+        # Buộc client gửi danh sách feeds lại (rất quan trọng)
+        time.sleep(1.2)
+        ws.send(json.dumps({'type': 'request_feeds'}, ensure_ascii=False))
+        print('[WS] Đã yêu cầu client gửi danh sách feeds')
+
         for raw in ws:
-            msg_count += 1
             try:
                 msg = json.loads(raw)
-            except Exception:
+            except:
                 continue
 
             t = msg.get('type')
             if t == 'heartbeat':
-                msg_count -= 1  # không đếm heartbeat vào msg_count
                 continue
 
-            # Debug log
-            print(f'[WS] msg #{msg_count}: type={t} size={len(raw)}b')
+            print(f'[WS] msg: type={t} size={len(raw)}b')
 
-            if t == 'feeds':
+            if t == 'request_feeds':
+                print('[WS] Client phản hồi request_feeds')
+                continue
+
+            elif t == 'feeds':
                 urls = msg.get('feeds', [])
-                tg_count = sum(1 for u in urls if is_tg_source(u['url']))
+                tg_count = sum(1 for u in urls if is_tg_source(u.get('url', '')))
                 print(f'[WS] feeds: {len(urls)} feeds ({tg_count} TG)')
 
                 with lock:
@@ -2354,50 +2355,52 @@ def ws_handler(ws):
                     
                     for u in urls:
                         url = u['url']
-                        if url not in known_guids or known_guids[url] is None:
-                            known_guids[url] = set()          # ← SỬA Ở ĐÂY
+                        if url not in known_guids or known_guids[url] is None or len(known_guids[url]) == 0:
+                            known_guids[url] = set()
                             print(f'[INIT] known_guids khởi tạo cho: {url}')
-                    
-                    # Phần TG giữ nguyên
+
+                    # TG realtime
                     tg_urls = [u['url'] for u in urls if is_tg_source(u['url'])]
                     if tg_urls and TELETHON_AVAILABLE and tg_client:
                         _thread_pool.submit(tg_setup_realtime_sync, tg_urls)
 
-                # ACK về client
-                try:
-                    ws.send(json.dumps({'type': 'feeds_ack', 'count': len(urls)}, ensure_ascii=False))
-                except Exception:
-                    pass
+                # Xác nhận
+                ws.send(json.dumps({'type': 'feeds_ack', 'count': len(urls)}, ensure_ascii=False))
+
             elif t == 'translate':
                 translate_enabled = msg.get('enabled', True)
+
             elif t == 'translate_engine':
                 new_engine = msg.get('engine', 'deepl')
                 if new_engine in ('deepl', 'google'):
                     translate_engine = new_engine
                     print(f'[WS] Engine dịch: {translate_engine}')
+
             elif t == 'tg_settings':
                 with lock:
                     tg_channels = msg.get('channels', [])
+
             elif t == 'auto_fwd':
                 auto_fwd_enabled = msg.get('enabled', False)
                 with lock:
                     tg_channels = msg.get('channels', tg_channels)
                 print(f'[WS] auto_fwd={auto_fwd_enabled}, channels={len(tg_channels)}')
+
             elif t == 'categories':
                 with lock:
                     categories = msg.get('categories', categories)
+
     except Exception as e:
-        print(f'[WS] Lỗi xử lý tin nhắn: {e}')
+        print(f'[WS] Lỗi xử lý WebSocket: {e}')
     finally:
-        # Đánh dấu đóng để stop keepalive thread
         ws._closed = True
         try:
             ws.close()
-        except Exception as e:
-            print(f'[WS] close error: {e}')
+        except:
+            pass
         with lock:
             ws_clients.discard(ws)
-        print(f'[WS] Client ngắt, nhận {msg_count} messages')
+        print(f'[WS] Client ngắt, tổng client còn lại: {len(ws_clients)}')
 
 def is_tg_source(url):
     return url.startswith('@') or 't.me/' in url

@@ -2062,12 +2062,6 @@ def _do_forward(processed, category, url):
 def _poll_one(url_obj):
     """
     Poll một feed, trả về True nếu thành công.
-    Kiến trúc mới:
-    - Lấy items từ nguồn (RSS XML hoặc Telethon history poll)
-    - Dedup bằng known_guids
-    - Đẩy NEW items vào BatchPipeline → AI rotate → broadcast → forward
-    Lưu ý: Telethon real-time đã xử lý qua _process_tg_queue/pipeline riêng.
-    _poll_one chỉ dùng cho: RSS thường + tg.i-c-a.su (không có real-time listener).
     """
     url       = url_obj['url']
     category  = url_obj.get('category', '')
@@ -2085,39 +2079,53 @@ def _poll_one(url_obj):
             xml   = fetch_feed(url)
             items = parse_items(xml, category)
 
+        if not items:
+            return True
+
         with lock:
             prev = known_guids.get(url)
-        if prev is None:
-            # Lần đầu — chỉ init known_guids, không broadcast (tránh spam items cũ)
+
+        # ==================== FIX Ở ĐÂY ====================
+        if prev is None or len(prev) == 0:
+            # Lần đầu hoặc bị reset → init known_guids
             with lock:
                 known_guids[url] = {it['guid'] for it in items if it['guid']}
-        else:
-            new_items = [it for it in items if it['guid'] and it['guid'] not in prev]
-            if new_items:
-                # Cập nhật known_guids ngay để không xử lý lại
-                with lock:
-                    known_guids[url] = {it['guid'] for it in items if it['guid']}
-                print(f'[+] {len(new_items)} bài mới → pipeline: {url}')
-                # Đẩy vào BatchPipeline thay vì xử lý sync
-                for it in new_items:
-                    it['show_link'] = show_link
-                    it['feed_url']  = url
-                    raw_text = it.get('title', '') + '\n' + strip_html(it.get('desc', ''))
-                    it['text']    = raw_text.strip()
-                    it['_source'] = 'rss'
-                    # Trích URL media từ desc để Telethon send_file (không download)
-                    imgs, videos = extract_media(it.get('desc', ''))
-                    if videos:
-                        v = videos[0].lower()
-                        it['_rss_media_url'] = videos[0] if any(v.endswith(e) for e in ('.mp4','.webm','.mov','.mkv')) else None
-                    elif imgs:
-                        it['_rss_media_url'] = imgs[0]
-                    else:
-                        it['_rss_media_url'] = None
-                    _pipeline.put(it)
+            print(f'[INIT] known_guids khởi tạo lần đầu cho: {url} ({len(items)} items)')
+            return True   # Không forward tin cũ
+
+        # Bình thường: tìm tin mới
+        new_items = [it for it in items if it['guid'] and it['guid'] not in prev]
+        
+        if new_items:
+            with lock:
+                known_guids[url] = {it['guid'] for it in items if it['guid']}
+            
+            print(f'[+] {len(new_items)} bài mới → pipeline: {url}')
+            
+            for it in new_items:
+                it['show_link'] = show_link
+                it['feed_url']  = url
+                raw_text = it.get('title', '') + '\n' + strip_html(it.get('desc', ''))
+                it['text']    = raw_text.strip()
+                it['_source'] = 'rss'
+
+                imgs, videos = extract_media(it.get('desc', ''))
+                if videos:
+                    v = videos[0].lower()
+                    it['_rss_media_url'] = videos[0] if any(v.endswith(e) for e in ('.mp4','.webm','.mov','.mkv')) else None
+                elif imgs:
+                    it['_rss_media_url'] = imgs[0]
+                else:
+                    it['_rss_media_url'] = None
+
+                _pipeline.put(it)
+
         return True
+
     except Exception as ex:
         print(f'[!] Poll lỗi {url}: {ex}')
+        import traceback
+        traceback.print_exc()
         return False
 
 def _is_ica_source(url):
@@ -2221,71 +2229,74 @@ def _process_tg_queue():
 
 def poller():
     """
-    Poller:
-    - Telethon: event-driven (real-time), poller chỉ xử lý queue + init history
-    - RSS thường: parallel threads, interval 30s
-    - tg.i-c-a.su: sequential, interval POLL_INTERVAL (60s)
-
-    QUAN TRỌNG: không sleep trong main loop — dùng thread pool cho init TG feeds
+    Poller background chính
     """
     global poll_next_time
     FAST_INTERVAL   = 30
     fast_next: dict = {}
-    tg_inited: set  = set()   # các TG feed đã được load history
-    tg_init_pending: set = set()  # đang init, tránh double-start
+    tg_inited: set  = set()
+    tg_init_pending: set = set()
 
-    def _init_tg_feed_delayed(url_obj, delay):
-        """Init 1 feed sau delay giây — chạy trên thread riêng"""
-        time.sleep(delay)
-        _init_tg_feed(url_obj)
+    print("[POLL] ✅ Background poller STARTED successfully")
 
     while True:
-        now = time.time()
-        with lock:
-            urls = list(watched_urls)
+        try:
+            now = time.time()
+            with lock:
+                urls = list(watched_urls)
 
-        # --- Xử lý queue real-time từ Telethon ---
-        _process_tg_queue()
+            # --- Xử lý queue real-time từ Telethon ---
+            _process_tg_queue()
 
-        # --- Init history cho TG feed mới (NON-BLOCKING) ---
-        tg_urls = [u for u in urls if is_tg_source(u['url'])]
-        new_tg = [u for u in tg_urls
-                  if u['url'] not in tg_inited
-                  and u['url'] not in tg_init_pending
-                  and TELETHON_AVAILABLE and tg_client is not None]
-        for idx, url_obj in enumerate(new_tg):
-            tg_inited.add(url_obj['url'])
-            tg_init_pending.add(url_obj['url'])
-            delay = idx * 2.0
-            def _run(u=url_obj, d=delay):
-                time.sleep(d)
-                _init_tg_feed(u)
-                tg_init_pending.discard(u['url'])
-            # Dùng thread riêng (không qua pool) để không chiếm slot của forward/poll
-            threading.Thread(target=_run, daemon=True).start()
+            # --- Init history cho TG feed mới ---
+            tg_urls = [u for u in urls if is_tg_source(u['url'])]
+            new_tg = [u for u in tg_urls
+                      if u['url'] not in tg_inited and u['url'] not in tg_init_pending
+                      and TELETHON_AVAILABLE and tg_client is not None]
 
-        # --- RSS thường (parallel) ---
-        rss_urls = [u for u in urls if not is_tg_source(u['url']) and not _is_ica_source(u['url'])]
-        rss_due  = [u for u in rss_urls if now >= fast_next.get(u['url'], 0)]
-        if rss_due:
-            futures = [_thread_pool.submit(_poll_one, u) for u in rss_due]
-            for f in futures:
-                try: f.result(timeout=20)
-                except Exception: pass
-            for u in rss_due:
-                fast_next[u['url']] = time.time() + FAST_INTERVAL
+            for idx, url_obj in enumerate(new_tg):
+                tg_inited.add(url_obj['url'])
+                tg_init_pending.add(url_obj['url'])
+                delay = idx * 2.0
+                def _run(u=url_obj, d=delay):
+                    time.sleep(d)
+                    _init_tg_feed(u)
+                    tg_init_pending.discard(u['url'])
+                threading.Thread(target=_run, daemon=True).start()
 
-        # --- tg.i-c-a.su (interval 60s) ---
-        if now >= poll_next_time:
-            ica_urls = [u for u in urls if _is_ica_source(u['url'])]
-            for url_obj in ica_urls:
-                _poll_one(url_obj)
-            poll_next_time = time.time() + POLL_INTERVAL
-            broadcast({'type': 'poll_status', 'interval': POLL_INTERVAL, 'next_in': POLL_INTERVAL})
+            # --- RSS thường (parallel) ---
+            rss_urls = [u for u in urls if not is_tg_source(u['url']) and not _is_ica_source(u['url'])]
+            rss_due  = [u for u in rss_urls if now >= fast_next.get(u['url'], 0)]
 
-        time.sleep(0.5)
-        if _pipeline.qsize() > 10:
-            print(f'[Pipeline] Queue: {_pipeline.qsize()} items đang chờ xử lý')
+            if rss_due:
+                futures = [_thread_pool.submit(_poll_one, u) for u in rss_due]
+                for f in futures:
+                    try:
+                        f.result(timeout=20)
+                    except Exception:
+                        pass
+                for u in rss_due:
+                    fast_next[u['url']] = time.time() + FAST_INTERVAL
+
+            # --- tg.i-c-a.su ---
+            if now >= poll_next_time:
+                ica_urls = [u for u in urls if _is_ica_source(u['url'])]
+                for url_obj in ica_urls:
+                    _poll_one(url_obj)
+                poll_next_time = time.time() + POLL_INTERVAL
+                broadcast({'type': 'poll_status', 'interval': POLL_INTERVAL, 'next_in': POLL_INTERVAL})
+
+            # Debug định kỳ
+            if int(now) % 60 == 0:   # mỗi 60 giây in 1 lần
+                print(f"[POLL] Đang chạy | Feeds: {len(urls)} | Queue: {_pipeline.qsize()} | Known GUIDs: {len(known_guids)}")
+
+            time.sleep(0.5)
+
+        except Exception as e:
+            print(f"[POLL ERROR] Lỗi lớn trong poller(): {e}")
+            import traceback
+            traceback.print_exc()
+            time.sleep(5)   # tránh cpu 100% nếu lỗi liên tục
 
 def ws_handler(ws):
     global translate_enabled, auto_fwd_enabled, tg_channels, categories, translate_engine
@@ -2336,16 +2347,23 @@ def ws_handler(ws):
                 urls = msg.get('feeds', [])
                 tg_count = sum(1 for u in urls if is_tg_source(u['url']))
                 print(f'[WS] feeds: {len(urls)} feeds ({tg_count} TG)')
+
                 with lock:
                     watched_urls.clear()
                     watched_urls.extend(urls)
+                    
                     for u in urls:
-                        if u['url'] not in known_guids:
-                            known_guids[u['url']] = None
-                tg_urls = [u['url'] for u in urls if is_tg_source(u['url'])]
-                if tg_urls and TELETHON_AVAILABLE and tg_client:
-                    _thread_pool.submit(tg_setup_realtime_sync, tg_urls)
-                # ACK về client để xác nhận đã nhận feeds thành công
+                        url = u['url']
+                        if url not in known_guids or known_guids[url] is None:
+                            known_guids[url] = set()          # ← SỬA Ở ĐÂY
+                            print(f'[INIT] known_guids khởi tạo cho: {url}')
+                    
+                    # Phần TG giữ nguyên
+                    tg_urls = [u['url'] for u in urls if is_tg_source(u['url'])]
+                    if tg_urls and TELETHON_AVAILABLE and tg_client:
+                        _thread_pool.submit(tg_setup_realtime_sync, tg_urls)
+
+                # ACK về client
                 try:
                     ws.send(json.dumps({'type': 'feeds_ack', 'count': len(urls)}, ensure_ascii=False))
                 except Exception:
@@ -2653,6 +2671,10 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
 
 if __name__ == '__main__':
     # Khởi động BatchPipeline (async AI rotation + batch processing)
+    print("[MAIN] Chuẩn bị khởi động poller thread...")
+    threading.Thread(target=poller, daemon=True, name="RSS-Poller").start()
+    print("[MAIN] Poller thread đã được start")
+    
     _pipeline.start()
     print('[i] BatchPipeline: OK (AI rotation + batch processing)')
 

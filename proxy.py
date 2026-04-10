@@ -1,5 +1,6 @@
 import urllib.request
 import urllib.parse
+import urllib.error
 import json
 import threading
 import time
@@ -7,12 +8,14 @@ import re
 import os
 import asyncio
 import queue as _queue
+import base64
+import hashlib
+import struct
+import xml.etree.ElementTree as ET
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from urllib.parse import urlparse, parse_qs
 from concurrent.futures import ThreadPoolExecutor
-import struct
-import xml.etree.ElementTree as ET
 
 FEEDS_FILE = 'feeds.json'
 
@@ -61,7 +64,7 @@ def save_feeds_to_file(urls):
 
     with _github_save_lock:
         try:
-            content_b64 = __import__('base64').b64encode(
+            content_b64 = base64.b64encode(
                 json.dumps(urls, ensure_ascii=False, indent=2).encode('utf-8')
             ).decode('ascii')
 
@@ -94,8 +97,7 @@ def load_feeds_from_file():
         try:
             status, resp = _github_api('GET', GITHUB_PATH)
             if status == 200 and resp.get('content'):
-                import base64 as _b64
-                raw = _b64.b64decode(resp['content']).decode('utf-8')
+                raw = base64.b64decode(resp['content']).decode('utf-8')
                 data = json.loads(raw)
                 print(f'[CONFIG] ✅ Load thành công {len(data)} feeds từ GitHub')
                 # Cập nhật local cache
@@ -2359,7 +2361,8 @@ def poller():
                 urls = list(watched_urls)
         
             if len(urls) == 0:
-                print("[WARN] watched_urls đang rỗng! Poller chưa có feed nào để chạy.")
+                if int(now) % 60 == 0:
+                    print("[WARN] watched_urls đang rỗng — chưa có feed nào hoặc GitHub chưa load xong")
 
             # --- Xử lý queue real-time từ Telethon ---
             _process_tg_queue()

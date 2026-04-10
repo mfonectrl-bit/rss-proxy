@@ -81,7 +81,7 @@ class BatchPipeline:
     - FLUSH_TIMEOUT: flush batch sau 3s dù chưa đủ BATCH_SIZE
     - Mỗi worker tự chờ queue độc lập → không tranh nhau lock
     """
-    BATCH_SIZE     = 5
+    BATCH_SIZE     = 3
     FLUSH_TIMEOUT  = 0.5   # giây: flush nhanh để UI cập nhật ngay
     NUM_WORKERS    = 4
     MAX_QUEUE_SIZE = 200
@@ -615,7 +615,12 @@ async def _tg_setup_realtime(feed_urls):
                 print(f'[TG] Bỏ qua @{ch}: {e}')
                 return None
 
-        results = await asyncio.gather(*[_resolve_one(ch) for ch in need_resolve])
+        for ch in need_resolve:
+            try:
+                await tg_client.get_input_entity(ch)
+                await asyncio.sleep(1)
+            except Exception as e:
+                print(e)
         newly_resolved = [ch for ch in results if ch]
 
         if newly_resolved:

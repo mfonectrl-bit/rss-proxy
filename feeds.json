@@ -540,17 +540,6 @@
     "history_limit": 5
   },
   {
-    "url": "https://t.me/leaklive",
-    "name": "LiveLeak",
-    "category": "Xã hội",
-    "show_link": true,
-    "auto_fwd": true,
-    "target_channels": [
-      1
-    ],
-    "history_limit": 5
-  },
-  {
     "url": "https://t.me/the_lost_past",
     "name": "THE LOST PAST",
     "category": "Sức khỏe",

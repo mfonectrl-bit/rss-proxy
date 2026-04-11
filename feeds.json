@@ -670,16 +670,5 @@
       0
     ],
     "history_limit": 5
-  },
-  {
-    "url": "https://t.me/BBCWorldoffl",
-    "name": "BBC News (World)",
-    "category": "Chính trị",
-    "show_link": true,
-    "auto_fwd": true,
-    "target_channels": [
-      1
-    ],
-    "history_limit": 5
   }
 ]

@@ -1785,33 +1785,38 @@ function connectWS(){
     function _sendInitMessages(){
         if(!wsReady||!feedsPayload) return;
         feedsAckReceived=false;
-        wsSend({type:'feeds',feeds:feedsPayload});
-        setTimeout(()=>{ if(wsReady) wsSend({type:'tg_settings',channels:tgChannels}); }, 100);
-        setTimeout(()=>{ if(wsReady) wsSend({type:'auto_fwd',enabled:autoFwd,channels:tgChannels}); }, 200);
-        setTimeout(()=>{ if(wsReady) wsSend({type:'categories',categories}); }, 300);
-        setTimeout(()=>{ if(wsReady) wsSend({type:'translate_engine',engine:translateEngine}); }, 400);
-        // Retry nếu không nhận feeds_ack sau 4 giây
+        // Gửi các message nhỏ trước để warm up connection với Render proxy
+        setTimeout(()=>{ if(wsReady) wsSend({type:'tg_settings',channels:tgChannels}); }, 200);
+        setTimeout(()=>{ if(wsReady) wsSend({type:'auto_fwd',enabled:autoFwd,channels:tgChannels}); }, 400);
+        setTimeout(()=>{ if(wsReady) wsSend({type:'categories',categories}); }, 600);
+        setTimeout(()=>{ if(wsReady) wsSend({type:'translate_engine',engine:translateEngine}); }, 800);
+        // Gửi feeds SAU CÙNG — frame lớn nhất, đợi connection ổn định
+        setTimeout(()=>{
+            if(!wsReady) return;
+            console.log('[WS] Gửi feeds payload, count='+feedsPayload.length);
+            wsSend({type:'feeds',feeds:feedsPayload});
+        }, 1500);
+        // Retry nếu không nhận feeds_ack sau 15 giây
         if(feedsAckTimer) clearTimeout(feedsAckTimer);
         feedsAckTimer=setTimeout(()=>{
             if(feedsAckReceived) return;
             console.warn('[WS] feeds_ack timeout — retry');
             document.getElementById('ws-lbl').textContent='Thử lại...';
             _sendInitMessages();
-        }, 10000);
+        }, 15000);
         // Fetch RSS sau khi init
         if(wsReconnectCount>1){
             setTimeout(()=>{
                 feeds.filter(f=>!isTgSource(f.url)).forEach(f=>fetchAndMerge(f.url,f.name,f.category,false));
-            }, 600);
+            }, 2000);
         }
-        // Lần đầu connect: fetch TG history sau 8s để đảm bảo server đã init xong
-        // Tránh miss broadcast khi _init_tg_feed chạy trước khi WS ổn định
-        if(wsReconnectCount===0){
+        // Lần đầu connect: fetch TG history sau 10s để đảm bảo server đã init xong
+        if(wsReconnectCount===1){
             setTimeout(()=>{
                 feeds.filter(f=>isTgSource(f.url)).forEach(f=>
                     fetchAndMerge(f.url,f.name,f.category,false)
                 );
-            }, 8000);
+            }, 10000);
         }
     }
 
@@ -2482,16 +2487,8 @@ def ws_handler(ws):
     threading.Thread(target=keepalive, daemon=True).start()
 
     try:
-        # Gửi connected
+        # Gửi connected ngay — không sleep, bắt đầu đọc message ngay lập tức
         ws.send(json.dumps({'type': 'connected', 'ts': time.time()}, ensure_ascii=False))
-
-        # Đợi một chút rồi yêu cầu feeds
-        time.sleep(2.0)
-        try:
-            ws.send(json.dumps({'type': 'request_feeds'}, ensure_ascii=False))
-            print('[WS] Đã gửi request_feeds đến client')
-        except:
-            pass
 
         # Main message loop
         while True:
@@ -2510,7 +2507,10 @@ def ws_handler(ws):
             if t == 'heartbeat':
                 continue
 
-            print(f'[WS] msg: type={t} size={len(raw)}b')
+            if t == 'feeds':
+                print(f'[WS] msg: type={t} size={len(raw)}b feeds={len(msg.get("feeds",[]))}')
+            else:
+                print(f'[WS] msg: type={t} size={len(raw)}b')
 
             if t == 'feeds':
                 urls = msg.get('feeds', [])

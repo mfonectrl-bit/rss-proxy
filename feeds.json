@@ -485,17 +485,6 @@
     "history_limit": 5
   },
   {
-    "url": "https://t.me/UnmaskingDeceit",
-    "name": "UNMASKING DECEIT",
-    "category": "Sức khỏe",
-    "show_link": false,
-    "auto_fwd": true,
-    "target_channels": [
-      0
-    ],
-    "history_limit": 5
-  },
-  {
     "url": "https://t.me/RealWorldNewsChannel",
     "name": "Real World News",
     "category": "Sức khỏe",

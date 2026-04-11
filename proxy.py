@@ -1785,17 +1785,17 @@ function connectWS(){
     function _sendInitMessages(){
         if(!wsReady||!feedsPayload) return;
         feedsAckReceived=false;
-        // Gửi các message nhỏ trước để warm up connection với Render proxy
-        setTimeout(()=>{ if(wsReady) wsSend({type:'tg_settings',channels:tgChannels}); }, 200);
-        setTimeout(()=>{ if(wsReady) wsSend({type:'auto_fwd',enabled:autoFwd,channels:tgChannels}); }, 400);
-        setTimeout(()=>{ if(wsReady) wsSend({type:'categories',categories}); }, 600);
-        setTimeout(()=>{ if(wsReady) wsSend({type:'translate_engine',engine:translateEngine}); }, 800);
-        // Gửi feeds SAU CÙNG — frame lớn nhất, đợi connection ổn định
+        // Gửi các message nhỏ trước để warm up connection
+        setTimeout(()=>{ if(wsReady) wsSend({type:'tg_settings',channels:tgChannels}); }, 100);
+        setTimeout(()=>{ if(wsReady) wsSend({type:'auto_fwd',enabled:autoFwd,channels:tgChannels}); }, 200);
+        setTimeout(()=>{ if(wsReady) wsSend({type:'categories',categories}); }, 300);
+        setTimeout(()=>{ if(wsReady) wsSend({type:'translate_engine',engine:translateEngine}); }, 400);
+        // Gửi feeds ngay sau — không delay quá lâu để tránh Render đóng connection
         setTimeout(()=>{
             if(!wsReady) return;
             console.log('[WS] Gửi feeds payload, count='+feedsPayload.length);
             wsSend({type:'feeds',feeds:feedsPayload});
-        }, 1500);
+        }, 600);
         // Retry nếu không nhận feeds_ack sau 15 giây
         if(feedsAckTimer) clearTimeout(feedsAckTimer);
         feedsAckTimer=setTimeout(()=>{
@@ -1810,7 +1810,7 @@ function connectWS(){
                 feeds.filter(f=>!isTgSource(f.url)).forEach(f=>fetchAndMerge(f.url,f.name,f.category,false));
             }, 2000);
         }
-        // Lần đầu connect: fetch TG history sau 10s để đảm bảo server đã init xong
+        // Lần đầu connect: fetch TG history sau 10s
         if(wsReconnectCount===1){
             setTimeout(()=>{
                 feeds.filter(f=>isTgSource(f.url)).forEach(f=>
@@ -2473,22 +2473,22 @@ def ws_handler(ws):
         ws_clients.add(ws)
     
     print(f'[WS] Client kết nối, tổng={len(ws_clients)}')
-    
-    # Keepalive
-    def keepalive():
-        while True:
-            time.sleep(15)
-            if getattr(ws, '_closed', False):
-                break
-            try:
-                ws.send(json.dumps({'type': 'heartbeat', 'ts': time.time()}, ensure_ascii=False))
-            except:
-                break
-    threading.Thread(target=keepalive, daemon=True).start()
 
     try:
-        # Gửi connected ngay — không sleep, bắt đầu đọc message ngay lập tức
+        # Gửi connected ngay
         ws.send(json.dumps({'type': 'connected', 'ts': time.time()}, ensure_ascii=False))
+
+        # Gửi heartbeat định kỳ trong thread riêng để giữ Render proxy không đóng connection
+        def keepalive():
+            while not getattr(ws, '_closed', False):
+                time.sleep(5)
+                if getattr(ws, '_closed', False):
+                    break
+                try:
+                    ws.send(json.dumps({'type': 'heartbeat', 'ts': time.time()}, ensure_ascii=False))
+                except:
+                    break
+        threading.Thread(target=keepalive, daemon=True).start()
 
         # Main message loop
         while True:

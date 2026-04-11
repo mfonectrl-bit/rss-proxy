@@ -1513,12 +1513,23 @@ function setFilter(url){
     shownCount=PAGE_SIZE;renderSidebar();renderStream();
 }
 
+function syncFeedsHttp(){
+    const payload=feeds.map(f=>({url:f.url,name:f.name,category:f.category,
+        show_link:f.show_link!==false,auto_fwd:f.auto_fwd===true,
+        target_channels:f.target_channels||[],
+        history_limit:f.history_limit!=null?f.history_limit:20}));
+    fetch('/sync_feeds',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({feeds:payload})})
+    .then(r=>r.json()).then(d=>console.log('[HTTP] sync_feeds OK, feeds='+d.count))
+    .catch(e=>console.warn('[HTTP] sync_feeds lỗi:',e));
+}
+
 function deleteFeed(i){
     if(!confirm('Xóa feed "'+feeds[i].name+'"?'))return;
     const url=feeds[i].url;feeds.splice(i,1);saveFeeds();
     allItems=allItems.filter(it=>it.feedUrl!==url);
     if(filterUrl===url)filterUrl=null;
-    wsSend({type:'feeds',feeds:feeds.map(f=>({url:f.url,name:f.name,category:f.category,show_link:f.show_link!==false,auto_fwd:f.auto_fwd===true,target_channels:f.target_channels||[],history_limit:f.history_limit!=null?f.history_limit:20}))});
+    syncFeedsHttp();
     refreshTelethonBadge();
     renderSidebar();renderStream();
 }
@@ -1585,7 +1596,7 @@ function addFeed(){
     if(editFeedIndex>=0){feeds[editFeedIndex]=feedObj;}
     else{feeds.push(feedObj);}
     saveFeeds();
-    wsSend({type:'feeds',feeds:feeds.map(f=>({url:f.url,name:f.name,category:f.category,show_link:f.show_link!==false,auto_fwd:f.auto_fwd===true,target_channels:f.target_channels||[],history_limit:f.history_limit!=null?f.history_limit:20}))});
+    syncFeedsHttp();
     closeModal();
     if(editFeedIndex<0) fetchAndMerge(url,name,cat,true);
     else{allItems=allItems.filter(it=>it.feedUrl!==url);fetchAndMerge(url,name,cat,false);}
@@ -1778,39 +1789,46 @@ function connectWS(){
         wsReconnectCount++;
         if(wsHeartbeatTimer) clearInterval(wsHeartbeatTimer);
         wsHeartbeatTimer=setInterval(()=>{ if(wsReady) wsSend({type:'heartbeat'}); }, 10000);
-        // KHÔNG gửi feeds ở đây — chờ server gửi 'connected' frame rồi mới gửi
-        // Điều này đảm bảo Render proxy đã sẵn sàng nhận frames
+        // Gửi feeds qua HTTP ngay khi WS open (không chờ 'connected' frame)
+        _sendInitMessages();
     };
 
     function _sendInitMessages(){
-        if(!wsReady||!feedsPayload) return;
-        feedsAckReceived=false;
-        // Gửi các message nhỏ trước để warm up connection
-        setTimeout(()=>{ if(wsReady) wsSend({type:'tg_settings',channels:tgChannels}); }, 100);
-        setTimeout(()=>{ if(wsReady) wsSend({type:'auto_fwd',enabled:autoFwd,channels:tgChannels}); }, 200);
-        setTimeout(()=>{ if(wsReady) wsSend({type:'categories',categories}); }, 300);
-        setTimeout(()=>{ if(wsReady) wsSend({type:'translate_engine',engine:translateEngine}); }, 400);
-        // Gửi feeds ngay sau — không delay quá lâu để tránh Render đóng connection
-        setTimeout(()=>{
-            if(!wsReady) return;
-            console.log('[WS] Gửi feeds payload, count='+feedsPayload.length);
-            wsSend({type:'feeds',feeds:feedsPayload});
-        }, 600);
-        // Retry nếu không nhận feeds_ack sau 15 giây
+        if(!feedsPayload) return;
+        // Gửi feeds qua HTTP POST — ổn định hơn WS với Render proxy
+        fetch('/sync_feeds', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({feeds: feedsPayload})
+        }).then(r=>r.json()).then(d=>{
+            if(d.ok){
+                feedsAckReceived=true;
+                if(feedsAckTimer){clearTimeout(feedsAckTimer);feedsAckTimer=null;}
+                document.getElementById('ws-lbl').textContent='Đang theo dõi';
+                console.log('[HTTP] sync_feeds OK, feeds='+d.count);
+            }
+        }).catch(e=>console.warn('[HTTP] sync_feeds lỗi:',e));
+        // Gửi các settings qua WS như cũ
+        if(wsReady){
+            setTimeout(()=>{ if(wsReady) wsSend({type:'tg_settings',channels:tgChannels}); }, 100);
+            setTimeout(()=>{ if(wsReady) wsSend({type:'auto_fwd',enabled:autoFwd,channels:tgChannels}); }, 200);
+            setTimeout(()=>{ if(wsReady) wsSend({type:'categories',categories}); }, 300);
+            setTimeout(()=>{ if(wsReady) wsSend({type:'translate_engine',engine:translateEngine}); }, 400);
+        }
+        // Retry HTTP nếu chưa nhận ack sau 10s
         if(feedsAckTimer) clearTimeout(feedsAckTimer);
         feedsAckTimer=setTimeout(()=>{
             if(feedsAckReceived) return;
-            console.warn('[WS] feeds_ack timeout — retry');
-            document.getElementById('ws-lbl').textContent='Thử lại...';
+            console.warn('[HTTP] sync_feeds retry...');
             _sendInitMessages();
-        }, 15000);
-        // Fetch RSS sau khi init
+        }, 10000);
+        // Fetch RSS
         if(wsReconnectCount>1){
             setTimeout(()=>{
                 feeds.filter(f=>!isTgSource(f.url)).forEach(f=>fetchAndMerge(f.url,f.name,f.category,false));
-            }, 2000);
+            }, 1000);
         }
-        // Lần đầu connect: fetch TG history sau 10s
+        // Lần đầu: fetch TG history sau 10s
         if(wsReconnectCount===1){
             setTimeout(()=>{
                 feeds.filter(f=>isTgSource(f.url)).forEach(f=>
@@ -2697,7 +2715,30 @@ class HttpHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         p = urlparse(self.path)
 
-        if p.path == '/tl_send_code':
+        if p.path == '/sync_feeds':
+            # Endpoint HTTP thay thế WS để gửi feeds — ổn định hơn với Render proxy
+            body = self._read_json()
+            urls = body.get('feeds', [])
+            if not urls:
+                self._json({'ok': False, 'error': 'missing feeds'}); return
+            with lock:
+                watched_urls.clear()
+                watched_urls.extend(urls)
+                init_count = 0
+                for u in urls:
+                    url = u.get('url')
+                    if url and (url not in known_guids or not known_guids[url]):
+                        known_guids[url] = set()
+                        init_count += 1
+            print(f'[HTTP] ✅ sync_feeds: {len(urls)} feeds, {init_count} mới')
+            tg_urls = [u['url'] for u in urls if is_tg_source(u.get('url', ''))]
+            if tg_urls and TELETHON_AVAILABLE and tg_client:
+                threading.Thread(target=tg_setup_realtime_sync, args=(tg_urls,), daemon=True).start()
+            threading.Thread(target=save_feeds_to_file, args=(urls,), daemon=True).start()
+            self._json({'ok': True, 'count': len(urls)})
+            return
+
+        elif p.path == '/tl_send_code':
             body = self._read_json()
             if not body:
                 self.send_error(400); return

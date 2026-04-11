@@ -754,8 +754,15 @@ async def _register_handler(channels_list):
     _tg_new_message_handler = handler
     print(f'[TG] Đăng ký real-time cho: {channels_list}')
 
+_tg_realtime_last_setup = 0.0
+
 def tg_setup_realtime_sync(feed_urls):
-    """Wrapper đồng bộ để gọi từ thread thường"""
+    """Wrapper đồng bộ để gọi từ thread thường — có debounce 60s"""
+    global _tg_realtime_last_setup
+    now = time.time()
+    if now - _tg_realtime_last_setup < 60:
+        return  # bỏ qua nếu vừa setup xong trong vòng 60 giây
+    _tg_realtime_last_setup = now
     if tg_loop and TELETHON_AVAILABLE:
         try:
             tg_run(_tg_setup_realtime(feed_urls))
@@ -1210,6 +1217,7 @@ let selected=new Set(),autoFwd=JSON.parse(localStorage.getItem('auto_fwd')??'fal
 let editFeedIndex=-1,selectedChannelIndex=-1;
 let pollInterval=60,pollNextIn=0;
 let telethonConnected=false;
+let feedsSynced=false;  // global — không reset khi WS reconnect
 
 function saveFeeds(){localStorage.setItem('rss_feeds',JSON.stringify(feeds));}
 function saveTgChannels(){localStorage.setItem('tg_channels',JSON.stringify(tgChannels));}
@@ -1792,8 +1800,6 @@ function connectWS(){
         // Gửi feeds qua HTTP ngay khi WS open (không chờ 'connected' frame)
         _sendInitMessages();
     };
-
-    let feedsSynced = false;  // chỉ sync HTTP 1 lần duy nhất
 
     function _sendInitMessages(){
         if(!feedsPayload) return;
@@ -2419,12 +2425,14 @@ def poller():
             if TELETHON_AVAILABLE and tg_client is not None and now - _last_tg_watchdog > 1800:
                 _last_tg_watchdog = now
                 def _watchdog():
+                    global _tg_realtime_last_setup
                     try:
                         ok = tg_run(_tg_check_auth())
                         if ok:
                             tg_urls_all = [u['url'] for u in watched_urls if is_tg_source(u.get('url', ''))]
                             if tg_urls_all:
                                 tg_run(_tg_setup_realtime(tg_urls_all))
+                                _tg_realtime_last_setup = time.time()  # cập nhật debounce
                                 print(f'[TG Watchdog] ✅ Đã re-register {len(tg_urls_all)} channels')
                         else:
                             print('[TG Watchdog] ⚠️ Mất kết nối Telethon')

@@ -1777,13 +1777,13 @@ async function fetchAndMerge(url,feedName,category,markNew){
 }
 
 async function manualRefreshAll(){
-    // RSS song song, TG tuần tự với delay để không flood server
+    // RSS song song, TG tuần tự với delay để không flood Telethon
     const rssFeed=feeds.filter(f=>!isTgSource(f.url));
     const tgFeed=feeds.filter(f=>isTgSource(f.url));
     await Promise.all(rssFeed.map(f=>fetchAndMerge(f.url,f.name,f.category,false)));
     for(const f of tgFeed){
         await fetchAndMerge(f.url,f.name,f.category,false);
-        await new Promise(r=>setTimeout(r,300)); // 300ms delay giữa các TG feed
+        await new Promise(r=>setTimeout(r,800)); // 800ms delay giữa các TG feed
     }
 }
 
@@ -1865,18 +1865,20 @@ function connectWS(){
             if(feedsAckTimer) clearTimeout(feedsAckTimer);
             feedsAckTimer=setTimeout(()=>{ feedsSynced=false; _sendInitMessages(); }, 5000);
         });
-        // Fetch RSS sau khi init
+        // Fetch RSS sau khi init (song song ok vì không dùng Telethon)
         if(wsReconnectCount>1){
             setTimeout(()=>{
                 feeds.filter(f=>!isTgSource(f.url)).forEach(f=>fetchAndMerge(f.url,f.name,f.category,false));
             }, 1000);
         }
-        // Lần đầu: fetch TG history sau 10s
+        // Lần đầu: fetch TG history TUẦN TỰ với delay — tránh flood Telethon loop
         if(wsReconnectCount===1){
-            setTimeout(()=>{
-                feeds.filter(f=>isTgSource(f.url)).forEach(f=>
-                    fetchAndMerge(f.url,f.name,f.category,false)
-                );
+            setTimeout(async()=>{
+                const tgFeeds=feeds.filter(f=>isTgSource(f.url));
+                for(const f of tgFeeds){
+                    await fetchAndMerge(f.url,f.name,f.category,false);
+                    await new Promise(r=>setTimeout(r,500)); // 500ms delay giữa các feed
+                }
             }, 10000);
         }
     }
@@ -2041,6 +2043,8 @@ def process_tg_items(items):
 tg_semaphore = threading.Semaphore(1)
 # Semaphore async giới hạn concurrent history loading — tránh block forward
 _tg_history_semaphore = None  # khởi tạo sau khi asyncio loop chạy
+# Semaphore HTTP giới hạn concurrent /tl_fetch từ browser — tối đa 2 cùng lúc
+_tl_fetch_semaphore = threading.Semaphore(2)
 
 def broadcast(msg):
     data = json.dumps(msg, ensure_ascii=False)
@@ -2728,6 +2732,13 @@ class HttpHandler(BaseHTTPRequestHandler):
                 self.send_error(400); return
             if not TELETHON_AVAILABLE or tg_client is None:
                 self._json({'error': 'Telethon chưa kết nối'}, 503); return
+            # Giới hạn concurrent tl_fetch — tránh flood Telethon loop
+            if not _tl_fetch_semaphore.acquire(blocking=True, timeout=5):
+                self.send_response(503)
+                self.send_header('Content-Type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(b'Server busy, retry later')
+                return
             try:
                 channel = normalize_tg_channel(url)
                 items = tg_fetch_channel(channel, limit=history_limit)
@@ -2736,7 +2747,6 @@ class HttpHandler(BaseHTTPRequestHandler):
                         it['category'] = category
                 if do_tl and translate_enabled and TRANSLATE_AVAILABLE:
                     items = process_tg_items(items)
-                # Loại bỏ media bytes khi trả về JSON (không serialize được)
                 safe_items = [{k:v for k,v in it.items() if k != '_tg_media_bytes'} for it in items]
                 resp = json.dumps({'items': safe_items}, ensure_ascii=False).encode('utf-8')
                 self.send_response(200)
@@ -2749,6 +2759,8 @@ class HttpHandler(BaseHTTPRequestHandler):
                 self.send_header('Content-Type', 'text/plain')
                 self.end_headers()
                 self.wfile.write(str(e).encode())
+            finally:
+                _tl_fetch_semaphore.release()
 
         elif p.path == '/tl_status':
             connected = False

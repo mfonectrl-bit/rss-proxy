@@ -494,9 +494,10 @@ def extract_media(desc_html):
     return imgs, videos
 
 def run_tg_loop():
-    global tg_loop
+    global tg_loop, _tg_history_semaphore
     tg_loop = asyncio.new_event_loop()
     asyncio.set_event_loop(tg_loop)
+    _tg_history_semaphore = asyncio.Semaphore(2)  # tối đa 2 history loads song song
     tg_loop.run_forever()
 
 def tg_run(coro):
@@ -627,7 +628,8 @@ tg_new_items_lock  = threading.Lock()
 
 async def _tg_load_history(channel, limit=20):
     """Chỉ gọi 1 lần khi thêm kênh mới — load tin cũ để init known_guids"""
-    msgs = await tg_client.get_messages(channel, limit=limit)
+    async with _tg_history_semaphore:
+        msgs = await tg_client.get_messages(channel, limit=limit)
     chat_username = channel.lstrip('@')
     items = []
     for msg in msgs:
@@ -774,13 +776,25 @@ def tg_setup_realtime_sync(feed_urls):
         except Exception as e:
             print(f'[!] Setup real-time lỗi: {e}')
 
+def tg_run_long(coro, timeout=60):
+    """tg_run với timeout dài hơn — dùng cho history loading"""
+    global tg_loop
+    if tg_loop is None or not tg_loop.is_running():
+        raise RuntimeError('Telethon loop chưa khởi động')
+    future = asyncio.run_coroutine_threadsafe(coro, tg_loop)
+    try:
+        return future.result(timeout=timeout)
+    except TimeoutError:
+        future.cancel()
+        raise RuntimeError(f'tg_run_long timeout sau {timeout}s')
+
 def tg_load_history_sync(channel, limit=20):
     """Load lịch sử — chỉ gọi 1 lần khi thêm kênh mới"""
-    return tg_run(_tg_load_history(channel, limit))
+    return tg_run_long(_tg_load_history(channel, limit), timeout=60)
 
 def tg_fetch_channel(channel, limit=20):
     """Fetch tin từ một kênh TG — dùng cho poller và /tl_fetch endpoint"""
-    return tg_run(_tg_load_history(channel, limit))
+    return tg_run_long(_tg_load_history(channel, limit), timeout=60)
 
 # --- STATE ---
 lock = threading.Lock()
@@ -1223,6 +1237,7 @@ let editFeedIndex=-1,selectedChannelIndex=-1;
 let pollInterval=60,pollNextIn=0;
 let telethonConnected=false;
 let feedsSynced=false;  // global — không reset khi WS reconnect
+let settingsSent=false; // global — chỉ gửi WS settings 1 lần
 
 function saveFeeds(){localStorage.setItem('rss_feeds',JSON.stringify(feeds));}
 function saveTgChannels(){localStorage.setItem('tg_channels',JSON.stringify(tgChannels));}
@@ -1806,8 +1821,6 @@ function connectWS(){
         _sendInitMessages();
     };
 
-    let settingsSent = false;  // chỉ gửi settings 1 lần
-
     function _sendInitMessages(){
         if(!feedsPayload) return;
         // Gửi settings qua WS chỉ lần đầu
@@ -2012,6 +2025,8 @@ def process_tg_items(items):
 
 # Semaphore để serialize Telethon calls — tránh conflict khi nhiều kênh poll cùng lúc
 tg_semaphore = threading.Semaphore(1)
+# Semaphore async giới hạn concurrent history loading — tránh block forward
+_tg_history_semaphore = None  # khởi tạo sau khi asyncio loop chạy
 
 def broadcast(msg):
     data = json.dumps(msg, ensure_ascii=False)

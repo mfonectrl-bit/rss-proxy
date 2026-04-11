@@ -11,6 +11,7 @@ import queue as _queue
 import base64
 import hashlib
 import struct
+import socket
 import xml.etree.ElementTree as ET
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
@@ -168,7 +169,7 @@ class BatchPipeline:
     Thiết kế cho 45+ feed:
     - MAX_QUEUE_SIZE: nếu queue đầy → bỏ tin cũ nhất (tránh tắc nghẽn RAM)
     - NUM_WORKERS: nhiều worker xử lý song song, mỗi worker 1 batch
-    - FLUSH_TIMEOUT: flush batch sau 3s dù chưa đủ BATCH_SIZE
+    - FLUSH_TIMEOUT: flush batch sau 0.5s dù chưa đủ BATCH_SIZE
     - Mỗi worker tự chờ queue độc lập → không tranh nhau lock
     """
     BATCH_SIZE     = 3
@@ -300,7 +301,6 @@ translate_lock  = threading.Lock()
 
 # Telethon state
 tg_client        = None
-tg_client_lock   = threading.Lock()
 tg_api_id        = None
 tg_api_hash      = None
 tg_phone         = None
@@ -436,53 +436,6 @@ def _fast_translate(text):
         return text
     return _translate_with_engine(text)
 
-def html_to_telegram(html, channel_name='', link=''):
-    if not html:
-        return ''
-    text = html.replace('\r\n', '\n').replace('\r', '\n')
-    text = re.sub(r'<br\s*/?>', '\n', text, flags=re.I)
-    text = re.sub(r'</(p|div|li|tr|h[1-6])>', '\n', text, flags=re.I)
-    text = re.sub(r'<(p|div|li|tr|h[1-6])[^>]*>', '\n', text, flags=re.I)
-    ALLOWED = {'b','strong','i','em','u','s','del','code','pre'}
-
-    text = re.sub(r'<a\s[^>]*href=["\']([^"\']*)["\'][^>]*>(.*?)</a>',
-                  lambda m: f'<a href="{m.group(1)}">{m.group(2)}</a>', text, flags=re.I|re.S)
-
-    def replace_tag(m):
-        tag = re.match(r'</?(\w+)', m.group(0))
-        if tag and tag.group(1).lower() in ALLOWED:
-            return m.group(0)
-        if tag and tag.group(1).lower() == 'a':
-            return m.group(0)
-        return ''
-
-    text = re.sub(r'<[^>]+>', replace_tag, text)
-
-    entities = {'&amp;':'&','&lt;':'<','&gt;':'>','&quot;':'"','&#39;':"'",'&nbsp;':' ','&apos;':"'"}
-    for ent, char in entities.items():
-        text = text.replace(ent, char)
-    text = re.sub(r'&#(\d+);', lambda m: chr(int(m.group(1))), text)
-    text = re.sub(r'&#x([0-9a-fA-F]+);', lambda m: chr(int(m.group(1),16)), text)
-
-    lines = [ln.strip() for ln in text.split('\n')]
-    clean_lines, prev_empty = [], False
-    for ln in lines:
-        is_empty = (ln == '')
-        if is_empty and prev_empty:
-            continue
-        clean_lines.append(ln)
-        prev_empty = is_empty
-    text = '\n'.join(clean_lines).strip()
-
-    footer = ""
-    if link:
-        footer += f'\n\n<a href="{link}">Xem bài gốc →</a>'
-    if channel_name:
-        footer += f'\n\n<i>{channel_name}</i>'
-
-    return text + footer
-
-
 def extract_media(desc_html):
     if not desc_html:
         return [], []
@@ -602,27 +555,6 @@ async def _tg_sign_in_2fa(password):
         tg_auth_msg   = str(e)
         return {'ok': False, 'state': 'error', 'msg': str(e)}
 
-# Hàm cũ giữ lại để không break _tg_fetch messages (dùng trong /tl_fetch endpoint)
-async def _tg_fetch_messages(channel, limit=20):
-    msgs = await tg_client.get_messages(channel, limit=limit)
-    items = []
-    for msg in msgs:
-        if not msg or not msg.message:
-            continue
-        guid  = f'tg_{channel}_{msg.id}'
-        title = (msg.message[:80] + '...') if len(msg.message) > 80 else msg.message
-        desc  = msg.message.replace('\n', '<br>')
-        pub   = msg.date.isoformat() if msg.date else ''
-        link  = f'https://t.me/{channel.lstrip("@")}/{msg.id}'
-        # Không download media ở đây — chỉ download khi forward (/tg_forward sẽ fetch lại)
-        item = {
-            'guid': guid, 'title': title, 'desc': desc, 'link': link,
-            'pubDate': pub, 'translated': False, 'category': '',
-            '_tg_media_bytes': None, '_source': 'telethon',
-        }
-        items.append(item)
-    return items
-
 async def _tg_check_auth():
     if tg_client and await tg_client.is_user_authorized():
         return True
@@ -716,6 +648,7 @@ async def _register_handler(channels_list):
         pass
 
     handled_groups = set()
+    HANDLED_GROUPS_MAX = 500  # tránh leak bộ nhớ vô tận
 
     async def handler(event):
         msg = event.message
@@ -740,6 +673,8 @@ async def _register_handler(channels_list):
             return
 
         if msg.grouped_id:
+            if len(handled_groups) >= HANDLED_GROUPS_MAX:
+                handled_groups.clear()
             handled_groups.add(msg.grouped_id)
 
         guid  = f'tg_@{chat_username}_{msg.id}'
@@ -783,7 +718,7 @@ def tg_setup_realtime_sync(feed_urls):
             print(f'[!] Setup real-time lỗi: {e}')
 
 def tg_run_long(coro, timeout=60):
-    """tg_run với timeout dài hơn — dùng cho history loading"""
+    """tg_run với timeout dài hơn — dùng cho history loading và realtime setup"""
     global tg_loop
     if tg_loop is None or not tg_loop.is_running():
         raise RuntimeError('Telethon loop chưa khởi động')
@@ -795,12 +730,11 @@ def tg_run_long(coro, timeout=60):
         raise RuntimeError(f'tg_run_long timeout sau {timeout}s')
 
 def tg_load_history_sync(channel, limit=20):
-    """Load lịch sử — chỉ gọi 1 lần khi thêm kênh mới"""
+    """Load lịch sử kênh TG — dùng cho poller, /tl_fetch endpoint và init feed mới"""
     return tg_run_long(_tg_load_history(channel, limit), timeout=60)
 
-def tg_fetch_channel(channel, limit=20):
-    """Fetch tin từ một kênh TG — dùng cho poller và /tl_fetch endpoint"""
-    return tg_run_long(_tg_load_history(channel, limit), timeout=60)
+# Alias để không phải đổi các chỗ đang gọi tg_fetch_channel
+tg_fetch_channel = tg_load_history_sync
 
 # --- STATE ---
 lock = threading.Lock()
@@ -2003,8 +1937,12 @@ def process_items(items):
         t, d, was = maybe_translate(it['title'], it['desc'])
         results[i] = {**it, 'title': t, 'desc': d, 'translated': was}
     futures = [_thread_pool.submit(do, i, it) for i, it in enumerate(items)]
-    for f in futures: f.result()
-    return results
+    for f in futures:
+        try:
+            f.result(timeout=15)
+        except Exception:
+            pass
+    return [r for r in results if r is not None]
 
 def process_tg_items(items):
     """Dịch items từ Telethon — dịch desc trước, sau đó derive title từ desc đã dịch"""
@@ -2012,11 +1950,7 @@ def process_tg_items(items):
         return items
     results = [None] * len(items)
     def do(i, it):
-        # Với Telethon, title chỉ là 80 ký tự đầu của desc
-        # → dịch desc trước, rồi re-derive title từ desc đã dịch
         desc_plain = strip_html(it.get('desc', '').replace('<br>', '\n'))
-        title_orig = it.get('title', '')
-        desc_orig  = it.get('desc', '')
 
         if is_vietnamese(desc_plain):
             results[i] = {**it, 'translated': False}
@@ -2033,8 +1967,12 @@ def process_tg_items(items):
         results[i] = {**it, 'title': title_translated, 'desc': desc_translated, 'translated': True}
 
     futures = [_thread_pool.submit(do, i, it) for i, it in enumerate(items)]
-    for f in futures: f.result()
-    return results
+    for f in futures:
+        try:
+            f.result(timeout=15)
+        except Exception:
+            pass
+    return [r for r in results if r is not None]
 
 # Semaphore để serialize Telethon calls — tránh conflict khi nhiều kênh poll cùng lúc
 # Dùng asyncio.Semaphore vì được dùng bên trong async functions với await
@@ -2828,8 +2766,7 @@ class HttpHandler(BaseHTTPRequestHandler):
             if not urls:
                 self._json({'ok': False, 'error': 'missing feeds'}); return
 
-            # Set global state — dùng module-level reference
-            import __main__ as _m
+            # Set global state
             if 'auto_fwd' in body:
                 global auto_fwd_enabled
                 auto_fwd_enabled = bool(body['auto_fwd'])
@@ -2942,6 +2879,8 @@ class HttpHandler(BaseHTTPRequestHandler):
                     try:
                         ok = tg_run(_tg_send_item(dest, send_item, caption))
                         all_results.append({'title': it.get('title',''), 'ok': ok, 'error': '' if ok else 'Gửi thất bại'})
+                    except RuntimeError as e:
+                        all_results.append({'title': it.get('title',''), 'ok': False, 'error': str(e)})
                     except Exception as e:
                         all_results.append({'title': it.get('title',''), 'ok': False, 'error': str(e)})
                     time.sleep(0.3)  # delay nhỏ giữa các tin

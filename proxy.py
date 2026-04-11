@@ -73,7 +73,7 @@ def save_feeds_to_file(urls):
             sha = existing.get('sha') if status == 200 else None
 
             payload = {
-                'message': f'[auto] update feeds.json ({len(urls)} feeds)',
+                'message': f'[auto][skip ci] update feeds.json ({len(urls)} feeds)',
                 'content': content_b64,
                 'branch': GITHUB_BRANCH,
             }
@@ -1836,7 +1836,12 @@ function connectWS(){
         fetch('/sync_feeds', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({feeds: feedsPayload})
+            body: JSON.stringify({
+                feeds: feedsPayload,
+                auto_fwd: autoFwd,
+                tg_channels: tgChannels,
+                translate_engine: translateEngine
+            })
         }).then(r=>r.json()).then(d=>{
             if(d.ok){
                 feedsSynced=true;
@@ -2187,16 +2192,19 @@ _send_semaphore = threading.Semaphore(3)  # tối đa 3 send song song
 def _do_forward(processed, category, url):
     """
     Gửi tin lên các kênh đích qua Telethon.
-    Routing: master → tất cả, category/group → chỉ kênh khớp category.
-    Dùng _send_semaphore để giới hạn concurrent sends, tránh flood.
     """
     with lock:
         do_fwd   = auto_fwd_enabled
         cfgs     = list(tg_channels)
         feed_cfg = next((u for u in watched_urls if u['url'] == url), {})
-    if not do_fwd or not cfgs:
+    if not do_fwd:
+        print(f'[Forward] Bỏ qua — auto_fwd=False')
+        return
+    if not cfgs:
+        print(f'[Forward] Bỏ qua — không có kênh đích')
         return
     if not feed_cfg.get('auto_fwd', True):
+        print(f'[Forward] Bỏ qua — feed {url} tắt auto_fwd')
         return
     if not TELETHON_AVAILABLE or tg_client is None:
         print('[Forward] Telethon chưa kết nối — bỏ qua forward')
@@ -2248,7 +2256,26 @@ def _do_forward(processed, category, url):
     if total_sent > 0:
         broadcast({'type': 'auto_fwd_sent', 'count': total_sent, 'url': url})
 
-def _poll_one(url_obj):
+def _cleanup_known_guids():
+    """
+    Dọn dẹp known_guids khi vượt ngưỡng 2x history_limit.
+    Giữ lại tối đa history_limit entries cho mỗi feed.
+    """
+    with lock:
+        urls_snapshot = list(watched_urls)
+        guids_snapshot = dict(known_guids)
+
+    for u in urls_snapshot:
+        url = u.get('url')
+        limit = int(u.get('history_limit', 20))
+        max_keep = limit * 2
+        guids = guids_snapshot.get(url)
+        if guids and len(guids) > max_keep:
+            # Chuyển set về list, giữ lại max_keep entries cuối
+            trimmed = set(list(guids)[-max_keep:])
+            with lock:
+                known_guids[url] = trimmed
+            print(f'[CLEANUP] {url}: {len(guids)} → {len(trimmed)} GUIDs')
     """
     Poll một feed, trả về True nếu thành công.
     """
@@ -2520,6 +2547,9 @@ def poller():
                 with lock:
                     total_feeds = len(watched_urls)
                 print(f"[POLL] Đang chạy | Feeds: {total_feeds} | Queue: {_pipeline.qsize()} | Known GUIDs: {len(known_guids)} | TG inited: {len(tg_inited)}")
+                # Dọn dẹp known_guids mỗi giờ
+                if cur_sec % 3600 == 0:
+                    _cleanup_known_guids()
 
             time.sleep(0.5)
 
@@ -2760,6 +2790,17 @@ class HttpHandler(BaseHTTPRequestHandler):
             urls = body.get('feeds', [])
             if not urls:
                 self._json({'ok': False, 'error': 'missing feeds'}); return
+
+            # Nhận thêm settings nếu client gửi kèm
+            global auto_fwd_enabled, tg_channels, translate_engine
+            if 'auto_fwd' in body:
+                auto_fwd_enabled = body['auto_fwd']
+            if 'tg_channels' in body:
+                with lock:
+                    tg_channels = body['tg_channels']
+            if 'translate_engine' in body:
+                translate_engine = body['translate_engine']
+
             with lock:
                 watched_urls.clear()
                 watched_urls.extend(urls)
@@ -2769,7 +2810,7 @@ class HttpHandler(BaseHTTPRequestHandler):
                     if url and (url not in known_guids or not known_guids[url]):
                         known_guids[url] = set()
                         init_count += 1
-            print(f'[HTTP] ✅ sync_feeds: {len(urls)} feeds, {init_count} mới')
+            print(f'[HTTP] ✅ sync_feeds: {len(urls)} feeds, {init_count} mới | auto_fwd={auto_fwd_enabled} | channels={len(tg_channels)}')
             tg_urls = [u['url'] for u in urls if is_tg_source(u.get('url', ''))]
             if tg_urls and TELETHON_AVAILABLE and tg_client:
                 threading.Thread(target=tg_setup_realtime_sync, args=(tg_urls,), daemon=True).start()

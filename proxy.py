@@ -136,9 +136,8 @@ TRANSLATE_ENABLE = True
 SESSION_FILE     = 'tg_session'
 TG_CONFIG_FILE   = 'tg_config.json'
 
-# Global thread pool — giới hạn tối đa 20 threads đồng thời
-# Thay thế threading.Thread().start() không giới hạn
-_thread_pool = ThreadPoolExecutor(max_workers=20)
+# Global thread pool — giới hạn tối đa 40 threads đồng thời
+_thread_pool = ThreadPoolExecutor(max_workers=40)
 
 # --- Engine dịch ---
 # Gemini đã bị loại bỏ — 429 rate limit quá thấp (15 req/phút), không dùng được với nhiều feed
@@ -1898,7 +1897,7 @@ def fetch_feed(url):
         'Accept': 'application/rss+xml, application/xml, text/xml, */*'
     }
     req = urllib.request.Request(url, headers=headers)
-    return urllib.request.urlopen(req, timeout=10).read()
+    return urllib.request.urlopen(req, timeout=8).read()
 
 def parse_items(xml_bytes, category_hint=''):
     root = ET.fromstring(xml_bytes)
@@ -2520,24 +2519,23 @@ def ws_handler(ws):
                 with lock:
                     watched_urls.clear()
                     watched_urls.extend(urls)
-
                     init_count = 0
                     for u in urls:
                         url = u.get('url')
                         if url and (url not in known_guids or not known_guids[url]):
                             known_guids[url] = set()
                             init_count += 1
-
                     print(f'[INIT] Đã init {init_count} feeds mới')
 
-                    tg_urls = [u['url'] for u in urls if is_tg_source(u.get('url', ''))]
-                    if tg_urls and TELETHON_AVAILABLE and tg_client:
-                        _thread_pool.submit(tg_setup_realtime_sync, tg_urls)
-
-                # Gửi ack NGAY — không chờ GitHub save
+                # Gửi ack NGAY
                 ws.send(json.dumps({'type': 'feeds_ack', 'count': len(urls)}, ensure_ascii=False))
 
-                # Lưu GitHub ở background — không block ws_handler
+                # Setup TG realtime — thread riêng, KHÔNG dùng pool để tránh bị block
+                tg_urls = [u['url'] for u in urls if is_tg_source(u.get('url', ''))]
+                if tg_urls and TELETHON_AVAILABLE and tg_client:
+                    threading.Thread(target=tg_setup_realtime_sync, args=(tg_urls,), daemon=True).start()
+
+                # Lưu GitHub ở background
                 threading.Thread(target=save_feeds_to_file, args=(urls,), daemon=True).start()
 
             elif t == 'translate_engine':

@@ -584,17 +584,6 @@
     "history_limit": 5
   },
   {
-    "url": "https://t.me/weisseradlerkanal",
-    "name": "Der Kanal",
-    "category": "Sức khỏe",
-    "show_link": true,
-    "auto_fwd": true,
-    "target_channels": [
-      1
-    ],
-    "history_limit": 5
-  },
-  {
     "url": "https://t.me/GesundUndGut",
     "name": "Gesund und Gut",
     "category": "Sức khỏe",

@@ -1798,7 +1798,7 @@ function connectWS(){
             console.warn('[WS] feeds_ack timeout — retry');
             document.getElementById('ws-lbl').textContent='Thử lại...';
             _sendInitMessages();
-        }, 4000);
+        }, 10000);
         // Fetch RSS sau khi init
         if(wsReconnectCount>1){
             setTimeout(()=>{
@@ -2513,28 +2513,28 @@ def ws_handler(ws):
                 urls = msg.get('feeds', [])
                 print(f'[WS] ✅ Nhận được {len(urls)} feeds từ client')
 
-                save_feeds_to_file(urls)
-                
                 with lock:
                     watched_urls.clear()
                     watched_urls.extend(urls)
-                    
+
                     init_count = 0
                     for u in urls:
                         url = u.get('url')
                         if url and (url not in known_guids or not known_guids[url]):
                             known_guids[url] = set()
                             init_count += 1
-                            print(f'[INIT] known_guids khởi tạo: {url}')
-                    
-                    print(f'[INIT] Đã init {init_count} feeds')
 
-                    # TG realtime
+                    print(f'[INIT] Đã init {init_count} feeds mới')
+
                     tg_urls = [u['url'] for u in urls if is_tg_source(u.get('url', ''))]
                     if tg_urls and TELETHON_AVAILABLE and tg_client:
                         _thread_pool.submit(tg_setup_realtime_sync, tg_urls)
 
+                # Gửi ack NGAY — không chờ GitHub save
                 ws.send(json.dumps({'type': 'feeds_ack', 'count': len(urls)}, ensure_ascii=False))
+
+                # Lưu GitHub ở background — không block ws_handler
+                threading.Thread(target=save_feeds_to_file, args=(urls,), daemon=True).start()
 
             elif t == 'translate_engine':
                 translate_engine = msg.get('engine', 'google')

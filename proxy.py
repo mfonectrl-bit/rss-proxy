@@ -501,10 +501,15 @@ def run_tg_loop():
 
 def tg_run(coro):
     """Chạy coroutine trên tg_loop từ thread khác, trả về kết quả"""
-    if tg_loop is None:
-        raise RuntimeError('Telethon loop chưa khởi động')
+    global tg_loop, tg_loop_thread
+    if tg_loop is None or not tg_loop.is_running():
+        raise RuntimeError('Telethon loop chưa khởi động hoặc đã chết')
     future = asyncio.run_coroutine_threadsafe(coro, tg_loop)
-    return future.result(timeout=120)
+    try:
+        return future.result(timeout=30)
+    except TimeoutError:
+        future.cancel()
+        raise RuntimeError('Telethon tg_run timeout sau 30s')
 
 def save_tg_config(api_id, api_hash, phone):
     try:
@@ -1801,10 +1806,13 @@ function connectWS(){
         _sendInitMessages();
     };
 
+    let settingsSent = false;  // chỉ gửi settings 1 lần
+
     function _sendInitMessages(){
         if(!feedsPayload) return;
-        // Gửi settings qua WS mỗi lần reconnect
-        if(wsReady){
+        // Gửi settings qua WS chỉ lần đầu
+        if(wsReady && !settingsSent){
+            settingsSent = true;
             setTimeout(()=>{ if(wsReady) wsSend({type:'tg_settings',channels:tgChannels}); }, 100);
             setTimeout(()=>{ if(wsReady) wsSend({type:'auto_fwd',enabled:autoFwd,channels:tgChannels}); }, 200);
             setTimeout(()=>{ if(wsReady) wsSend({type:'categories',categories}); }, 300);
@@ -2421,23 +2429,35 @@ def poller():
             # --- Xử lý queue real-time từ Telethon ---
             _process_tg_queue()
 
-            # --- Watchdog: kiểm tra TG connection mỗi 30 phút, tự reconnect nếu mất ---
-            if TELETHON_AVAILABLE and tg_client is not None and now - _last_tg_watchdog > 1800:
+            # --- Watchdog: kiểm tra TG connection mỗi 10 phút, tự reconnect nếu mất ---
+            if TELETHON_AVAILABLE and tg_client is not None and now - _last_tg_watchdog > 600:
                 _last_tg_watchdog = now
                 def _watchdog():
-                    global _tg_realtime_last_setup
+                    global _tg_realtime_last_setup, tg_loop, tg_loop_thread
                     try:
+                        # Kiểm tra loop còn sống không
+                        if tg_loop is None or not tg_loop.is_running():
+                            print('[TG Watchdog] ⚠️ Telethon loop chết — đang restart...')
+                            new_loop = asyncio.new_event_loop()
+                            t = threading.Thread(target=lambda l=new_loop: (
+                                asyncio.set_event_loop(l), l.run_forever()
+                            ), daemon=True)
+                            t.start()
+                            tg_loop = new_loop
+                            tg_loop_thread = t
+                            time.sleep(1)
+
                         ok = tg_run(_tg_check_auth())
                         if ok:
                             tg_urls_all = [u['url'] for u in watched_urls if is_tg_source(u.get('url', ''))]
                             if tg_urls_all:
                                 tg_run(_tg_setup_realtime(tg_urls_all))
-                                _tg_realtime_last_setup = time.time()  # cập nhật debounce
+                                _tg_realtime_last_setup = time.time()
                                 print(f'[TG Watchdog] ✅ Đã re-register {len(tg_urls_all)} channels')
                         else:
-                            print('[TG Watchdog] ⚠️ Mất kết nối Telethon')
+                            print('[TG Watchdog] ⚠️ Mất xác thực Telethon')
                     except Exception as e:
-                        print(f'[TG Watchdog] Lỗi: {e}')
+                        print(f'[TG Watchdog] Lỗi: {type(e).__name__}: {e}')
                 threading.Thread(target=_watchdog, daemon=True).start()
 
             # --- Init history cho TG feed mới ---

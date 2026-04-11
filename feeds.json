@@ -1,0 +1,289 @@
+[
+  {
+    "url": "@vnwallstreet",
+    "name": "VN Wall Street",
+    "category": "Tài chính",
+    "show_link": true,
+    "auto_fwd": true,
+    "target_channels": [
+      1
+    ],
+    "history_limit": 20
+  },
+  {
+    "url": "@uncutnews_schlagzeilen",
+    "name": "Uncut News",
+    "category": "Khác",
+    "show_link": true,
+    "auto_fwd": true,
+    "target_channels": [
+      1
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "@RFI_Vi",
+    "name": "RFI Tiếng Việt",
+    "category": "Khác",
+    "show_link": true,
+    "auto_fwd": true,
+    "target_channels": [
+      1
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "@no100sin",
+    "name": "Kênh Hàn Quốc TG",
+    "category": "Xã hội",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0,
+      1
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "@geopolitics_prime",
+    "name": "Geopolitics",
+    "category": "Chính trị",
+    "show_link": true,
+    "auto_fwd": true,
+    "target_channels": [
+      1
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "@uncut_news",
+    "name": "Uncut News",
+    "category": "Khác",
+    "show_link": true,
+    "auto_fwd": true,
+    "target_channels": [
+      1
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "@InsiderPaper",
+    "name": "Inside Paper",
+    "category": "Khác",
+    "show_link": true,
+    "auto_fwd": true,
+    "target_channels": [
+      1
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "@abcdnewstest",
+    "name": "ABCD new test",
+    "category": "Khác",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      1
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "@rtnews",
+    "name": "RT News",
+    "category": "Chính trị",
+    "show_link": true,
+    "auto_fwd": true,
+    "target_channels": [
+      1
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "@tempvaxscam",
+    "name": "Thuyết Âm U",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/HeathSafetyTps",
+    "name": "Health Safety TIPS",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 10
+  },
+  {
+    "url": "https://t.me/naturalcuresforbody",
+    "name": "Natural Cures",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      2
+    ],
+    "history_limit": 20
+  },
+  {
+    "url": "https://cafef.vn/thi-truong-chung-khoan.rss",
+    "name": "CafeF",
+    "category": "Tài chính",
+    "show_link": true,
+    "auto_fwd": true,
+    "target_channels": [
+      1
+    ],
+    "history_limit": 20
+  },
+  {
+    "url": "https://cafef.vn/doanh-nghiep.rss",
+    "name": "CafeF Doanh nghiệp",
+    "category": "Sức khỏe",
+    "show_link": true,
+    "auto_fwd": true,
+    "target_channels": [
+      1
+    ],
+    "history_limit": 20
+  },
+  {
+    "url": "https://t.me/P_McCulloughMD",
+    "name": "Peter A. McCullough, MD, MPH™",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/DrTenpenny",
+    "name": "Dr. Tenpenny",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/dr_judymikovitss",
+    "name": "Dr. Judy Mikovits",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/BarbaraOneill_official",
+    "name": "Barbara O'Neill",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/Edward_Dowd",
+    "name": "Edward Dowd",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/naomirwolf",
+    "name": "Dr Naomi R Wolf",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/DrSimoneGold",
+    "name": "Dr. Simone Gold",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/NicHulscher",
+    "name": "Nicolas Hulscher",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 10
+  },
+  {
+    "url": "https://t.me/ShankaraChetty",
+    "name": "Dr. Shankara Chetty",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 10
+  },
+  {
+    "url": "https://t.me/DrPaulMarik",
+    "name": "Dr. Paul Marik",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 10
+  },
+  {
+    "url": "https://t.me/RogerHodkinson",
+    "name": "Dr Roger Hodkinson",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/DrMikeYeadon",
+    "name": "Dr Mike Yeadon",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  }
+]

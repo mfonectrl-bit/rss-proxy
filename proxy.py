@@ -2276,21 +2276,34 @@ def _do_forward(processed, category, url):
 def _cleanup_known_guids():
     """
     Dọn dẹp known_guids khi vượt ngưỡng 2x history_limit.
+    GUIDs dạng 'tg_@channel_12345' hoặc RSS guid — sort theo phần số cuối để giữ mới nhất.
     """
     with lock:
         urls_snapshot = list(watched_urls)
-        guids_snapshot = dict(known_guids)
+        guids_snapshot = {k: set(v) for k, v in known_guids.items()}
 
     for u in urls_snapshot:
         url = u.get('url')
         limit = int(u.get('history_limit', 20))
         max_keep = limit * 2
         guids = guids_snapshot.get(url)
-        if guids and len(guids) > max_keep:
-            trimmed = set(list(guids)[-max_keep:])
-            with lock:
-                known_guids[url] = trimmed
-            print(f'[CLEANUP] {url}: {len(guids)} → {len(trimmed)} GUIDs')
+        if not guids or len(guids) <= max_keep:
+            continue
+
+        # Sort theo phần số cuối GUID để giữ lại bài MỚI nhất
+        # VD: "tg_@channel_12345" → key=12345, RSS guid thường có timestamp
+        def _guid_key(g):
+            parts = re.split(r'[_\-]', g)
+            for p in reversed(parts):
+                if p.isdigit():
+                    return int(p)
+            return 0
+
+        sorted_guids = sorted(guids, key=_guid_key)
+        trimmed = set(sorted_guids[-max_keep:])  # giữ max_keep bài mới nhất
+        with lock:
+            known_guids[url] = trimmed
+        print(f'[CLEANUP] {url}: {len(guids)} → {len(trimmed)} GUIDs')
 
 def _poll_one(url_obj):
     """
@@ -2470,6 +2483,7 @@ def poller():
     fast_next: dict  = {}
     tg_inited: set   = set()
     tg_init_pending: set = set()
+    _last_cleanup: float = 0.0
     _last_debug_sec: int = -1
     _last_tg_watchdog: float = 0   # kiểm tra TG connection mỗi 30 phút
 
@@ -2561,9 +2575,11 @@ def poller():
                 with lock:
                     total_feeds = len(watched_urls)
                 print(f"[POLL] Đang chạy | Feeds: {total_feeds} | Queue: {_pipeline.qsize()} | Known GUIDs: {len(known_guids)} | TG inited: {len(tg_inited)}")
-                # Dọn dẹp known_guids mỗi giờ
-                if cur_sec % 3600 == 0:
-                    _cleanup_known_guids()
+
+            # Dọn dẹp known_guids mỗi giờ — dùng timer thay vì % 3600 tránh bị miss
+            if now - _last_cleanup >= 3600:
+                _last_cleanup = now
+                _cleanup_known_guids()
 
             time.sleep(0.5)
 

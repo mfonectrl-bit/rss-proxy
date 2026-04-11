@@ -285,5 +285,456 @@
       0
     ],
     "history_limit": 5
+  },
+  {
+    "url": "https://t.me/RWMaloneMD",
+    "name": "Robert W Malone, MD",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/SherriTenpenny",
+    "name": "Dr Sherri Tenpenny",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/RobertKennedyQ",
+    "name": "Robert F. Kennedy Jr.",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/AmericasDoctors",
+    "name": "America’s Doctors",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/NaturalNewsMedia",
+    "name": "Natural News",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/DrJohnCampbell",
+    "name": "Dr. John Campbell",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/realpetermcculloughmd",
+    "name": "Dr Peter McCullough™ Channel",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/AseemMalhotra",
+    "name": "Dr. Aseem Malhotra",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/DrSimoneGold",
+    "name": "Dr. Simone Gold",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/RobertKennedyChannell",
+    "name": "Robert F. Kennedy Jr.",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/ZFoundation",
+    "name": "Zelenko Freedom Foundation",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/EssentialOrganics",
+    "name": "Essential Organics",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/LeeMerritt",
+    "name": "Dr. Lee Merritt",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/MdBreathe",
+    "name": "Mary Talley Bowden MD",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://vnexpress.net/rss/suc-khoe.rss",
+    "name": "VnExpress sức khỏe",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/bestofcon",
+    "name": "Conspiracy Theorist",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/TheConspiracyHole",
+    "name": "The Conspiracy Hole",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/DismantlingTheCabal",
+    "name": "DismantlingTheCabal",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/BREAKINGHEADLINES",
+    "name": "BREAKING HEADLINES",
+    "category": "Sức khỏe",
+    "show_link": true,
+    "auto_fwd": true,
+    "target_channels": [
+      1
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/UnmaskingDeceit",
+    "name": "UNMASKING DECEIT",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/RealWorldNewsChannel",
+    "name": "Real World News",
+    "category": "Sức khỏe",
+    "show_link": true,
+    "auto_fwd": true,
+    "target_channels": [
+      1
+    ],
+    "history_limit": 20
+  },
+  {
+    "url": "https://t.me/TruckersForFreedomGlobal",
+    "name": "TruckersForFreedom",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/conspiracy_theory3",
+    "name": "Conspiracy Theory",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/covid_vaccine_injuries",
+    "name": "Covid Vaccine Injuries",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/leaklive",
+    "name": "LiveLeak",
+    "category": "Xã hội",
+    "show_link": true,
+    "auto_fwd": true,
+    "target_channels": [
+      1
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/the_lost_past",
+    "name": "THE LOST PAST",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/Politische_Nachrichten",
+    "name": "Politische Nachrichten",
+    "category": "Sức khỏe",
+    "show_link": true,
+    "auto_fwd": true,
+    "target_channels": [
+      1
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/cruel_historyy",
+    "name": "Cruel History",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/weisseradlerkanal",
+    "name": "Der Kanal",
+    "category": "Sức khỏe",
+    "show_link": true,
+    "auto_fwd": true,
+    "target_channels": [
+      1
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/thegreaterreset",
+    "name": "The People's Reset Activation",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/elixir_youth1",
+    "name": "ELIXIR of YOUTH",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/GesundUndGut",
+    "name": "Gesund und Gut",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/Aufwachkanal_deine_rote_Pille",
+    "name": "AUFWACHKANAL",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/JimCaviezel_TG",
+    "name": "Jim Caviezel",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/wideawakekanal",
+    "name": "Anonymous No More",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/goingundergroundRT",
+    "name": "Going Underground",
+    "category": "Sức khỏe",
+    "show_link": true,
+    "auto_fwd": true,
+    "target_channels": [
+      1
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/Wahrheit2",
+    "name": "Auf der Seite der Wahrheit",
+    "category": "Chính trị",
+    "show_link": true,
+    "auto_fwd": true,
+    "target_channels": [
+      1
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/node_of_time_en",
+    "name": "Node of Time EN",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/durov",
+    "name": "Pavel Durov",
+    "category": "Sức khỏe",
+    "show_link": true,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/free_energyyy",
+    "name": "FREE ENERGY",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
+  },
+  {
+    "url": "https://t.me/dailyexpose",
+    "name": "The Expose News (Official)",
+    "category": "Sức khỏe",
+    "show_link": false,
+    "auto_fwd": true,
+    "target_channels": [
+      0
+    ],
+    "history_limit": 5
   }
 ]

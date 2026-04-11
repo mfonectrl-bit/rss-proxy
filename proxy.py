@@ -51,10 +51,19 @@ def _github_api(method, path, payload=None):
 
 def save_feeds_to_file(urls):
     """Lưu feeds.json lên GitHub repo (ghi đè) + backup local"""
+    # Gói toàn bộ config vào 1 object
+    config = {
+        'feeds': urls,
+        'auto_fwd': auto_fwd_enabled,
+        'tg_channels': tg_channels,
+        'translate_engine': translate_engine,
+    }
+    config_str = json.dumps(config, ensure_ascii=False, indent=2)
+
     # Luôn lưu local làm backup
     try:
         with open(FEEDS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(urls, f, ensure_ascii=False, indent=2)
+            f.write(config_str)
     except Exception:
         pass
 
@@ -64,9 +73,7 @@ def save_feeds_to_file(urls):
 
     with _github_save_lock:
         try:
-            content_b64 = base64.b64encode(
-                json.dumps(urls, ensure_ascii=False, indent=2).encode('utf-8')
-            ).decode('ascii')
+            content_b64 = base64.b64encode(config_str.encode('utf-8')).decode('ascii')
 
             # Lấy SHA hiện tại (cần để update file)
             status, existing = _github_api('GET', GITHUB_PATH)
@@ -82,7 +89,7 @@ def save_feeds_to_file(urls):
 
             status, resp = _github_api('PUT', GITHUB_PATH, payload)
             if status in (200, 201):
-                print(f'[CONFIG] ✅ Đã lưu {len(urls)} feeds lên GitHub')
+                print(f'[CONFIG] ✅ Đã lưu {len(urls)} feeds + settings lên GitHub')
                 return True
             else:
                 print(f'[CONFIG] GitHub lưu lỗi HTTP {status}: {resp}')
@@ -99,14 +106,15 @@ def load_feeds_from_file():
             if status == 200 and resp.get('content'):
                 raw = base64.b64decode(resp['content']).decode('utf-8')
                 data = json.loads(raw)
-                print(f'[CONFIG] ✅ Load thành công {len(data)} feeds từ GitHub')
-                # Cập nhật local cache
+                # Hỗ trợ cả format cũ (list) và mới (dict)
+                feeds_list = data.get('feeds', data) if isinstance(data, dict) else data
+                print(f'[CONFIG] ✅ Load thành công {len(feeds_list)} feeds từ GitHub')
                 try:
                     with open(FEEDS_FILE, 'w', encoding='utf-8') as f:
-                        json.dump(data, f, ensure_ascii=False, indent=2)
+                        f.write(raw)
                 except Exception:
                     pass
-                return data
+                return data  # trả về toàn bộ để __main__ xử lý
             elif status == 404:
                 print('[CONFIG] feeds.json chưa có trên GitHub — sẽ tạo khi lưu lần đầu')
             else:
@@ -119,7 +127,8 @@ def load_feeds_from_file():
         try:
             with open(FEEDS_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            print(f'[CONFIG] ✅ Load thành công {len(data)} feeds từ local')
+            feeds_list = data.get('feeds', data) if isinstance(data, dict) else data
+            print(f'[CONFIG] ✅ Load thành công {len(feeds_list)} feeds từ local')
             return data
         except Exception as e:
             print(f'[CONFIG] Đọc local lỗi: {e}')
@@ -2785,20 +2794,22 @@ class HttpHandler(BaseHTTPRequestHandler):
         p = urlparse(self.path)
 
         if p.path == '/sync_feeds':
-            # Endpoint HTTP thay thế WS để gửi feeds — ổn định hơn với Render proxy
             body = self._read_json()
             urls = body.get('feeds', [])
             if not urls:
                 self._json({'ok': False, 'error': 'missing feeds'}); return
 
-            # Nhận thêm settings nếu client gửi kèm
-            global auto_fwd_enabled, tg_channels, translate_engine
+            # Set global state — dùng module-level reference
+            import __main__ as _m
             if 'auto_fwd' in body:
-                auto_fwd_enabled = body['auto_fwd']
+                global auto_fwd_enabled
+                auto_fwd_enabled = bool(body['auto_fwd'])
             if 'tg_channels' in body:
+                global tg_channels
                 with lock:
                     tg_channels = body['tg_channels']
             if 'translate_engine' in body:
+                global translate_engine
                 translate_engine = body['translate_engine']
 
             with lock:
@@ -2806,9 +2817,9 @@ class HttpHandler(BaseHTTPRequestHandler):
                 watched_urls.extend(urls)
                 init_count = 0
                 for u in urls:
-                    url = u.get('url')
-                    if url and (url not in known_guids or not known_guids[url]):
-                        known_guids[url] = set()
+                    url_key = u.get('url')
+                    if url_key and (url_key not in known_guids or not known_guids[url_key]):
+                        known_guids[url_key] = set()
                         init_count += 1
             print(f'[HTTP] ✅ sync_feeds: {len(urls)} feeds, {init_count} mới | auto_fwd={auto_fwd_enabled} | channels={len(tg_channels)}')
             tg_urls = [u['url'] for u in urls if is_tg_source(u.get('url', ''))]
@@ -2962,6 +2973,15 @@ if __name__ == '__main__':
     # === PERSIST FEEDS - TỰ ĐỘNG LOAD KHI RESTART ===
     default_feeds = load_feeds_from_file()
     if default_feeds:
+        # Hỗ trợ format mới {feeds:[], auto_fwd:bool, tg_channels:[]}
+        if isinstance(default_feeds, dict):
+            _cfg = default_feeds
+            default_feeds = _cfg.get('feeds', [])
+            auto_fwd_enabled = _cfg.get('auto_fwd', False)
+            tg_channels      = _cfg.get('tg_channels', [])
+            translate_engine = _cfg.get('translate_engine', translate_engine)
+            print(f'[CONFIG] auto_fwd={auto_fwd_enabled} | channels={len(tg_channels)}')
+
         with lock:
             watched_urls.clear()
             watched_urls.extend(default_feeds)

@@ -639,17 +639,6 @@
     "history_limit": 5
   },
   {
-    "url": "https://t.me/Wahrheit2",
-    "name": "Auf der Seite der Wahrheit",
-    "category": "Chính trị",
-    "show_link": true,
-    "auto_fwd": true,
-    "target_channels": [
-      1
-    ],
-    "history_limit": 5
-  },
-  {
     "url": "https://t.me/free_energyyy",
     "name": "FREE ENERGY",
     "category": "Sức khỏe",

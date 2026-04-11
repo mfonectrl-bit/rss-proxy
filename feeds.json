@@ -659,16 +659,5 @@
       0
     ],
     "history_limit": 5
-  },
-  {
-    "url": "https://t.me/dailyexpose",
-    "name": "The Expose News (Official)",
-    "category": "Sức khỏe",
-    "show_link": false,
-    "auto_fwd": true,
-    "target_channels": [
-      0
-    ],
-    "history_limit": 5
   }
 ]

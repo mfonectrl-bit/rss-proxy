@@ -639,17 +639,6 @@
     "history_limit": 5
   },
   {
-    "url": "https://t.me/Aufwachkanal_deine_rote_Pille",
-    "name": "AUFWACHKANAL",
-    "category": "Sức khỏe",
-    "show_link": false,
-    "auto_fwd": true,
-    "target_channels": [
-      0
-    ],
-    "history_limit": 5
-  },
-  {
     "url": "https://t.me/JimCaviezel_TG",
     "name": "Jim Caviezel",
     "category": "Sức khỏe",

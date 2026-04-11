@@ -441,17 +441,6 @@
     "history_limit": 5
   },
   {
-    "url": "https://vnexpress.net/rss/suc-khoe.rss",
-    "name": "VnExpress sức khỏe",
-    "category": "Sức khỏe",
-    "show_link": true,
-    "auto_fwd": true,
-    "target_channels": [
-      0
-    ],
-    "history_limit": 5
-  },
-  {
     "url": "https://t.me/bestofcon",
     "name": "Conspiracy Theorist",
     "category": "Sức khỏe",

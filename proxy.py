@@ -2085,16 +2085,18 @@ async def _tg_send_item(dest_channel, item, caption):
 
             if group_msgs:
                 media_list = [m.media for m in group_msgs[:10]]
-                # Caption cho media bị giới hạn 1024 ký tự bởi Telegram
-                short_caption = caption[:1024] if len(caption) > 1024 else caption
+                # Gửi media không có caption, rồi reply bằng toàn bộ text
                 if len(media_list) == 1:
-                    await tg_client.send_file(dest, media_list[0], caption=short_caption, parse_mode='html')
+                    sent = await tg_client.send_file(dest, media_list[0], caption='', parse_mode='html')
                 else:
-                    await tg_client.send_file(dest, media_list, caption=short_caption, parse_mode='html')
-                # Nếu caption bị cắt, gửi phần còn lại dưới dạng text
-                if len(caption) > 1024:
-                    for chunk in _split_text(caption[1024:], 4096):
-                        await tg_client.send_message(dest, chunk, parse_mode='html', link_preview=False)
+                    sent = await tg_client.send_file(dest, media_list, caption='', parse_mode='html')
+                # Reply vào tin media vừa gửi với toàn bộ caption
+                if caption.strip():
+                    reply_to = sent.id if not isinstance(sent, list) else sent[0].id
+                    chunks = _split_text(caption, 4096)
+                    for chunk in chunks:
+                        await tg_client.send_message(dest, chunk, parse_mode='html',
+                                                     reply_to=reply_to, link_preview=False)
                 return True
             # Không lấy được media → fallback text, tự động chia nhỏ nếu quá dài
             for chunk in _split_text(caption, 4096):
@@ -2102,11 +2104,14 @@ async def _tg_send_item(dest_channel, item, caption):
             return True
 
         elif rss_media:
-            short_caption = caption[:1024] if len(caption) > 1024 else caption
-            await tg_client.send_file(dest, rss_media, caption=short_caption, parse_mode='html')
-            if len(caption) > 1024:
-                for chunk in _split_text(caption[1024:], 4096):
-                    await tg_client.send_message(dest, chunk, parse_mode='html', link_preview=False)
+            # Gửi media không có caption, reply bằng toàn bộ text
+            sent = await tg_client.send_file(dest, rss_media, caption='', parse_mode='html')
+            if caption.strip():
+                reply_to = sent.id if not isinstance(sent, list) else sent[0].id
+                chunks = _split_text(caption, 4096)
+                for chunk in chunks:
+                    await tg_client.send_message(dest, chunk, parse_mode='html',
+                                                 reply_to=reply_to, link_preview=False)
             return True
 
         else:

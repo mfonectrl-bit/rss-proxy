@@ -651,11 +651,8 @@ _resolved_channels_cache = set()
 async def _tg_setup_realtime(feed_urls):
     """
     Setup real-time listener cho danh sách feed URLs.
-    
-    Chiến lược với nhiều feed:
-    1. Đăng ký NGAY với các channel đã resolve (từ cache) — không delay
-    2. Resolve các channel mới song song (asyncio.gather) — không tuần tự
-    3. Sau khi resolve xong → cập nhật handler với danh sách đầy đủ
+    - Resolve channel mới (chưa có trong cache) tuần tự với delay nhỏ
+    - Luôn đăng ký handler với TOÀN BỘ channels (cached + newly resolved)
     """
     global _tg_new_message_handler, _resolved_channels_cache
 
@@ -675,33 +672,25 @@ async def _tg_setup_realtime(feed_urls):
 
     raw_channels = [normalize_tg_channel(u).lstrip('@') for u in feed_urls]
 
-    # Tách: đã có cache vs cần resolve mới
-    cached       = [ch for ch in raw_channels if ch in _resolved_channels_cache]
+    # Resolve các channel chưa có trong cache
     need_resolve = [ch for ch in raw_channels if ch not in _resolved_channels_cache]
-
-    # Đăng ký ngay với cached channels (không đợi resolve mới)
-    if cached:
-        print(f'[TG] Đăng ký real-time ngay: {len(cached)} channels (cached)')
-        await _register_handler(cached)
-
-    # Resolve channels mới song song
     if need_resolve:
         print(f'[TG] Resolve {len(need_resolve)} channels mới...')
-
-        newly_resolved = []
         for ch in need_resolve:
             try:
                 await tg_client.get_input_entity(ch)
                 _resolved_channels_cache.add(ch)
-                newly_resolved.append(ch)
             except Exception as e:
                 print(f'[TG] Bỏ qua @{ch}: {e}')
             await asyncio.sleep(0.5)
 
-        if newly_resolved:
-            all_channels = cached + newly_resolved
-            print(f'[TG] Đăng ký real-time đầy đủ: {len(all_channels)} channels')
-            await _register_handler(all_channels)
+    # Luôn đăng ký với TẤT CẢ channels đã resolve thành công
+    all_channels = [ch for ch in raw_channels if ch in _resolved_channels_cache]
+    if all_channels:
+        print(f'[TG] Đăng ký real-time đầy đủ: {len(all_channels)} channels')
+        await _register_handler(all_channels)
+    else:
+        print('[TG] Không có channel nào resolve được')
 
 async def _register_handler(channels_list):
     """Đăng ký event handler cho danh sách channels"""
@@ -1344,6 +1333,12 @@ function updateTelethonBadge(connected){
     } else {
         badge.textContent='Telethon: chưa kết nối';badge.style.color='#aaa';
     }
+    telethonConnected=connected;
+}
+
+// Cập nhật badge mỗi khi feeds thay đổi
+function refreshTelethonBadge(){
+    if(telethonConnected) updateTelethonBadge(true);
 }
 
 // --- Feed type hint ---
@@ -1525,6 +1520,7 @@ function deleteFeed(i){
     allItems=allItems.filter(it=>it.feedUrl!==url);
     if(filterUrl===url)filterUrl=null;
     wsSend({type:'feeds',feeds:feeds.map(f=>({url:f.url,name:f.name,category:f.category,show_link:f.show_link!==false,auto_fwd:f.auto_fwd===true,target_channels:f.target_channels||[],history_limit:f.history_limit!=null?f.history_limit:20}))});
+    refreshTelethonBadge();
     renderSidebar();renderStream();
 }
 
@@ -1594,6 +1590,7 @@ function addFeed(){
     closeModal();
     if(editFeedIndex<0) fetchAndMerge(url,name,cat,true);
     else{allItems=allItems.filter(it=>it.feedUrl!==url);fetchAndMerge(url,name,cat,false);}
+    refreshTelethonBadge();
     renderSidebar();renderStream();
 }
 
@@ -2065,19 +2062,25 @@ async def _tg_send_item(dest_channel, item, caption):
 
         if source == 'telethon' and has_media and msg_id and chat:
             # --- TG nguồn có media: dùng msg.media object trực tiếp ---
+            from telethon.tl.types import MessageMediaWebPage
             with tg_semaphore:
                 if grouped:
                     all_msgs = await tg_client.get_messages(chat, ids=list(range(msg_id, msg_id + 10)))
                     if not isinstance(all_msgs, list):
                         all_msgs = [all_msgs] if all_msgs else []
                     group_msgs = [m for m in all_msgs
-                                  if m and m.grouped_id == grouped and m.media]
+                                  if m and m.grouped_id == grouped and m.media
+                                  and not isinstance(m.media, MessageMediaWebPage)]
                     if not group_msgs:
                         single = await tg_client.get_messages(chat, ids=msg_id)
-                        group_msgs = [single] if single and single.media else []
+                        is_real = single and single.media and not isinstance(single.media, MessageMediaWebPage)
+                        group_msgs = [single] if is_real else []
                 else:
                     msgs = await tg_client.get_messages(chat, ids=msg_id)
                     msg  = msgs if not isinstance(msgs, list) else (msgs[0] if msgs else None)
+                    # Bỏ qua WebPage preview — không phải media thật
+                    if msg and msg.media and isinstance(msg.media, MessageMediaWebPage):
+                        msg = None
                     group_msgs = [msg] if msg and msg.media else []
 
             if group_msgs:
@@ -2347,10 +2350,12 @@ def poller():
     Poller background chính
     """
     global poll_next_time
-    FAST_INTERVAL   = 30
-    fast_next: dict = {}
-    tg_inited: set  = set()
+    FAST_INTERVAL    = 30
+    fast_next: dict  = {}
+    tg_inited: set   = set()
     tg_init_pending: set = set()
+    _last_debug_sec: int = -1
+    _last_tg_watchdog: float = 0   # kiểm tra TG connection mỗi 30 phút
 
     print("[POLL] ✅ Background poller STARTED successfully")
 
@@ -2366,6 +2371,23 @@ def poller():
 
             # --- Xử lý queue real-time từ Telethon ---
             _process_tg_queue()
+
+            # --- Watchdog: kiểm tra TG connection mỗi 30 phút, tự reconnect nếu mất ---
+            if TELETHON_AVAILABLE and tg_client is not None and now - _last_tg_watchdog > 1800:
+                _last_tg_watchdog = now
+                def _watchdog():
+                    try:
+                        ok = tg_run(_tg_check_auth())
+                        if ok:
+                            tg_urls_all = [u['url'] for u in watched_urls if is_tg_source(u.get('url', ''))]
+                            if tg_urls_all:
+                                tg_run(_tg_setup_realtime(tg_urls_all))
+                                print(f'[TG Watchdog] ✅ Đã re-register {len(tg_urls_all)} channels')
+                        else:
+                            print('[TG Watchdog] ⚠️ Mất kết nối Telethon')
+                    except Exception as e:
+                        print(f'[TG Watchdog] Lỗi: {e}')
+                threading.Thread(target=_watchdog, daemon=True).start()
 
             # --- Init history cho TG feed mới ---
             tg_urls = [u for u in urls if is_tg_source(u['url'])]
@@ -2405,9 +2427,13 @@ def poller():
                 poll_next_time = time.time() + POLL_INTERVAL
                 broadcast({'type': 'poll_status', 'interval': POLL_INTERVAL, 'next_in': POLL_INTERVAL})
 
-            # Debug định kỳ
-            if int(now) % 60 == 0:   # mỗi 60 giây in 1 lần
-                print(f"[POLL] Đang chạy | Feeds: {len(urls)} | Queue: {_pipeline.qsize()} | Known GUIDs: {len(known_guids)}")
+            # Debug định kỳ — in đúng 1 lần mỗi phút
+            cur_sec = int(now)
+            if cur_sec % 60 == 0 and cur_sec != _last_debug_sec:
+                _last_debug_sec = cur_sec
+                with lock:
+                    total_feeds = len(watched_urls)
+                print(f"[POLL] Đang chạy | Feeds: {total_feeds} | Queue: {_pipeline.qsize()} | Known GUIDs: {len(known_guids)} | TG inited: {len(tg_inited)}")
 
             time.sleep(0.5)
 
@@ -2509,6 +2535,8 @@ def ws_handler(ws):
                 # Có thể xử lý thêm nếu cần
                 pass
 
+    except BrokenPipeError:
+        pass  # client ngắt kết nối bình thường
     except Exception as e:
         print(f'[WS] Lỗi xử lý WebSocket: {e}')
     finally:

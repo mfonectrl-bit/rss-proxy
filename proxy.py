@@ -2259,7 +2259,6 @@ def _do_forward(processed, category, url):
 def _cleanup_known_guids():
     """
     Dọn dẹp known_guids khi vượt ngưỡng 2x history_limit.
-    Giữ lại tối đa history_limit entries cho mỗi feed.
     """
     with lock:
         urls_snapshot = list(watched_urls)
@@ -2271,11 +2270,12 @@ def _cleanup_known_guids():
         max_keep = limit * 2
         guids = guids_snapshot.get(url)
         if guids and len(guids) > max_keep:
-            # Chuyển set về list, giữ lại max_keep entries cuối
             trimmed = set(list(guids)[-max_keep:])
             with lock:
                 known_guids[url] = trimmed
             print(f'[CLEANUP] {url}: {len(guids)} → {len(trimmed)} GUIDs')
+
+def _poll_one(url_obj):
     """
     Poll một feed, trả về True nếu thành công.
     """

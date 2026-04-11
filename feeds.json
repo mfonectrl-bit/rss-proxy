@@ -661,17 +661,6 @@
     "history_limit": 5
   },
   {
-    "url": "https://t.me/wideawakekanal",
-    "name": "Anonymous No More",
-    "category": "Sức khỏe",
-    "show_link": false,
-    "auto_fwd": true,
-    "target_channels": [
-      0
-    ],
-    "history_limit": 5
-  },
-  {
     "url": "https://t.me/goingundergroundRT",
     "name": "Going Underground",
     "category": "Sức khỏe",

@@ -262,13 +262,9 @@ class BatchPipeline:
                         for it in processed]
             broadcast({'type': 'new_items', 'url': feed_url, 'items': ws_items})
 
-            # 2. Forward — thread riêng, KHÔNG dùng pool để không bị block bởi init history
+            # 2. Forward — dùng pool có giới hạn, không spawn thread mới mỗi batch
             feed_category = processed[0].get('category', '')
-            threading.Thread(
-                target=_do_forward,
-                args=(processed, feed_category, feed_url),
-                daemon=True
-            ).start()
+            _thread_pool.submit(_do_forward, processed, feed_category, feed_url)
 
     def qsize(self):
         return self._q.qsize()
@@ -503,10 +499,11 @@ def extract_media(desc_html):
     return imgs, videos
 
 def run_tg_loop():
-    global tg_loop, _tg_history_semaphore
+    global tg_loop, _tg_history_semaphore, tg_semaphore
     tg_loop = asyncio.new_event_loop()
     asyncio.set_event_loop(tg_loop)
     _tg_history_semaphore = asyncio.Semaphore(2)  # tối đa 2 history loads song song
+    tg_semaphore = asyncio.Semaphore(1)            # serialize Telethon get_messages calls
     tg_loop.run_forever()
 
 def tg_run(coro):
@@ -2040,7 +2037,9 @@ def process_tg_items(items):
     return results
 
 # Semaphore để serialize Telethon calls — tránh conflict khi nhiều kênh poll cùng lúc
-tg_semaphore = threading.Semaphore(1)
+# Dùng asyncio.Semaphore vì được dùng bên trong async functions với await
+# Sẽ được khởi tạo lại trong run_tg_loop() sau khi asyncio loop chạy
+tg_semaphore = None
 # Semaphore async giới hạn concurrent history loading — tránh block forward
 _tg_history_semaphore = None  # khởi tạo sau khi asyncio loop chạy
 # Semaphore HTTP giới hạn concurrent /tl_fetch từ browser — tối đa 2 cùng lúc
@@ -2134,7 +2133,7 @@ async def _tg_send_item(dest_channel, item, caption):
         if source == 'telethon' and has_media and msg_id and chat:
             # --- TG nguồn có media: dùng msg.media object trực tiếp ---
             from telethon.tl.types import MessageMediaWebPage
-            with tg_semaphore:
+            async with tg_semaphore:
                 if grouped:
                     all_msgs = await tg_client.get_messages(chat, ids=list(range(msg_id, msg_id + 10)))
                     if not isinstance(all_msgs, list):
@@ -2254,13 +2253,18 @@ def _do_forward(processed, category, url):
             if channel_name:
                 caption += f'\n\n<i>{channel_name}</i>'
 
-            # Giới hạn concurrent sends qua semaphore
-            with _send_semaphore:
-                try:
-                    ok = tg_run(_tg_send_item(dest, it, caption))
-                except Exception as e:
-                    print(f'[Forward] tg_run lỗi: {e}')
-                    ok = False
+            # Giới hạn concurrent sends — acquire với timeout để không deadlock
+            acquired = _send_semaphore.acquire(timeout=10)
+            if not acquired:
+                print(f'[Forward] Bỏ qua tin — _send_semaphore timeout (hệ thống bận)')
+                continue
+            try:
+                ok = tg_run(_tg_send_item(dest, it, caption))
+            except Exception as e:
+                print(f'[Forward] tg_run lỗi: {e}')
+                ok = False
+            finally:
+                _send_semaphore.release()  # luôn release dù lỗi
             if ok:
                 total_sent += 1
             # Delay chống flood Telegram (0.3s đủ cho text, media cần nhiều hơn)
@@ -2536,13 +2540,10 @@ def poller():
             rss_due  = [u for u in rss_urls if now >= fast_next.get(u['url'], 0)]
 
             if rss_due:
-                futures = [_thread_pool.submit(_poll_one, u) for u in rss_due]
-                for f in futures:
-                    try:
-                        f.result(timeout=20)
-                    except Exception:
-                        pass
+                # Non-blocking: submit rồi để chạy background, không đợi result
+                # Đợi f.result() sẽ block poller thread và chặn _process_tg_queue()
                 for u in rss_due:
+                    _thread_pool.submit(_poll_one, u)
                     fast_next[u['url']] = time.time() + FAST_INTERVAL
 
             # --- tg.i-c-a.su ---

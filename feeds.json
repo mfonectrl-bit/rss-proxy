@@ -617,17 +617,6 @@
     "history_limit": 5
   },
   {
-    "url": "https://t.me/elixir_youth1",
-    "name": "ELIXIR of YOUTH",
-    "category": "Sức khỏe",
-    "show_link": false,
-    "auto_fwd": true,
-    "target_channels": [
-      0
-    ],
-    "history_limit": 5
-  },
-  {
     "url": "https://t.me/GesundUndGut",
     "name": "Gesund und Gut",
     "category": "Sức khỏe",

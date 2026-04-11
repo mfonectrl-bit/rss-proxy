@@ -408,17 +408,6 @@
     "history_limit": 5
   },
   {
-    "url": "https://t.me/EssentialOrganics",
-    "name": "Essential Organics",
-    "category": "Sức khỏe",
-    "show_link": false,
-    "auto_fwd": true,
-    "target_channels": [
-      0
-    ],
-    "history_limit": 5
-  },
-  {
     "url": "https://t.me/LeeMerritt",
     "name": "Dr. Lee Merritt",
     "category": "Sức khỏe",
@@ -485,17 +474,6 @@
     "history_limit": 5
   },
   {
-    "url": "https://t.me/UnmaskingDeceit",
-    "name": "UNMASKING DECEIT",
-    "category": "Sức khỏe",
-    "show_link": false,
-    "auto_fwd": true,
-    "target_channels": [
-      0
-    ],
-    "history_limit": 5
-  },
-  {
     "url": "https://t.me/RealWorldNewsChannel",
     "name": "Real World News",
     "category": "Sức khỏe",
@@ -540,17 +518,6 @@
     "history_limit": 5
   },
   {
-    "url": "https://t.me/leaklive",
-    "name": "LiveLeak",
-    "category": "Xã hội",
-    "show_link": true,
-    "auto_fwd": true,
-    "target_channels": [
-      1
-    ],
-    "history_limit": 5
-  },
-  {
     "url": "https://t.me/the_lost_past",
     "name": "THE LOST PAST",
     "category": "Sức khỏe",
@@ -575,28 +542,6 @@
   {
     "url": "https://t.me/cruel_historyy",
     "name": "Cruel History",
-    "category": "Sức khỏe",
-    "show_link": false,
-    "auto_fwd": true,
-    "target_channels": [
-      0
-    ],
-    "history_limit": 5
-  },
-  {
-    "url": "https://t.me/weisseradlerkanal",
-    "name": "Der Kanal",
-    "category": "Sức khỏe",
-    "show_link": true,
-    "auto_fwd": true,
-    "target_channels": [
-      1
-    ],
-    "history_limit": 5
-  },
-  {
-    "url": "https://t.me/thegreaterreset",
-    "name": "The People's Reset Activation",
     "category": "Sức khỏe",
     "show_link": false,
     "auto_fwd": true,
@@ -639,30 +584,8 @@
     "history_limit": 5
   },
   {
-    "url": "https://t.me/Wahrheit2",
-    "name": "Auf der Seite der Wahrheit",
-    "category": "Chính trị",
-    "show_link": true,
-    "auto_fwd": true,
-    "target_channels": [
-      1
-    ],
-    "history_limit": 5
-  },
-  {
     "url": "https://t.me/free_energyyy",
     "name": "FREE ENERGY",
-    "category": "Sức khỏe",
-    "show_link": false,
-    "auto_fwd": true,
-    "target_channels": [
-      0
-    ],
-    "history_limit": 5
-  },
-  {
-    "url": "https://t.me/dailyexpose",
-    "name": "The Expose News (Official)",
     "category": "Sức khỏe",
     "show_link": false,
     "auto_fwd": true,

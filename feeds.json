@@ -408,17 +408,6 @@
     "history_limit": 5
   },
   {
-    "url": "https://t.me/EssentialOrganics",
-    "name": "Essential Organics",
-    "category": "Sức khỏe",
-    "show_link": false,
-    "auto_fwd": true,
-    "target_channels": [
-      0
-    ],
-    "history_limit": 5
-  },
-  {
     "url": "https://t.me/LeeMerritt",
     "name": "Dr. Lee Merritt",
     "category": "Sức khỏe",

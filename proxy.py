@@ -778,7 +778,7 @@ def tg_setup_realtime_sync(feed_urls):
     _tg_realtime_last_setup = now
     if tg_loop and TELETHON_AVAILABLE:
         try:
-            tg_run(_tg_setup_realtime(feed_urls))
+            tg_run_long(_tg_setup_realtime(feed_urls), timeout=120)
         except Exception as e:
             print(f'[!] Setup real-time lỗi: {e}')
 
@@ -2510,7 +2510,7 @@ def poller():
                         if ok:
                             tg_urls_all = [u['url'] for u in watched_urls if is_tg_source(u.get('url', ''))]
                             if tg_urls_all:
-                                tg_run(_tg_setup_realtime(tg_urls_all))
+                                tg_run_long(_tg_setup_realtime(tg_urls_all), timeout=120)
                                 _tg_realtime_last_setup = time.time()
                                 print(f'[TG Watchdog] ✅ Đã re-register {len(tg_urls_all)} channels')
                         else:

@@ -1793,36 +1793,38 @@ function connectWS(){
         _sendInitMessages();
     };
 
+    let feedsSynced = false;  // chỉ sync HTTP 1 lần duy nhất
+
     function _sendInitMessages(){
         if(!feedsPayload) return;
-        // Gửi feeds qua HTTP POST — ổn định hơn WS với Render proxy
-        fetch('/sync_feeds', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({feeds: feedsPayload})
-        }).then(r=>r.json()).then(d=>{
-            if(d.ok){
-                feedsAckReceived=true;
-                if(feedsAckTimer){clearTimeout(feedsAckTimer);feedsAckTimer=null;}
-                document.getElementById('ws-lbl').textContent='Đang theo dõi';
-                console.log('[HTTP] sync_feeds OK, feeds='+d.count);
-            }
-        }).catch(e=>console.warn('[HTTP] sync_feeds lỗi:',e));
-        // Gửi các settings qua WS như cũ
+        // Gửi settings qua WS mỗi lần reconnect
         if(wsReady){
             setTimeout(()=>{ if(wsReady) wsSend({type:'tg_settings',channels:tgChannels}); }, 100);
             setTimeout(()=>{ if(wsReady) wsSend({type:'auto_fwd',enabled:autoFwd,channels:tgChannels}); }, 200);
             setTimeout(()=>{ if(wsReady) wsSend({type:'categories',categories}); }, 300);
             setTimeout(()=>{ if(wsReady) wsSend({type:'translate_engine',engine:translateEngine}); }, 400);
         }
-        // Retry HTTP nếu chưa nhận ack sau 10s
-        if(feedsAckTimer) clearTimeout(feedsAckTimer);
-        feedsAckTimer=setTimeout(()=>{
-            if(feedsAckReceived) return;
-            console.warn('[HTTP] sync_feeds retry...');
-            _sendInitMessages();
-        }, 10000);
-        // Fetch RSS
+        // Gửi feeds qua HTTP chỉ 1 lần — không lặp lại mỗi khi WS reconnect
+        if(feedsSynced) return;
+        fetch('/sync_feeds', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({feeds: feedsPayload})
+        }).then(r=>r.json()).then(d=>{
+            if(d.ok){
+                feedsSynced=true;
+                feedsAckReceived=true;
+                if(feedsAckTimer){clearTimeout(feedsAckTimer);feedsAckTimer=null;}
+                document.getElementById('ws-lbl').textContent='Đang theo dõi';
+                console.log('[HTTP] sync_feeds OK, feeds='+d.count);
+            }
+        }).catch(e=>{
+            console.warn('[HTTP] sync_feeds lỗi:',e);
+            // Retry sau 5s nếu lỗi mạng
+            if(feedsAckTimer) clearTimeout(feedsAckTimer);
+            feedsAckTimer=setTimeout(()=>{ feedsSynced=false; _sendInitMessages(); }, 5000);
+        });
+        // Fetch RSS sau khi init
         if(wsReconnectCount>1){
             setTimeout(()=>{
                 feeds.filter(f=>!isTgSource(f.url)).forEach(f=>fetchAndMerge(f.url,f.name,f.category,false));
@@ -2547,13 +2549,7 @@ def ws_handler(ws):
 
                 # Gửi ack NGAY
                 ws.send(json.dumps({'type': 'feeds_ack', 'count': len(urls)}, ensure_ascii=False))
-
-                # Setup TG realtime — thread riêng, KHÔNG dùng pool để tránh bị block
-                tg_urls = [u['url'] for u in urls if is_tg_source(u.get('url', ''))]
-                if tg_urls and TELETHON_AVAILABLE and tg_client:
-                    threading.Thread(target=tg_setup_realtime_sync, args=(tg_urls,), daemon=True).start()
-
-                # Lưu GitHub ở background
+                # Lưu GitHub ở background (nếu WS vẫn gửi feeds)
                 threading.Thread(target=save_feeds_to_file, args=(urls,), daemon=True).start()
 
             elif t == 'translate_engine':

@@ -2085,22 +2085,32 @@ async def _tg_send_item(dest_channel, item, caption):
 
             if group_msgs:
                 media_list = [m.media for m in group_msgs[:10]]
+                # Caption cho media bị giới hạn 1024 ký tự bởi Telegram
+                short_caption = caption[:1024] if len(caption) > 1024 else caption
                 if len(media_list) == 1:
-                    await tg_client.send_file(dest, media_list[0], caption=caption, parse_mode='html')
+                    await tg_client.send_file(dest, media_list[0], caption=short_caption, parse_mode='html')
                 else:
-                    await tg_client.send_file(dest, media_list, caption=caption, parse_mode='html')
+                    await tg_client.send_file(dest, media_list, caption=short_caption, parse_mode='html')
+                # Nếu caption bị cắt, gửi phần còn lại dưới dạng text
+                if len(caption) > 1024:
+                    for chunk in _split_text(caption[1024:], 4096):
+                        await tg_client.send_message(dest, chunk, parse_mode='html', link_preview=False)
                 return True
-            # Không lấy được media → fallback text
-            await tg_client.send_message(dest, caption, parse_mode='html', link_preview=False)
+            # Không lấy được media → fallback text, tự động chia nhỏ nếu quá dài
+            for chunk in _split_text(caption, 4096):
+                await tg_client.send_message(dest, chunk, parse_mode='html', link_preview=False)
             return True
 
         elif rss_media:
-            await tg_client.send_file(dest, rss_media, caption=caption, parse_mode='html')
+            short_caption = caption[:1024] if len(caption) > 1024 else caption
+            await tg_client.send_file(dest, rss_media, caption=short_caption, parse_mode='html')
+            if len(caption) > 1024:
+                for chunk in _split_text(caption[1024:], 4096):
+                    await tg_client.send_message(dest, chunk, parse_mode='html', link_preview=False)
             return True
 
         else:
-            chunks = _split_text(caption, 4096)
-            for chunk in chunks:
+            for chunk in _split_text(caption, 4096):
                 await tg_client.send_message(dest, chunk, parse_mode='html', link_preview=False)
             return True
 

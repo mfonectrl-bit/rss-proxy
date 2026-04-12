@@ -134,17 +134,6 @@
       "history_limit": 20
     },
     {
-      "url": "https://cafef.vn/thi-truong-chung-khoan.rss",
-      "name": "CafeF",
-      "category": "Tài chính",
-      "show_link": true,
-      "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
-      "history_limit": 20
-    },
-    {
       "url": "https://cafef.vn/doanh-nghiep.rss",
       "name": "CafeF Doanh nghiệp",
       "category": "Sức khỏe",

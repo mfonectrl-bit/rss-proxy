@@ -134,17 +134,6 @@
       "history_limit": 20
     },
     {
-      "url": "https://cafef.vn/doanh-nghiep.rss",
-      "name": "CafeF Doanh nghiệp",
-      "category": "Sức khỏe",
-      "show_link": true,
-      "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
-      "history_limit": 20
-    },
-    {
       "url": "https://t.me/P_McCulloughMD",
       "name": "Peter A. McCullough, MD, MPH™",
       "category": "Sức khỏe",

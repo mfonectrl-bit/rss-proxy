@@ -280,7 +280,7 @@
       "url": "https://t.me/SherriTenpenny",
       "name": "Dr Sherri Tenpenny",
       "category": "Sức khỏe",
-      "show_link": false,
+      "show_link": true,
       "auto_fwd": true,
       "target_channels": [
         0

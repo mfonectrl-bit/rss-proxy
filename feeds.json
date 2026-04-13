@@ -561,6 +561,17 @@
         0
       ],
       "history_limit": 5
+    },
+    {
+      "url": "https://t.me/insider_amigo",
+      "name": "Insider Amigo",
+      "category": "Sức khỏe",
+      "show_link": true,
+      "auto_fwd": true,
+      "target_channels": [
+        1
+      ],
+      "history_limit": 5
     }
   ],
   "auto_fwd": true,

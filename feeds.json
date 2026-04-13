@@ -335,7 +335,7 @@
       "url": "https://t.me/realpetermcculloughmd",
       "name": "Dr Peter McCullough™ Channel",
       "category": "Sức khỏe",
-      "show_link": false,
+      "show_link": true,
       "auto_fwd": true,
       "target_channels": [
         0

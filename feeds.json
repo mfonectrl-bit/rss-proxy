@@ -291,7 +291,7 @@
       "url": "https://t.me/RobertKennedyQ",
       "name": "Robert F. Kennedy Jr.",
       "category": "Sức khỏe",
-      "show_link": false,
+      "show_link": true,
       "auto_fwd": true,
       "target_channels": [
         0

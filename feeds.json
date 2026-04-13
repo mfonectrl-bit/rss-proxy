@@ -497,17 +497,6 @@
       "history_limit": 5
     },
     {
-      "url": "https://t.me/goingundergroundRT",
-      "name": "Going Underground",
-      "category": "Sức khỏe",
-      "show_link": true,
-      "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
-      "history_limit": 5
-    },
-    {
       "url": "https://t.me/free_energyyy",
       "name": "FREE ENERGY",
       "category": "Sức khỏe",

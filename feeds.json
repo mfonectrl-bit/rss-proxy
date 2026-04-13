@@ -302,7 +302,7 @@
       "url": "https://t.me/AmericasDoctors",
       "name": "America’s Doctors",
       "category": "Sức khỏe",
-      "show_link": false,
+      "show_link": true,
       "auto_fwd": true,
       "target_channels": [
         0

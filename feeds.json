@@ -467,7 +467,7 @@
       "url": "https://t.me/GesundUndGut",
       "name": "Gesund und Gut",
       "category": "Sức khỏe",
-      "show_link": false,
+      "show_link": true,
       "auto_fwd": true,
       "target_channels": [
         0

@@ -148,7 +148,7 @@
       "url": "https://t.me/DrTenpenny",
       "name": "Dr. Tenpenny",
       "category": "Sức khỏe",
-      "show_link": false,
+      "show_link": true,
       "auto_fwd": true,
       "target_channels": [
         0

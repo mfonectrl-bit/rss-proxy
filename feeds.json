@@ -409,17 +409,6 @@
       "history_limit": 5
     },
     {
-      "url": "https://t.me/TheConspiracyHole",
-      "name": "The Conspiracy Hole",
-      "category": "Sức khỏe",
-      "show_link": false,
-      "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
-      "history_limit": 5
-    },
-    {
       "url": "https://t.me/DismantlingTheCabal",
       "name": "DismantlingTheCabal",
       "category": "Sức khỏe",

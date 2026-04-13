@@ -401,7 +401,7 @@
       "url": "https://t.me/MdBreathe",
       "name": "Mary Talley Bowden MD",
       "category": "Sức khỏe",
-      "show_link": false,
+      "show_link": true,
       "auto_fwd": true,
       "target_channels": [
         0

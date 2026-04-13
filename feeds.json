@@ -214,7 +214,7 @@
       "url": "https://t.me/NicHulscher",
       "name": "Nicolas Hulscher",
       "category": "Sức khỏe",
-      "show_link": false,
+      "show_link": true,
       "auto_fwd": true,
       "target_channels": [
         0

@@ -660,6 +660,17 @@
         0
       ],
       "history_limit": 5
+    },
+    {
+      "url": "https://t.me/INSIDERR_POLITIC",
+      "name": "INSIDER | News | Politics | USA",
+      "category": "Chính trị",
+      "show_link": true,
+      "auto_fwd": true,
+      "target_channels": [
+        1
+      ],
+      "history_limit": 5
     }
   ],
   "auto_fwd": true,

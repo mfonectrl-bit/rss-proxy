@@ -313,7 +313,7 @@
       "url": "https://t.me/NaturalNewsMedia",
       "name": "Natural News",
       "category": "Sức khỏe",
-      "show_link": false,
+      "show_link": true,
       "auto_fwd": true,
       "target_channels": [
         0

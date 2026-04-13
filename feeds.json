@@ -478,7 +478,7 @@
       "url": "https://t.me/JimCaviezel_TG",
       "name": "Jim Caviezel",
       "category": "Sức khỏe",
-      "show_link": false,
+      "show_link": true,
       "auto_fwd": true,
       "target_channels": [
         0

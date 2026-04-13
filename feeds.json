@@ -159,7 +159,7 @@
       "url": "https://t.me/dr_judymikovitss",
       "name": "Dr. Judy Mikovits",
       "category": "Sức khỏe",
-      "show_link": false,
+      "show_link": true,
       "auto_fwd": true,
       "target_channels": [
         0

@@ -638,6 +638,17 @@
         0
       ],
       "history_limit": 5
+    },
+    {
+      "url": "https://t.me/COVID19Up",
+      "name": "COVID-19 Up",
+      "category": "Sức khỏe",
+      "show_link": true,
+      "auto_fwd": true,
+      "target_channels": [
+        0
+      ],
+      "history_limit": 5
     }
   ],
   "auto_fwd": true,

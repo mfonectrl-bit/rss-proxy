@@ -203,7 +203,7 @@
       "url": "https://t.me/DrSimoneGold",
       "name": "Dr. Simone Gold",
       "category": "Sức khỏe",
-      "show_link": false,
+      "show_link": true,
       "auto_fwd": true,
       "target_channels": [
         0

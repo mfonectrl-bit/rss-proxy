@@ -137,7 +137,7 @@
       "url": "https://t.me/P_McCulloughMD",
       "name": "Peter A. McCullough, MD, MPH™",
       "category": "Sức khỏe",
-      "show_link": false,
+      "show_link": true,
       "auto_fwd": true,
       "target_channels": [
         0

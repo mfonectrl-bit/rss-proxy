@@ -431,17 +431,6 @@
       "history_limit": 20
     },
     {
-      "url": "https://t.me/TruckersForFreedomGlobal",
-      "name": "TruckersForFreedom",
-      "category": "Sức khỏe",
-      "show_link": false,
-      "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
-      "history_limit": 5
-    },
-    {
       "url": "https://t.me/conspiracy_theory3",
       "name": "Conspiracy Theory",
       "category": "Sức khỏe",

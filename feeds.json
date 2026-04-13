@@ -508,17 +508,6 @@
       "history_limit": 5
     },
     {
-      "url": "https://t.me/Politische_Nachrichten",
-      "name": "Politische Nachrichten",
-      "category": "Sức khỏe",
-      "show_link": true,
-      "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
-      "history_limit": 5
-    },
-    {
       "url": "https://t.me/cruel_historyy",
       "name": "Cruel History",
       "category": "Sức khỏe",

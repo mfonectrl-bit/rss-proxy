@@ -258,7 +258,7 @@
       "url": "https://t.me/DrMikeYeadon",
       "name": "Dr Mike Yeadon",
       "category": "Sức khỏe",
-      "show_link": false,
+      "show_link": true,
       "auto_fwd": true,
       "target_channels": [
         0

@@ -453,17 +453,6 @@
       "history_limit": 5
     },
     {
-      "url": "https://t.me/the_lost_past",
-      "name": "THE LOST PAST",
-      "category": "Sức khỏe",
-      "show_link": true,
-      "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
-      "history_limit": 5
-    },
-    {
       "url": "https://t.me/GesundUndGut",
       "name": "Gesund und Gut",
       "category": "Sức khỏe",

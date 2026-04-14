@@ -126,7 +126,7 @@
       "url": "https://t.me/naturalcuresforbody",
       "name": "Natural Cures",
       "category": "Sức khỏe",
-      "show_link": false,
+      "show_link": true,
       "auto_fwd": true,
       "target_channels": [
         2

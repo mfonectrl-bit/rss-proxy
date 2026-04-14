@@ -1064,12 +1064,18 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
 <select id="ch-select-modal" onchange="loadChannelToForm(this.value)"></select>
 <input type="text" id="ch-username" placeholder="@kênh_đích hoặc -100xxxxxxxxx">
 <input type="text" id="ch-name" placeholder="Tên hiển thị (tuỳ chọn)">
-<select id="ch-type">
+<select id="ch-type" onchange="onChTypeChange(this.value)">
 <option value="master">Master (Tất cả tin)</option>
 <option value="category">Category (theo chủ đề)</option>
-<option value="group">Group</option>
+<option value="group">Group có Topics</option>
 </select>
 <select id="ch-category"></select>
+<!-- Topic ID — chỉ hiện khi type = group -->
+<div id="ch-topic-wrap" style="display:none;margin-bottom:.6rem">
+  <div style="font-size:12px;color:#555;margin-bottom:4px;font-weight:600">Topic ID trong Group:</div>
+  <input type="number" id="ch-topic-id" placeholder="Ví dụ: 123 (lấy từ link topic trong group)" style="width:100%;padding:9px;border:1px solid #d0d0c8;border-radius:8px;font-size:14px;margin-bottom:0">
+  <div style="font-size:11px;color:#888;margin-top:3px">Cách lấy: mở topic → copy link → số cuối trong link là Topic ID</div>
+</div>
 <div style="margin:10px 0;padding:10px;background:#f9f9f9;border-radius:8px">
 <div style="font-size:12px;font-weight:600;margin-bottom:8px">Quản lý chủ đề:</div>
 <div id="category-list"></div>
@@ -1141,7 +1147,8 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
 <div class="modal-bg" id="fwd-modal">
 <div class="modal">
 <h2>Chọn kênh gửi</h2>
-<div id="fwd-ch-list" style="max-height:200px;overflow-y:auto;margin:10px 0"></div>
+<div style="font-size:11px;color:#888;margin-bottom:8px">Kênh Group có Topics: chọn topic muốn gửi vào</div>
+<div id="fwd-ch-list" style="max-height:280px;overflow-y:auto;margin:10px 0"></div>
 <div class="modal-btns">
 <button onclick="document.getElementById('fwd-modal').classList.remove('open')">Hủy</button>
 <button class="btn-ok" onclick="forwardSelected()">Gửi</button>
@@ -1359,19 +1366,27 @@ function renderChannelManager(){
     renderCategoryList();
 }
 
+function onChTypeChange(val){
+    document.getElementById('ch-topic-wrap').style.display=(val==='group')?'block':'none';
+}
+
 function loadChannelToForm(idx){
     selectedChannelIndex=parseInt(idx);
     const form={username:document.getElementById('ch-username'),
-        name:document.getElementById('ch-name'),type:document.getElementById('ch-type'),category:document.getElementById('ch-category')};
+        name:document.getElementById('ch-name'),type:document.getElementById('ch-type'),
+        category:document.getElementById('ch-category'),topicId:document.getElementById('ch-topic-id')};
     if(selectedChannelIndex>=0&&tgChannels[selectedChannelIndex]){
         const ch=tgChannels[selectedChannelIndex];
         form.username.value=ch.username||ch.channel_id||'';
         form.name.value=ch.name;form.type.value=ch.type;
         form.category.value=ch.category_filter||'';
+        form.topicId.value=ch.topic_id||'';
+        onChTypeChange(ch.type);
         document.getElementById('btn-ch-del').style.display='inline-block';
     } else {
         form.username.value='';form.name.value='';
-        form.type.value='master';form.category.value='';
+        form.type.value='master';form.category.value='';form.topicId.value='';
+        onChTypeChange('master');
         document.getElementById('btn-ch-del').style.display='none';
     }
 }
@@ -1381,11 +1396,12 @@ function saveTgSettings(){
     const name=document.getElementById('ch-name').value.trim()||username;
     const type=document.getElementById('ch-type').value;
     const category=document.getElementById('ch-category').value;
+    const topicIdRaw=document.getElementById('ch-topic-id').value.trim();
+    const topic_id=(type==='group'&&topicIdRaw)?parseInt(topicIdRaw)||null:null;
     if(!username){alert('Nhập @username hoặc channel ID');return;}
-    // Chuẩn hoá: thêm @ nếu chưa có và không phải ID số
     const normUsername = (!username.startsWith('@') && !username.startsWith('-') && !/^\d/.test(username))
         ? '@'+username : username;
-    const chObj={username:normUsername,name,type,category_filter:category};
+    const chObj={username:normUsername,name,type,category_filter:category,topic_id};
     if(selectedChannelIndex>=0){
         tgChannels[selectedChannelIndex]=chObj;
     } else {
@@ -1424,26 +1440,47 @@ function updateFwdBar(){
 }
 
 function openForwardModal(){
-    const list=document.getElementById('fwd-ch-list');list.innerHTML='';
-    tgChannels.forEach((ch,idx)=>{
-        const div=document.createElement('div');
-        div.innerHTML=`<input type="checkbox" value="${idx}" checked> ${ch.name} (${ch.type})`;
-        div.style.padding='5px';list.appendChild(div);
-    });
+    const list=document.getElementById('fwd-ch-list');
+    list.innerHTML=tgChannels.map((ch,idx)=>{
+        const typeLabel=ch.type==='master'?'Master':ch.type==='group'?'Group':'Category: '+ch.category_filter;
+        const topicRow=ch.type==='group'?`
+            <div style="margin-top:5px;display:flex;align-items:center;gap:6px;padding-left:22px">
+                <label style="font-size:11px;color:#555">Topic ID:</label>
+                <input type="number" id="fwd-topic-${idx}" value="${ch.topic_id||''}"
+                    placeholder="mặc định (${ch.topic_id||'chưa cấu hình'})"
+                    style="width:120px;padding:3px 6px;border:1px solid #d0d0c8;border-radius:5px;font-size:12px">
+                <span style="font-size:11px;color:#888">để trống = dùng Topic ID đã cấu hình</span>
+            </div>`:'';
+        return `<div style="padding:6px 4px;border-bottom:1px solid #f0f0e8">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+                <input type="checkbox" class="fwd-ch-cb" value="${idx}" checked style="width:15px;height:15px">
+                <span><b>${ch.name}</b> <span style="color:#aaa;font-size:11px">(${typeLabel})</span></span>
+            </label>${topicRow}
+        </div>`;
+    }).join('');
     document.getElementById('fwd-modal').classList.add('open');
 }
 
 async function forwardSelected(){
-    const checkboxes=document.querySelectorAll('#fwd-ch-list input:checked');
+    const checkboxes=document.querySelectorAll('#fwd-ch-list .fwd-ch-cb:checked');
     const channelIndices=Array.from(checkboxes).map(cb=>parseInt(cb.value));
     if(channelIndices.length===0){alert('Chọn ít nhất 1 kênh');return;}
     const items=allItems.filter(it=>selected.has(it.guid)).map(it=>{
         const feedCfg=feeds.find(f=>f.url===it.feedUrl)||{};
         return {guid:it.guid,title:it.title,desc:it.desc,link:it.link,
                 category:it.category,feedUrl:it.feedUrl,
-                show_link:feedCfg.show_link!==false};  // lấy show_link từ feed config
+                show_link:feedCfg.show_link!==false};
     });
-    const channelsToSend=channelIndices.map(i=>tgChannels[i]);
+    // Build channel list — với group thì đọc topic_id từ input (nếu có), fallback config
+    const channelsToSend=channelIndices.map(i=>{
+        const ch={...tgChannels[i]};
+        if(ch.type==='group'){
+            const inp=document.getElementById('fwd-topic-'+i);
+            const val=inp?inp.value.trim():'';
+            ch.topic_id=val?parseInt(val):(ch.topic_id||null);
+        }
+        return ch;
+    });
     try{
         const r=await fetch('/tg_forward',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channels:channelsToSend,items})});
         const data=await r.json();
@@ -2042,9 +2079,9 @@ async def _resolve_dest(dest_channel):
     return dest
 
 
-async def _tg_send_item(dest_channel, item, caption):
+async def _tg_send_item(dest_channel, item, caption, topic_id=None):
     """
-    Gửi 1 item lên kênh đích qua Telethon (không dùng Bot API).
+    Gửi 1 item lên kênh/group đích qua Telethon (không dùng Bot API).
 
     Logic:
     - Nếu là tin TG nguồn có media → dùng msg.media object gốc (forward không download)
@@ -2053,6 +2090,7 @@ async def _tg_send_item(dest_channel, item, caption):
     - Nếu là tin RSS có media URL → send_file(url) — Telegram tự fetch
     - Nếu không có media → send_message(text)
 
+    topic_id: int hoặc None — nếu là Group có Topics, truyền message_thread_id để gửi vào đúng topic.
     Không bao giờ download bytes về RAM.
     Hỗ trợ cả @username lẫn ID số (-100xxx).
     """
@@ -2067,6 +2105,9 @@ async def _tg_send_item(dest_channel, item, caption):
         grouped   = item.get('_tg_grouped_id')
         has_media = item.get('_tg_has_media', False)
         rss_media = item.get('_rss_media_url')
+
+        # reply_to = topic_id nếu gửi vào topic của group, None nếu gửi bình thường
+        thread_reply = int(topic_id) if topic_id else None
 
         if source == 'telethon' and has_media and msg_id and chat:
             # --- TG nguồn có media: dùng msg.media object trực tiếp ---
@@ -2086,7 +2127,6 @@ async def _tg_send_item(dest_channel, item, caption):
                 else:
                     msgs = await tg_client.get_messages(chat, ids=msg_id)
                     msg  = msgs if not isinstance(msgs, list) else (msgs[0] if msgs else None)
-                    # Bỏ qua WebPage preview — không phải media thật
                     if msg and msg.media and isinstance(msg.media, MessageMediaWebPage):
                         msg = None
                     group_msgs = [msg] if msg and msg.media else []
@@ -2094,17 +2134,19 @@ async def _tg_send_item(dest_channel, item, caption):
             if group_msgs:
                 media_list = [m.media for m in group_msgs[:10]]
                 if len(caption) <= 1024:
-                    # Caption ngắn — gửi 1 tin gồm media + caption bình thường
                     if len(media_list) == 1:
-                        await tg_client.send_file(dest, media_list[0], caption=caption, parse_mode='html')
+                        await tg_client.send_file(dest, media_list[0], caption=caption,
+                                                  parse_mode='html', reply_to=thread_reply)
                     else:
-                        await tg_client.send_file(dest, media_list, caption=caption, parse_mode='html')
+                        await tg_client.send_file(dest, media_list, caption=caption,
+                                                  parse_mode='html', reply_to=thread_reply)
                 else:
-                    # Caption quá dài — gửi media không caption, reply bằng toàn bộ text
                     if len(media_list) == 1:
-                        sent = await tg_client.send_file(dest, media_list[0], caption='', parse_mode='html')
+                        sent = await tg_client.send_file(dest, media_list[0], caption='',
+                                                         parse_mode='html', reply_to=thread_reply)
                     else:
-                        sent = await tg_client.send_file(dest, media_list, caption='', parse_mode='html')
+                        sent = await tg_client.send_file(dest, media_list, caption='',
+                                                         parse_mode='html', reply_to=thread_reply)
                     reply_to = sent.id if not isinstance(sent, list) else sent[0].id
                     for chunk in _split_text(caption, 4096):
                         await tg_client.send_message(dest, chunk, parse_mode='html',
@@ -2112,14 +2154,17 @@ async def _tg_send_item(dest_channel, item, caption):
                 return True
             # Không lấy được media → fallback text
             for chunk in _split_text(caption, 4096):
-                await tg_client.send_message(dest, chunk, parse_mode='html', link_preview=False)
+                await tg_client.send_message(dest, chunk, parse_mode='html',
+                                             reply_to=thread_reply, link_preview=False)
             return True
 
         elif rss_media:
             if len(caption) <= 1024:
-                await tg_client.send_file(dest, rss_media, caption=caption, parse_mode='html')
+                await tg_client.send_file(dest, rss_media, caption=caption,
+                                          parse_mode='html', reply_to=thread_reply)
             else:
-                sent = await tg_client.send_file(dest, rss_media, caption='', parse_mode='html')
+                sent = await tg_client.send_file(dest, rss_media, caption='',
+                                                  parse_mode='html', reply_to=thread_reply)
                 reply_to = sent.id if not isinstance(sent, list) else sent[0].id
                 for chunk in _split_text(caption, 4096):
                     await tg_client.send_message(dest, chunk, parse_mode='html',
@@ -2128,11 +2173,12 @@ async def _tg_send_item(dest_channel, item, caption):
 
         else:
             for chunk in _split_text(caption, 4096):
-                await tg_client.send_message(dest, chunk, parse_mode='html', link_preview=False)
+                await tg_client.send_message(dest, chunk, parse_mode='html',
+                                             reply_to=thread_reply, link_preview=False)
             return True
 
     except Exception as e:
-        print(f'[TG Send] Lỗi gửi {dest_channel}: {e}')
+        print(f'[TG Send] Lỗi gửi {dest_channel} topic={topic_id}: {e}')
         return False
 
 
@@ -2182,6 +2228,7 @@ def _do_forward(processed, category, url):
 
         channel_name = ch.get('name', dest)
         show_link    = feed_cfg.get('show_link', True)
+        topic_id     = ch.get('topic_id') or None  # None = không phải group topic
 
         for it in reversed(processed):
             desc_plain = strip_html(it.get('desc', '').replace('<br>', '\n')).strip()
@@ -2191,18 +2238,17 @@ def _do_forward(processed, category, url):
             if channel_name:
                 caption += f'\n\n<i>{channel_name}</i>'
 
-            # Giới hạn concurrent sends — acquire với timeout để không deadlock
             acquired = _send_semaphore.acquire(timeout=10)
             if not acquired:
                 print(f'[Forward] Bỏ qua tin — _send_semaphore timeout (hệ thống bận)')
                 continue
             try:
-                ok = tg_run(_tg_send_item(dest, it, caption))
+                ok = tg_run(_tg_send_item(dest, it, caption, topic_id=topic_id))
             except Exception as e:
                 print(f'[Forward] tg_run lỗi: {e}')
                 ok = False
             finally:
-                _send_semaphore.release()  # luôn release dù lỗi
+                _send_semaphore.release()
             if ok:
                 total_sent += 1
             # Delay chống flood Telegram (0.3s đủ cho text, media cần nhiều hơn)
@@ -2844,6 +2890,7 @@ class HttpHandler(BaseHTTPRequestHandler):
                     all_results.append({'title': ch.get('name','?'), 'ok': False, 'error': 'Thiếu username kênh đích'})
                     continue
                 channel_name = ch.get('name', dest)
+                topic_id     = ch.get('topic_id') or None
                 for it in items_raw:
                     feed_url = it.get('feedUrl', '')
                     # Ưu tiên show_link từ client gửi lên
@@ -2877,7 +2924,7 @@ class HttpHandler(BaseHTTPRequestHandler):
                         imgs, _ = extract_media(it.get('desc',''))
                         send_item['_rss_media_url'] = imgs[0] if imgs else None
                     try:
-                        ok = tg_run(_tg_send_item(dest, send_item, caption))
+                        ok = tg_run(_tg_send_item(dest, send_item, caption, topic_id=topic_id))
                         all_results.append({'title': it.get('title',''), 'ok': ok, 'error': '' if ok else 'Gửi thất bại'})
                     except RuntimeError as e:
                         all_results.append({'title': it.get('title',''), 'ok': False, 'error': str(e)})

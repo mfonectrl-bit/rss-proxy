@@ -706,17 +706,6 @@
       "history_limit": 5
     },
     {
-      "url": "https://t.me/zakup_control",
-      "name": "Контрольная закупка",
-      "category": "Sức khỏe",
-      "show_link": true,
-      "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
-      "history_limit": 5
-    },
-    {
       "url": "https://t.me/medicinevideoss",
       "name": "Internal Medicine Videos & books",
       "category": "Sức khỏe",

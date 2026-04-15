@@ -3,13 +3,9 @@
     {
       "url": "https://t.me/vnwallstreet",
       "name": "VN Wall Street",
-      "category": "Tài chính",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        1,
-        3
-      ],
+      "target_channels": [],
       "history_limit": 20
     },
     {

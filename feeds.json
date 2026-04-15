@@ -51,12 +51,9 @@
     {
       "url": "@InsiderPaper",
       "name": "Inside Paper",
-      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {

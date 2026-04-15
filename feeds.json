@@ -751,7 +751,7 @@
       "history_limit": 5
     },
     {
-      "url": "https://www.reuters.com/business/rss",
+      "url": "https://news.google.com/rss/search?q=site%3Areuters.com&hl=en-US&gl=US&ceid=US%3Aen",
       "name": "Reuters Business",
       "category": "Sức khỏe",
       "show_link": true,

@@ -630,12 +630,9 @@
     {
       "url": "https://news.google.com/rss/search?q=Reuters+technology&hl=en-US&gl=US&ceid=US:en",
       "name": "Reuters Tech",
-      "category": "Sức khỏe",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {

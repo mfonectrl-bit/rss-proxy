@@ -258,12 +258,9 @@
     {
       "url": "https://t.me/DrMikeYeadon",
       "name": "Dr Mike Yeadon",
-      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {

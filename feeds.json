@@ -323,12 +323,9 @@
     {
       "url": "https://t.me/covid_vaccine_injuries",
       "name": "Covid Vaccine Injuries",
-      "category": "Sức khỏe",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {

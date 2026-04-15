@@ -749,6 +749,17 @@
         3
       ],
       "history_limit": 5
+    },
+    {
+      "url": "https://news.google.com/rss/search?q=technology+OR+AI+OR+robotics+OR+semiconductor&hl=en-US&gl=US&ceid=US:en",
+      "name": "Google News Tech",
+      "category": "Sức khỏe",
+      "show_link": true,
+      "auto_fwd": false,
+      "target_channels": [
+        0
+      ],
+      "history_limit": 20
     }
   ],
   "auto_fwd": true,

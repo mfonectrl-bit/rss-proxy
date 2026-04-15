@@ -91,12 +91,9 @@
     {
       "url": "https://t.me/naturalcuresforbody",
       "name": "Natural Cures",
-      "category": "Sức khỏe",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        2
-      ],
+      "target_channels": [],
       "history_limit": 20
     },
     {

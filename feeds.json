@@ -881,14 +881,6 @@
         0
       ],
       "history_limit": 5
-    },
-    {
-      "url": "@rtnews",
-      "name": "RT News",
-      "show_link": true,
-      "auto_fwd": true,
-      "target_channels": [],
-      "history_limit": 5
     }
   ],
   "auto_fwd": true,

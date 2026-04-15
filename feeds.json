@@ -275,12 +275,9 @@
     {
       "url": "https://t.me/ZFoundation",
       "name": "Zelenko Freedom Foundation",
-      "category": "Sức khỏe",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {

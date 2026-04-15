@@ -236,9 +236,12 @@
     {
       "url": "https://t.me/DrPaulMarik",
       "name": "Dr. Paul Marik",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        0
+      ],
       "history_limit": 10
     },
     {

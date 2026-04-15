@@ -577,9 +577,12 @@
     {
       "url": "https://t.me/COVID19VACCINEVICTIMSANDFAMILIES",
       "name": "COVID19 VACCINE VICTIMS",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        0
+      ],
       "history_limit": 5
     },
     {

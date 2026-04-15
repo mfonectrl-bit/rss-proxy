@@ -445,9 +445,12 @@
     {
       "url": "https://t.me/covid_vaccine_injuries",
       "name": "Covid Vaccine Injuries",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        0
+      ],
       "history_limit": 5
     },
     {

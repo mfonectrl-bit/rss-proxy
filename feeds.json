@@ -171,12 +171,9 @@
     {
       "url": "https://t.me/DrPaulMarik",
       "name": "Dr. Paul Marik",
-      "category": "Sức khỏe",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "target_channels": [],
       "history_limit": 10
     },
     {

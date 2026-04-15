@@ -760,6 +760,17 @@
         0
       ],
       "history_limit": 5
+    },
+    {
+      "url": "https://feeds.bloomberg.com/markets/news.rss",
+      "name": "Bloomberg",
+      "category": "Sức khỏe",
+      "show_link": true,
+      "auto_fwd": true,
+      "target_channels": [
+        1
+      ],
+      "history_limit": 5
     }
   ],
   "auto_fwd": true,

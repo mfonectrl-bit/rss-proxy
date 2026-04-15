@@ -770,6 +770,13 @@
       "name": "➖",
       "type": "master",
       "category_filter": "Sức khỏe"
+    },
+    {
+      "username": "@Global_News_Hubs",
+      "name": "𝔊𝔩𝔬𝔟𝔞𝔩 ⁿᵉʷˢ ʰᵘᵇˢ",
+      "type": "group",
+      "category_filter": "Khác",
+      "topic_id": 4
     }
   ],
   "translate_engine": "deepl"

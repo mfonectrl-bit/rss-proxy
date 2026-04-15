@@ -610,17 +610,23 @@
     {
       "url": "https://t.me/Medienzensur",
       "name": "Das darfst du nicht sehen",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        0
+      ],
       "history_limit": 5
     },
     {
       "url": "https://t.me/COVID19Up",
       "name": "COVID-19 Up",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        0
+      ],
       "history_limit": 5
     },
     {

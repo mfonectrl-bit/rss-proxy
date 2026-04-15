@@ -753,9 +753,12 @@
     {
       "url": "https://news.google.com/rss/search?q=technology+OR+AI+OR+robotics+OR+semiconductor&hl=en-US&gl=US&ceid=US:en",
       "name": "Google News Tech",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        0
+      ],
       "history_limit": 5
     },
     {

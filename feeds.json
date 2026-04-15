@@ -643,9 +643,12 @@
     {
       "url": "https://t.me/ExiledMedicFabian",
       "name": "Exiled Medic Unzensiert",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        0
+      ],
       "history_limit": 5
     },
     {

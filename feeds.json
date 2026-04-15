@@ -27,13 +27,9 @@
     {
       "url": "@no100sin",
       "name": "Kênh Hàn Quốc TG",
-      "category": "Xã hội",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0,
-        1
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {

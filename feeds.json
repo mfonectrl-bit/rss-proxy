@@ -291,56 +291,41 @@
     {
       "url": "https://t.me/RobertKennedyQ",
       "name": "Robert F. Kennedy Jr.",
-      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/AmericasDoctors",
       "name": "America’s Doctors",
-      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/NaturalNewsMedia",
       "name": "Natural News",
-      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/DrJohnCampbell",
       "name": "Dr. John Campbell",
-      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/realpetermcculloughmd",
       "name": "Dr Peter McCullough™ Channel",
-      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {

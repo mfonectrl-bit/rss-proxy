@@ -181,17 +181,23 @@
     {
       "url": "https://t.me/Edward_Dowd",
       "name": "Edward Dowd",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        0
+      ],
       "history_limit": 5
     },
     {
       "url": "https://t.me/naomirwolf",
       "name": "Dr Naomi R Wolf",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        0
+      ],
       "history_limit": 5
     },
     {

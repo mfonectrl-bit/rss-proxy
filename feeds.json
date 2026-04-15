@@ -547,23 +547,17 @@
     {
       "url": "https://news.google.com/rss/search?q=technology+OR+AI+OR+robotics+OR+semiconductor&hl=en-US&gl=US&ceid=US:en",
       "name": "Google News Tech",
-      "category": "Sức khỏe",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {
       "url": "https://feeds.bloomberg.com/markets/news.rss",
       "name": "Bloomberg",
-      "category": "Sức khỏe",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {

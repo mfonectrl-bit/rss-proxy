@@ -347,12 +347,9 @@
     {
       "url": "https://t.me/free_energyyy",
       "name": "FREE ENERGY",
-      "category": "Sức khỏe",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {

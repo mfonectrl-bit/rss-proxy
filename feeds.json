@@ -606,23 +606,17 @@
     {
       "url": "https://nitter.net/firstsquawk/rss",
       "name": "FirstQuawk",
-      "category": "Sức khỏe",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {
       "url": "https://nitter.net/zerohedge/rss",
       "name": "Zerohedge",
-      "category": "Sức khỏe",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {

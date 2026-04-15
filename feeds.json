@@ -863,9 +863,12 @@
     {
       "url": "https://news.google.com/rss/search?q=Reuters+technology&hl=en-US&gl=US&ceid=US:en",
       "name": "Reuters Tech",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        1
+      ],
       "history_limit": 5
     },
     {

@@ -614,23 +614,17 @@
     {
       "url": "https://nitter.net/zerohedge/rss",
       "name": "Zerohedge",
-      "category": "Sức khỏe",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {
       "url": "https://news.google.com/rss/search?q=Reuters+world&hl=en-US&gl=US&ceid=US:en",
       "name": "Reuters World",
-      "category": "Sức khỏe",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {

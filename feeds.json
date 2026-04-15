@@ -137,9 +137,12 @@
     {
       "url": "https://t.me/P_McCulloughMD",
       "name": "Peter A. McCullough, MD, MPH™",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        0
+      ],
       "history_limit": 5
     },
     {

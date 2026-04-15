@@ -251,12 +251,9 @@
     {
       "url": "https://t.me/AseemMalhotra",
       "name": "Dr. Aseem Malhotra",
-      "category": "Sức khỏe",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {

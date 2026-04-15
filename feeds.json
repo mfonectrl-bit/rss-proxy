@@ -379,17 +379,23 @@
     {
       "url": "https://t.me/ZFoundation",
       "name": "Zelenko Freedom Foundation",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        0
+      ],
       "history_limit": 5
     },
     {
       "url": "https://t.me/LeeMerritt",
       "name": "Dr. Lee Merritt",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        0
+      ],
       "history_limit": 5
     },
     {

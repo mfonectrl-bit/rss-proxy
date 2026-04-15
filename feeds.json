@@ -793,6 +793,17 @@
         1
       ],
       "history_limit": 5
+    },
+    {
+      "url": "https://feeds.bbci.co.uk/news/world/rss.xml",
+      "name": "BBC News",
+      "category": "Sức khỏe",
+      "show_link": true,
+      "auto_fwd": false,
+      "target_channels": [
+        1
+      ],
+      "history_limit": 5
     }
   ],
   "auto_fwd": true,

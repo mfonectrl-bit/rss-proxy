@@ -665,9 +665,12 @@
     {
       "url": "https://t.me/INSIDERR_POLITIC",
       "name": "INSIDER | News | Politics | USA",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        1
+      ],
       "history_limit": 5
     },
     {

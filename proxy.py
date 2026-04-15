@@ -1017,7 +1017,7 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
 
 <!-- Modal thêm/sửa feed -->
 <div class="modal-bg" id="modal">
-<div class="modal">
+<div class="modal" style="max-height:90vh;overflow-y:auto">
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
   <h2 id="modal-title" style="margin-bottom:0">Thêm feed</h2>
   <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;background:#f0fdf4;border:1px solid #bbf7d0;padding:4px 10px;border-radius:8px" id="auto-fwd-toggle-wrap">
@@ -1027,12 +1027,18 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
 </div>
 <input type="text" id="new-name" placeholder="Tên feed">
 <input type="text" id="new-url" placeholder="URL RSS hoặc @username / t.me/channel">
-<select id="new-category"></select>
 <div id="feed-type-hint" style="font-size:11px;color:#6366f1;margin-bottom:8px;display:none">⚡ Nguồn Telegram — sẽ dùng Telethon</div>
-<label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:10px;cursor:pointer">
-  <input type="checkbox" id="new-show-link" checked style="width:16px;height:16px;cursor:pointer">
-  Hiển thị link "Xem bài gốc →" khi forward
-</label>
+<!-- Checkboxes hàng ngang -->
+<div style="display:flex;gap:16px;margin-bottom:10px;flex-wrap:wrap">
+  <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+    <input type="checkbox" id="new-show-link" checked style="width:15px;height:15px;cursor:pointer">
+    Hiển thị link gốc
+  </label>
+  <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+    <input type="checkbox" id="new-translate-link" checked style="width:15px;height:15px;cursor:pointer">
+    Dịch nguồn (Google Translate)
+  </label>
+</div>
 <div style="margin-bottom:10px">
   <label style="font-size:12px;color:#555;font-weight:600;display:block;margin-bottom:4px">Số bài lịch sử lấy về khi khởi động:</label>
   <select id="new-history-limit" style="width:100%;padding:7px;border:1px solid #d0d0c8;border-radius:8px;font-size:13px">
@@ -1042,10 +1048,10 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
     <option value="0">Không lấy lịch sử</option>
   </select>
 </div>
-<!-- Dropdown chọn kênh đích -->
-<div id="feed-channel-wrap" style="margin-bottom:10px;display:none">
-  <div style="font-size:12px;color:#555;margin-bottom:6px;font-weight:600">Forward tới kênh:</div>
-  <div id="feed-channel-list" style="border:1px solid #e0e0d8;border-radius:8px;max-height:140px;overflow-y:auto;padding:4px 0;background:#fff"></div>
+<!-- Đích forward — hiển thị khi có kênh -->
+<div id="feed-dest-wrap" style="display:none;margin-bottom:10px">
+  <div style="font-size:12px;color:#555;font-weight:600;margin-bottom:6px">Đích forward:</div>
+  <div id="feed-dest-list" style="border:1px solid #e0e0d8;border-radius:8px;background:#fff;padding:4px 0"></div>
 </div>
 <div class="modal-btns">
 <button onclick="closeModal()">Hủy</button>
@@ -1057,33 +1063,13 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
 <!-- Modal quản lý kênh Telegram -->
 <div class="modal-bg" id="channel-modal">
 <div class="modal">
-<h2>Quản lý Kênh Telegram</h2>
+<h2>Quản lý Kênh / Group Telegram</h2>
 <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:12px;color:#1e40af">
-  ⚡ Hệ thống dùng <b>Telethon</b> để gửi — nhập <b>@username</b> hoặc <b>-100xxx</b> của kênh đích. Không cần Bot Token.
+  ⚡ Dùng <b>Telethon</b> để gửi — nhập <b>@username</b> hoặc <b>-100xxx</b>. Topic IDs được cấu hình trong từng feed.
 </div>
 <select id="ch-select-modal" onchange="loadChannelToForm(this.value)"></select>
-<input type="text" id="ch-username" placeholder="@kênh_đích hoặc -100xxxxxxxxx">
-<input type="text" id="ch-name" placeholder="Tên hiển thị (tuỳ chọn)">
-<select id="ch-type" onchange="onChTypeChange(this.value)">
-<option value="master">Master (Tất cả tin)</option>
-<option value="category">Category (theo chủ đề)</option>
-<option value="group">Group có Topics</option>
-</select>
-<select id="ch-category"></select>
-<!-- Topic ID — chỉ hiện khi type = group -->
-<div id="ch-topic-wrap" style="display:none;margin-bottom:.6rem">
-  <div style="font-size:12px;color:#555;margin-bottom:4px;font-weight:600">Topic ID trong Group:</div>
-  <input type="number" id="ch-topic-id" placeholder="Ví dụ: 123 (lấy từ link topic trong group)" style="width:100%;padding:9px;border:1px solid #d0d0c8;border-radius:8px;font-size:14px;margin-bottom:0">
-  <div style="font-size:11px;color:#888;margin-top:3px">Cách lấy: mở topic → copy link → số cuối trong link là Topic ID</div>
-</div>
-<div style="margin:10px 0;padding:10px;background:#f9f9f9;border-radius:8px">
-<div style="font-size:12px;font-weight:600;margin-bottom:8px">Quản lý chủ đề:</div>
-<div id="category-list"></div>
-<div style="display:flex;gap:6px;margin-top:8px">
-<input type="text" id="new-category-input" placeholder="Tên chủ đề mới" style="flex:1;padding:6px;border:1px solid #ddd;border-radius:6px;font-size:12px">
-<button onclick="addCategory()" class="btn-sm" style="padding:6px 12px">+ Thêm</button>
-</div>
-</div>
+<input type="text" id="ch-username" placeholder="@kênh_đích hoặc -100xxxxxxxxx (Group ID)">
+<input type="text" id="ch-name" placeholder="Tên hiển thị">
 <div class="modal-btns">
 <button id="btn-ch-del" onclick="deleteChannel()" style="display:none">Xóa</button>
 <button class="btn-ok" onclick="saveTgSettings()">Lưu</button>
@@ -1145,10 +1131,10 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
 
 <!-- Modal forward -->
 <div class="modal-bg" id="fwd-modal">
-<div class="modal">
-<h2>Chọn kênh gửi</h2>
-<div style="font-size:11px;color:#888;margin-bottom:8px">Kênh Group có Topics: chọn topic muốn gửi vào</div>
-<div id="fwd-ch-list" style="max-height:280px;overflow-y:auto;margin:10px 0"></div>
+<div class="modal" style="max-height:90vh;overflow-y:auto">
+<h2>Chọn đích gửi</h2>
+<div style="font-size:11px;color:#888;margin-bottom:8px">Group: nhập Topic IDs phân cách bằng dấu phẩy (để trống = gửi vào group không qua topic)</div>
+<div id="fwd-ch-list" style="max-height:320px;overflow-y:auto;margin:8px 0"></div>
 <div class="modal-btns">
 <button onclick="document.getElementById('fwd-modal').classList.remove('open')">Hủy</button>
 <button class="btn-ok" onclick="forwardSelected()">Gửi</button>
@@ -1169,13 +1155,11 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
 
 <script>
 const WS_URL=(location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws';
-const DEFAULT_FEEDS=[{name:'VN Wall Street',url:'https://tg.i-c-a.su/rss/vnwallstreet',category:'Tài chính'}];
-const DEFAULT_CATEGORIES=['Sức khỏe','Tài chính','Xã hội','Công nghệ','Giải trí','Khác'];
+const DEFAULT_FEEDS=[{name:'VN Wall Street',url:'https://tg.i-c-a.su/rss/vnwallstreet'}];
 const PAGE_SIZE = 30;
 
 let feeds=JSON.parse(localStorage.getItem('rss_feeds')||'null')||DEFAULT_FEEDS;
 let tgChannels=JSON.parse(localStorage.getItem('tg_channels')||'null')||[];
-let categories=JSON.parse(localStorage.getItem('categories')||'null')||DEFAULT_CATEGORIES;
 let allItems=[],newBadges={},filterUrl=null,searchQ='',ws=null,wsReady=false,shownCount=PAGE_SIZE;
 let translateOn=JSON.parse(localStorage.getItem('translate_on')??'true');
 let translateEngine=localStorage.getItem('translate_engine')||'deepl';
@@ -1188,7 +1172,6 @@ let settingsSent=false; // global — chỉ gửi WS settings 1 lần
 
 function saveFeeds(){localStorage.setItem('rss_feeds',JSON.stringify(feeds));}
 function saveTgChannels(){localStorage.setItem('tg_channels',JSON.stringify(tgChannels));}
-function saveCategories(){localStorage.setItem('categories',JSON.stringify(categories));}
 
 function setTranslateEngine(val){
     translateEngine=val;
@@ -1321,36 +1304,49 @@ document.getElementById('new-url').addEventListener('input',function(){
     hint.style.display=isTgSource(this.value.trim())?'block':'none';
 });
 
-// --- Category ---
-function renderCategoryList(){
-    const list=document.getElementById('category-list');
-    list.innerHTML=categories.map((cat,idx)=>`
-        <div class="category-item">
-            <span>${cat}</span>
-            ${categories.length>1?`<button onclick="deleteCategory(${idx})">Xóa</button>`:''}
-        </div>
-    `).join('');
-    const selects=['new-category','ch-category'];
-    selects.forEach(id=>{
-        const sel=document.getElementById(id);
-        if(sel) sel.innerHTML=categories.map(c=>`<option value="${c}">${c}</option>`).join('');
+// --- Render destination list inside feed modal ---
+// destinations = [{ch_idx, topic_ids_str}] — lưu trong feed.destinations
+function renderFeedDestList(savedDests){
+    const wrap=document.getElementById('feed-dest-wrap');
+    const list=document.getElementById('feed-dest-list');
+    if(!tgChannels.length){wrap.style.display='none';return;}
+    wrap.style.display='block';
+    // savedDests là array {ch_idx, topic_ids} hoặc legacy array of numbers
+    const destMap={};
+    if(savedDests){
+        savedDests.forEach(d=>{
+            if(typeof d==='number') destMap[d]={checked:true,topic_ids:''};
+            else destMap[d.ch_idx]={checked:true,topic_ids:(d.topic_ids||'')};
+        });
+    }
+    list.innerHTML=tgChannels.map((ch,idx)=>{
+        const d=destMap[idx]||{checked:false,topic_ids:''};
+        const isGroup=ch.is_group;
+        return `<div style="padding:7px 10px;border-bottom:1px solid #f0f0e8">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+                <input type="checkbox" class="feed-dest-cb" data-idx="${idx}" ${d.checked?'checked':''} style="width:15px;height:15px">
+                <span style="font-weight:500">${ch.name}</span>
+                <span style="color:#aaa;font-size:11px">${isGroup?'Group':'Channel'} · ${ch.username}</span>
+            </label>
+            ${isGroup?`<div style="margin-top:5px;padding-left:23px;display:flex;align-items:center;gap:6px">
+                <span style="font-size:11px;color:#555;white-space:nowrap">Topic IDs:</span>
+                <input type="text" class="feed-dest-topics" data-idx="${idx}" value="${d.topic_ids||''}"
+                    placeholder="VD: 123, 456 — để trống = gửi vào group (không topic)"
+                    style="flex:1;padding:4px 7px;border:1px solid #d0d0c8;border-radius:6px;font-size:12px">
+            </div>`:''}
+        </div>`;
+    }).join('');
+}
+
+function getFeedDests(){
+    const results=[];
+    document.querySelectorAll('.feed-dest-cb:checked').forEach(cb=>{
+        const idx=parseInt(cb.dataset.idx);
+        const topicInput=document.querySelector(`.feed-dest-topics[data-idx="${idx}"]`);
+        const topic_ids=topicInput?topicInput.value.trim():'';
+        results.push({ch_idx:idx,topic_ids});
     });
-}
-
-function addCategory(){
-    const input=document.getElementById('new-category-input');
-    const name=input.value.trim();
-    if(!name){alert('Nhập tên chủ đề');return;}
-    if(categories.includes(name)){alert('Chủ đề đã tồn tại');return;}
-    categories.push(name);saveCategories();renderCategoryList();input.value='';
-    wsSend({type:'categories',categories});
-}
-
-function deleteCategory(idx){
-    if(categories.length<=1){alert('Phải có ít nhất 1 chủ đề');return;}
-    if(!confirm('Xóa chủ đề "'+categories[idx]+'"?'))return;
-    categories.splice(idx,1);saveCategories();renderCategoryList();
-    wsSend({type:'categories',categories});
+    return results;
 }
 
 // --- Channel Manager ---
@@ -1359,34 +1355,23 @@ function renderChannelManager(){
     select.innerHTML='<option value="-1">-- Tạo mới --</option>';
     tgChannels.forEach((ch,idx)=>{
         const opt=document.createElement('option');
-        opt.value=idx;opt.textContent=`${idx+1}. ${ch.name} (${ch.type})`;
+        opt.value=idx;opt.textContent=`${idx+1}. ${ch.name} (${ch.is_group?'Group':'Channel'})`;
         select.appendChild(opt);
     });
     if(tgChannels.length>0) loadChannelToForm(0);
-    renderCategoryList();
-}
-
-function onChTypeChange(val){
-    document.getElementById('ch-topic-wrap').style.display=(val==='group')?'block':'none';
+    else loadChannelToForm(-1);
 }
 
 function loadChannelToForm(idx){
     selectedChannelIndex=parseInt(idx);
-    const form={username:document.getElementById('ch-username'),
-        name:document.getElementById('ch-name'),type:document.getElementById('ch-type'),
-        category:document.getElementById('ch-category'),topicId:document.getElementById('ch-topic-id')};
     if(selectedChannelIndex>=0&&tgChannels[selectedChannelIndex]){
         const ch=tgChannels[selectedChannelIndex];
-        form.username.value=ch.username||ch.channel_id||'';
-        form.name.value=ch.name;form.type.value=ch.type;
-        form.category.value=ch.category_filter||'';
-        form.topicId.value=ch.topic_id||'';
-        onChTypeChange(ch.type);
+        document.getElementById('ch-username').value=ch.username||'';
+        document.getElementById('ch-name').value=ch.name||'';
         document.getElementById('btn-ch-del').style.display='inline-block';
     } else {
-        form.username.value='';form.name.value='';
-        form.type.value='master';form.category.value='';form.topicId.value='';
-        onChTypeChange('master');
+        document.getElementById('ch-username').value='';
+        document.getElementById('ch-name').value='';
         document.getElementById('btn-ch-del').style.display='none';
     }
 }
@@ -1394,14 +1379,11 @@ function loadChannelToForm(idx){
 function saveTgSettings(){
     const username=document.getElementById('ch-username').value.trim();
     const name=document.getElementById('ch-name').value.trim()||username;
-    const type=document.getElementById('ch-type').value;
-    const category=document.getElementById('ch-category').value;
-    const topicIdRaw=document.getElementById('ch-topic-id').value.trim();
-    const topic_id=(type==='group'&&topicIdRaw)?parseInt(topicIdRaw)||null:null;
     if(!username){alert('Nhập @username hoặc channel ID');return;}
-    const normUsername = (!username.startsWith('@') && !username.startsWith('-') && !/^\d/.test(username))
-        ? '@'+username : username;
-    const chObj={username:normUsername,name,type,category_filter:category,topic_id};
+    const normUsername=(!username.startsWith('@')&&!username.startsWith('-')&&!/^\d/.test(username))?'@'+username:username;
+    // Auto-detect group: ID số âm (-100xxx) là group/supergroup
+    const is_group=normUsername.startsWith('-');
+    const chObj={username:normUsername,name,is_group};
     if(selectedChannelIndex>=0){
         tgChannels[selectedChannelIndex]=chObj;
     } else {
@@ -1440,22 +1422,35 @@ function updateFwdBar(){
 }
 
 function openForwardModal(){
+    // Lấy feed configs của các tin đang được chọn để pre-check đúng đích
+    const selectedItems=allItems.filter(it=>selected.has(it.guid));
+    // Gom tất cả destinations đã config trong các feed được chọn
+    const preDestMap={};  // ch_idx -> topic_ids (từ config feed)
+    selectedItems.forEach(it=>{
+        const feedCfg=feeds.find(f=>f.url===it.feedUrl);
+        if(feedCfg&&feedCfg.destinations){
+            feedCfg.destinations.forEach(d=>{
+                const idx=typeof d==='number'?d:d.ch_idx;
+                const topics=typeof d==='number'?'':(d.topic_ids||'');
+                if(!preDestMap[idx]) preDestMap[idx]={checked:true,topic_ids:topics};
+            });
+        }
+    });
     const list=document.getElementById('fwd-ch-list');
     list.innerHTML=tgChannels.map((ch,idx)=>{
-        const typeLabel=ch.type==='master'?'Master':ch.type==='group'?'Group':'Category: '+ch.category_filter;
-        const topicRow=ch.type==='group'?`
-            <div style="margin-top:5px;display:flex;align-items:center;gap:6px;padding-left:22px">
-                <label style="font-size:11px;color:#555">Topic ID:</label>
-                <input type="number" id="fwd-topic-${idx}" value="${ch.topic_id||''}"
-                    placeholder="mặc định (${ch.topic_id||'chưa cấu hình'})"
-                    style="width:120px;padding:3px 6px;border:1px solid #d0d0c8;border-radius:5px;font-size:12px">
-                <span style="font-size:11px;color:#888">để trống = dùng Topic ID đã cấu hình</span>
-            </div>`:'';
-        return `<div style="padding:6px 4px;border-bottom:1px solid #f0f0e8">
+        const pre=preDestMap[idx]||{checked:false,topic_ids:''};
+        return `<div style="padding:7px 10px;border-bottom:1px solid #f0f0e8">
             <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
-                <input type="checkbox" class="fwd-ch-cb" value="${idx}" checked style="width:15px;height:15px">
-                <span><b>${ch.name}</b> <span style="color:#aaa;font-size:11px">(${typeLabel})</span></span>
-            </label>${topicRow}
+                <input type="checkbox" class="fwd-ch-cb" data-idx="${idx}" ${pre.checked?'checked':''} style="width:15px;height:15px">
+                <span style="font-weight:500">${ch.name}</span>
+                <span style="color:#aaa;font-size:11px">${ch.is_group?'Group':'Channel'} · ${ch.username}</span>
+            </label>
+            ${ch.is_group?`<div style="margin-top:5px;padding-left:23px;display:flex;align-items:center;gap:6px">
+                <span style="font-size:11px;color:#555;white-space:nowrap">Topic IDs:</span>
+                <input type="text" class="fwd-topic-inp" data-idx="${idx}" value="${pre.topic_ids||''}"
+                    placeholder="VD: 123, 456 — để trống = không topic"
+                    style="flex:1;padding:4px 7px;border:1px solid #d0d0c8;border-radius:6px;font-size:12px">
+            </div>`:''}
         </div>`;
     }).join('');
     document.getElementById('fwd-modal').classList.add('open');
@@ -1463,31 +1458,31 @@ function openForwardModal(){
 
 async function forwardSelected(){
     const checkboxes=document.querySelectorAll('#fwd-ch-list .fwd-ch-cb:checked');
-    const channelIndices=Array.from(checkboxes).map(cb=>parseInt(cb.value));
-    if(channelIndices.length===0){alert('Chọn ít nhất 1 kênh');return;}
+    if(checkboxes.length===0){alert('Chọn ít nhất 1 đích gửi');return;}
+    // Build destinations list
+    const destinations=Array.from(checkboxes).map(cb=>{
+        const idx=parseInt(cb.dataset.idx);
+        const ch=tgChannels[idx];
+        const topicInp=document.querySelector(`.fwd-topic-inp[data-idx="${idx}"]`);
+        const topic_ids=topicInp?topicInp.value.trim():'';
+        return {username:ch.username,name:ch.name,is_group:ch.is_group,topic_ids};
+    });
     const items=allItems.filter(it=>selected.has(it.guid)).map(it=>{
         const feedCfg=feeds.find(f=>f.url===it.feedUrl)||{};
         return {guid:it.guid,title:it.title,desc:it.desc,link:it.link,
                 category:it.category,feedUrl:it.feedUrl,
-                show_link:feedCfg.show_link!==false};
-    });
-    // Build channel list — với group thì đọc topic_id từ input (nếu có), fallback config
-    const channelsToSend=channelIndices.map(i=>{
-        const ch={...tgChannels[i]};
-        if(ch.type==='group'){
-            const inp=document.getElementById('fwd-topic-'+i);
-            const val=inp?inp.value.trim():'';
-            ch.topic_id=val?parseInt(val):(ch.topic_id||null);
-        }
-        return ch;
+                show_link:feedCfg.show_link!==false,
+                translate_link:feedCfg.translate_link!==false};
     });
     try{
-        const r=await fetch('/tg_forward',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channels:channelsToSend,items})});
+        const r=await fetch('/tg_forward',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({destinations,items})});
         const data=await r.json();
-        document.getElementById('result-list').innerHTML=data.results.map(r=>`<div style="padding:7px;background:${r.ok?'#f0fdf4':'#fef2f2'}">${r.ok?'✓':'✗'} ${r.title||'Gửi'}${r.error?' - '+r.error:''}</div>`).join('');
+        document.getElementById('result-list').innerHTML=data.results.map(r=>
+            `<div style="padding:7px;background:${r.ok?'#f0fdf4':'#fef2f2'}">${r.ok?'✓':'✗'} ${r.title||'Gửi'}${r.error?' — '+r.error:''}</div>`
+        ).join('');
         document.getElementById('result-modal').classList.add('open');
         selected.clear();updateFwdBar();
-        document.querySelectorAll('input[type=checkbox]').forEach(cb=>cb.checked=false);
         document.querySelectorAll('.item.selected').forEach(el=>el.classList.remove('selected'));
     }catch(e){alert('Lỗi: '+e.message);}
     document.getElementById('fwd-modal').classList.remove('open');
@@ -1560,15 +1555,15 @@ function openEditFeed(i){
     editFeedIndex=i;const f=feeds[i];
     document.getElementById('new-name').value=f.name;
     document.getElementById('new-url').value=f.url;
-    document.getElementById('new-category').value=f.category||'Khác';
     document.getElementById('new-show-link').checked=f.show_link!==false;
+    document.getElementById('new-translate-link').checked=f.translate_link!==false;
     document.getElementById('new-auto-fwd').checked=f.auto_fwd===true;
     document.getElementById('new-history-limit').value=String(f.history_limit!=null?f.history_limit:20);
     document.getElementById('modal-title').textContent='Sửa feed';
     document.getElementById('btn-add-feed').textContent='Cập nhật';
     const hint=document.getElementById('feed-type-hint');
     hint.style.display=isTgSource(f.url)?'block':'none';
-    renderFeedChannelList(f.target_channels||[]);
+    renderFeedDestList(f.destinations||[]);
     document.getElementById('modal').classList.add('open');
 }
 
@@ -1576,14 +1571,14 @@ function openModal(){
     editFeedIndex=-1;
     document.getElementById('new-name').value='';
     document.getElementById('new-url').value='';
-    document.getElementById('new-category').value=categories[0]||'Khác';
     document.getElementById('new-show-link').checked=true;
+    document.getElementById('new-translate-link').checked=true;
     document.getElementById('new-auto-fwd').checked=false;
     document.getElementById('new-history-limit').value='20';
     document.getElementById('modal-title').textContent='Thêm feed';
     document.getElementById('btn-add-feed').textContent='Thêm';
     document.getElementById('feed-type-hint').style.display='none';
-    renderFeedChannelList([]);
+    renderFeedDestList([]);
     document.getElementById('modal').classList.add('open');
 }
 function closeModal(){document.getElementById('modal').classList.remove('open');}
@@ -1591,20 +1586,20 @@ function closeModal(){document.getElementById('modal').classList.remove('open');
 function addFeed(){
     const name=document.getElementById('new-name').value.trim(),
           url=document.getElementById('new-url').value.trim(),
-          cat=document.getElementById('new-category').value,
           show_link=document.getElementById('new-show-link').checked,
+          translate_link=document.getElementById('new-translate-link').checked,
           auto_fwd=document.getElementById('new-auto-fwd').checked,
           history_limit=parseInt(document.getElementById('new-history-limit').value)||20,
-          target_channels=getSelectedFeedChannels();
+          destinations=getFeedDests();
     if(!name||!url){alert('Nhập đủ tên và URL');return;}
-    const feedObj={name,url,category:cat,show_link,auto_fwd,target_channels,history_limit};
+    const feedObj={name,url,show_link,translate_link,auto_fwd,destinations,history_limit};
     if(editFeedIndex>=0){feeds[editFeedIndex]=feedObj;}
     else{feeds.push(feedObj);}
     saveFeeds();
     syncFeedsHttp();
     closeModal();
-    if(editFeedIndex<0) fetchAndMerge(url,name,cat,true);
-    else{allItems=allItems.filter(it=>it.feedUrl!==url);fetchAndMerge(url,name,cat,false);}
+    if(editFeedIndex<0) fetchAndMerge(url,name,'',true);
+    else{allItems=allItems.filter(it=>it.feedUrl!==url);fetchAndMerge(url,name,'',false);}
     refreshTelethonBadge();
     renderSidebar();renderStream();
 }
@@ -2133,7 +2128,8 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None):
 
             if group_msgs:
                 media_list = [m.media for m in group_msgs[:10]]
-                if len(caption) <= 1024:
+                if len(caption) <= 4096:
+                    # Caption trong giới hạn Telegram (4096 ký tự) — gửi 1 tin gồm media + caption
                     if len(media_list) == 1:
                         await tg_client.send_file(dest, media_list[0], caption=caption,
                                                   parse_mode='html', reply_to=thread_reply)
@@ -2141,6 +2137,7 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None):
                         await tg_client.send_file(dest, media_list, caption=caption,
                                                   parse_mode='html', reply_to=thread_reply)
                 else:
+                    # Caption quá dài (>4096) — gửi media trống, reply text riêng
                     if len(media_list) == 1:
                         sent = await tg_client.send_file(dest, media_list[0], caption='',
                                                          parse_mode='html', reply_to=thread_reply)
@@ -2159,10 +2156,12 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None):
             return True
 
         elif rss_media:
-            if len(caption) <= 1024:
+            if len(caption) <= 4096:
+                # Caption trong giới hạn Telegram (4096 ký tự) — gửi 1 tin gồm media + caption
                 await tg_client.send_file(dest, rss_media, caption=caption,
                                           parse_mode='html', reply_to=thread_reply)
             else:
+                # Caption quá dài (>4096) — gửi media trống, reply text riêng
                 sent = await tg_client.send_file(dest, rss_media, caption='',
                                                   parse_mode='html', reply_to=thread_reply)
                 reply_to = sent.id if not isinstance(sent, list) else sent[0].id

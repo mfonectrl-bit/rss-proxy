@@ -771,6 +771,17 @@
         1
       ],
       "history_limit": 5
+    },
+    {
+      "url": "https://www.cnbc.com/id/100003114/device/rss/rss.html",
+      "name": "CNBC",
+      "category": "Sức khỏe",
+      "show_link": true,
+      "auto_fwd": true,
+      "target_channels": [
+        1
+      ],
+      "history_limit": 5
     }
   ],
   "auto_fwd": true,

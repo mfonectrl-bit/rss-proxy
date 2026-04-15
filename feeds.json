@@ -691,7 +691,7 @@
       "show_link": true,
       "auto_fwd": true,
       "target_channels": [
-        1
+        0
       ],
       "history_limit": 5
     },

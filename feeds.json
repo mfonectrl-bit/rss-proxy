@@ -804,6 +804,17 @@
         1
       ],
       "history_limit": 5
+    },
+    {
+      "url": "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
+      "name": "NewYork Times",
+      "category": "Sức khỏe",
+      "show_link": true,
+      "auto_fwd": true,
+      "target_channels": [
+        1
+      ],
+      "history_limit": 5
     }
   ],
   "auto_fwd": true,

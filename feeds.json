@@ -861,7 +861,7 @@
       "history_limit": 5
     },
     {
-      "url": "https://www.reuters.com/world/?view=RSS",
+      "url": "https://news.google.com/rss/search?q=Reuters+world&hl=en-US&gl=US&ceid=US:en",
       "name": "Reuters World",
       "category": "Sức khỏe",
       "show_link": true,

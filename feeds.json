@@ -363,45 +363,33 @@
     {
       "url": "https://t.me/LauraAbolichannel",
       "name": "LauraAboli",
-      "category": "Sức khỏe",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/TruthAboutCOVID",
       "name": "TruthAboutCOVID",
-      "category": "Sức khỏe",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/unabhaengig_neutral",
       "name": "UNN",
-      "category": "Sức khỏe",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/NVIC_VaccineFreedom",
       "name": "NVIC.org",
-      "category": "Sức khỏe",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {

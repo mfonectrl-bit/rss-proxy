@@ -357,41 +357,56 @@
     {
       "url": "https://t.me/DrSimoneGold",
       "name": "Dr. Simone Gold",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        0
+      ],
       "history_limit": 5
     },
     {
       "url": "https://t.me/RobertKennedyChannell",
       "name": "Robert F. Kennedy Jr.",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        0
+      ],
       "history_limit": 5
     },
     {
       "url": "https://t.me/ZFoundation",
       "name": "Zelenko Freedom Foundation",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        0
+      ],
       "history_limit": 5
     },
     {
       "url": "https://t.me/LeeMerritt",
       "name": "Dr. Lee Merritt",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        0
+      ],
       "history_limit": 5
     },
     {
       "url": "https://t.me/MdBreathe",
       "name": "Mary Talley Bowden MD",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        0
+      ],
       "history_limit": 5
     },
     {

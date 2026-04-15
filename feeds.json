@@ -764,9 +764,12 @@
     {
       "url": "https://feeds.bloomberg.com/markets/news.rss",
       "name": "Bloomberg",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        1
+      ],
       "history_limit": 5
     },
     {

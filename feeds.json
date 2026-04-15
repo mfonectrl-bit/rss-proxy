@@ -390,12 +390,9 @@
     {
       "url": "https://t.me/LeeMerritt",
       "name": "Dr. Lee Merritt",
-      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {

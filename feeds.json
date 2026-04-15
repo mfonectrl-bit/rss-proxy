@@ -355,12 +355,9 @@
     {
       "url": "https://t.me/midwesterndoc",
       "name": "Midwestern Doctor",
-      "category": "Sức khỏe",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {

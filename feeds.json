@@ -35,12 +35,9 @@
     {
       "url": "@geopolitics_prime",
       "name": "Geopolitics",
-      "category": "Chính trị",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {

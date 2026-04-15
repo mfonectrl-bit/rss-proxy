@@ -368,23 +368,17 @@
     {
       "url": "https://t.me/RobertKennedyChannell",
       "name": "Robert F. Kennedy Jr.",
-      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/ZFoundation",
       "name": "Zelenko Freedom Foundation",
-      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {

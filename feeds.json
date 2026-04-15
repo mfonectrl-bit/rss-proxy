@@ -531,23 +531,17 @@
     {
       "url": "https://t.me/telegram",
       "name": "Telegram News",
-      "category": "Công nghệ",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/trendingapps",
       "name": "Trending Apps",
-      "category": "Công nghệ",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        3
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {

@@ -749,6 +749,17 @@
         3
       ],
       "history_limit": 5
+    },
+    {
+      "url": "https://news.google.com/rss/topics/CAAqIAgKIhpDQkFTRFFvSEwyMHZNRzFyZWhJQ1pXNG9BQVAB?hl=en-US&gl=US&ceid=US%3Aen",
+      "name": "Google News (AI)",
+      "category": "Sức khỏe",
+      "show_link": true,
+      "auto_fwd": false,
+      "target_channels": [
+        0
+      ],
+      "history_limit": 20
     }
   ],
   "auto_fwd": true,

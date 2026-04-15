@@ -59,12 +59,9 @@
     {
       "url": "@abcdnewstest",
       "name": "ABCD new test",
-      "category": "Khác",
       "show_link": false,
       "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {

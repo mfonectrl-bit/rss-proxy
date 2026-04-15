@@ -839,17 +839,6 @@
       "history_limit": 5
     },
     {
-      "url": "https://nitter.net/DeItaone/rss",
-      "name": "DeItaone",
-      "category": "Sức khỏe",
-      "show_link": true,
-      "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
-      "history_limit": 20
-    },
-    {
       "url": "https://nitter.net/zerohedge/rss",
       "name": "Zerohedge",
       "category": "Sức khỏe",

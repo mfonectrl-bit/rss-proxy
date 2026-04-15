@@ -139,23 +139,17 @@
     {
       "url": "https://t.me/naomirwolf",
       "name": "Dr Naomi R Wolf",
-      "category": "Sức khỏe",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/DrSimoneGold",
       "name": "Dr. Simone Gold",
-      "category": "Sức khỏe",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {

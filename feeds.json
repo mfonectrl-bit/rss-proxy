@@ -3,9 +3,12 @@
     {
       "url": "https://t.me/vnwallstreet",
       "name": "VN Wall Street",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        1
+      ],
       "history_limit": 20
     },
     {

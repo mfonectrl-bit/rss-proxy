@@ -163,12 +163,9 @@
     {
       "url": "https://t.me/ShankaraChetty",
       "name": "Dr. Shankara Chetty",
-      "category": "Sức khỏe",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "target_channels": [],
       "history_limit": 10
     },
     {

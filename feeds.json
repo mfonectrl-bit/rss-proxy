@@ -852,9 +852,12 @@
     {
       "url": "https://news.google.com/rss/search?q=Reuters+world&hl=en-US&gl=US&ceid=US:en",
       "name": "Reuters World",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        1
+      ],
       "history_limit": 5
     },
     {

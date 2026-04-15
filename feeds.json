@@ -817,6 +817,17 @@
       "history_limit": 5
     },
     {
+      "url": "https://nitter.net/zerohedge/rss",
+      "name": "Zerohedge",
+      "category": "Khác",
+      "show_link": true,
+      "auto_fwd": true,
+      "target_channels": [
+        1
+      ],
+      "history_limit": 5
+    },
+    {
       "url": "https://news.google.com/rss/search?q=Reuters+world&hl=en-US&gl=US&ceid=US:en",
       "name": "Reuters World",
       "category": "Khác",

@@ -159,9 +159,12 @@
     {
       "url": "https://t.me/dr_judymikovitss",
       "name": "Dr. Judy Mikovits",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        0
+      ],
       "history_limit": 5
     },
     {

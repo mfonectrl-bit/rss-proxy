@@ -874,9 +874,12 @@
     {
       "url": "https://t.me/antiilluminaten",
       "name": "Aktuell360",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        0
+      ],
       "history_limit": 5
     }
   ],

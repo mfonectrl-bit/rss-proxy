@@ -59,9 +59,13 @@
     {
       "url": "@uncut_news",
       "name": "Uncut News",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        0,
+        1
+      ],
       "history_limit": 5
     },
     {

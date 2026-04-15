@@ -755,7 +755,7 @@
       "name": "Google News Tech",
       "category": "Sức khỏe",
       "show_link": true,
-      "auto_fwd": true,
+      "auto_fwd": false,
       "target_channels": [
         0
       ],

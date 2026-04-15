@@ -299,12 +299,9 @@
     {
       "url": "https://t.me/BREAKINGHEADLINES",
       "name": "BREAKING HEADLINES",
-      "category": "Sức khỏe",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {

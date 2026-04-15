@@ -387,9 +387,12 @@
     {
       "url": "https://t.me/NVIC_VaccineFreedom",
       "name": "NVIC.org",
+      "category": "Sức khỏe",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        0
+      ],
       "history_limit": 5
     },
     {

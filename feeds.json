@@ -667,10 +667,8 @@
     {
       "username": "@Global_News_Hubs",
       "name": "𝔊𝔩𝔬𝔟𝔞𝔩 ⁿᵉʷˢ ʰᵘᵇˢ",
-      "type": "group",
-      "category_filter": "Khác",
-      "topic_id": 4
+      "is_group": false
     }
   ],
-  "translate_engine": "deepl"
+  "translate_engine": "google"
 }

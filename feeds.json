@@ -571,12 +571,9 @@
     {
       "url": "https://www.ft.com/rss/home/international",
       "name": "Financial Times",
-      "category": "Sức khỏe",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {

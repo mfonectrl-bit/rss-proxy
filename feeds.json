@@ -115,12 +115,9 @@
     {
       "url": "https://t.me/HeathSafetyTps",
       "name": "Health Safety TIPS",
-      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "target_channels": [],
       "history_limit": 10
     },
     {

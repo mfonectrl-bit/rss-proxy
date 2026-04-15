@@ -315,12 +315,9 @@
     {
       "url": "https://t.me/conspiracy_theory3",
       "name": "Conspiracy Theory",
-      "category": "Sức khỏe",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {

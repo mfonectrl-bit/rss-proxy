@@ -258,33 +258,45 @@
     {
       "url": "https://t.me/DrMikeYeadon",
       "name": "Dr Mike Yeadon",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        0
+      ],
       "history_limit": 5
     },
     {
       "url": "https://t.me/RWMaloneMD",
       "name": "Robert W Malone, MD",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        0
+      ],
       "history_limit": 5
     },
     {
       "url": "https://t.me/SherriTenpenny",
       "name": "Dr Sherri Tenpenny",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        0
+      ],
       "history_limit": 5
     },
     {
       "url": "https://t.me/RobertKennedyQ",
       "name": "Robert F. Kennedy Jr.",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        0
+      ],
       "history_limit": 5
     },
     {

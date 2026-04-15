@@ -203,17 +203,23 @@
     {
       "url": "https://t.me/DrSimoneGold",
       "name": "Dr. Simone Gold",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        0
+      ],
       "history_limit": 5
     },
     {
       "url": "https://t.me/NicHulscher",
       "name": "Nicolas Hulscher",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        0
+      ],
       "history_limit": 10
     },
     {

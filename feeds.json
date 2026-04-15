@@ -115,18 +115,24 @@
     {
       "url": "https://t.me/HeathSafetyTps",
       "name": "Health Safety TIPS",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        0
+      ],
       "history_limit": 10
     },
     {
       "url": "https://t.me/naturalcuresforbody",
       "name": "Natural Cures",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
-      "history_limit": 20
+      "target_channels": [
+        2
+      ],
+      "history_limit": 5
     },
     {
       "url": "https://t.me/P_McCulloughMD",

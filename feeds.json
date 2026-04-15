@@ -475,34 +475,25 @@
     {
       "url": "https://t.me/Traditional_Medicine_folk",
       "name": "TRADITIONAL MEDICINE",
-      "category": "Sức khỏe",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/INSIDERR_POLITIC",
       "name": "INSIDER | News | Politics | USA",
-      "category": "Sức khỏe",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/INSIDER_USA_NEWS",
       "name": "INSIDER USA | News",
-      "category": "Sức khỏe",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
+      "target_channels": [],
       "history_limit": 5
     },
     {

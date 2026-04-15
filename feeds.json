@@ -709,9 +709,12 @@
     {
       "url": "https://t.me/medicinevideoss",
       "name": "Internal Medicine Videos & books",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        0
+      ],
       "history_limit": 5
     },
     {

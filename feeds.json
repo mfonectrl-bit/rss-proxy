@@ -36,9 +36,12 @@
     {
       "url": "@no100sin",
       "name": "Kênh Hàn Quốc TG",
+      "category": "Khác",
       "show_link": true,
       "auto_fwd": true,
-      "target_channels": [],
+      "target_channels": [
+        1
+      ],
       "history_limit": 5
     },
     {

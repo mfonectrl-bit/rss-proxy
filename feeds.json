@@ -172,7 +172,12 @@
       "show_link": true,
       "translate_link": true,
       "auto_fwd": true,
-      "destinations": [],
+      "destinations": [
+        {
+          "ch_idx": 2,
+          "topic_ids": ""
+        }
+      ],
       "history_limit": 5
     },
     {

@@ -238,7 +238,7 @@
       "url": "https://t.me/dr_judymikovitss",
       "name": "Dr. Judy Mikovits",
       "show_link": true,
-      "translate_link": true,
+      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {

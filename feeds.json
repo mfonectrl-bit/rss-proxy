@@ -1260,7 +1260,7 @@
       "url": "https://feeds.bbci.co.uk/news/world/rss.xml",
       "name": "BBC News",
       "show_link": true,
-      "translate_link": true,
+      "translate_link": false,
       "auto_fwd": false,
       "destinations": [
         {

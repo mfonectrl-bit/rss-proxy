@@ -1171,24 +1171,6 @@
       "history_limit": 5
     },
     {
-      "url": "https://news.google.com/rss/search?q=technology+OR+AI+OR+robotics+OR+semiconductor&hl=en-US&gl=US&ceid=US:en",
-      "name": "Google News Tech",
-      "show_link": true,
-      "translate_link": false,
-      "auto_fwd": true,
-      "destinations": [
-        {
-          "ch_idx": 0,
-          "topic_ids": ""
-        },
-        {
-          "ch_idx": 3,
-          "topic_ids": "7"
-        }
-      ],
-      "history_limit": 5
-    },
-    {
       "url": "https://feeds.bloomberg.com/markets/news.rss",
       "name": "Bloomberg",
       "show_link": true,

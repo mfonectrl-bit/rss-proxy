@@ -3,852 +3,713 @@
     {
       "url": "https://t.me/vnwallstreet",
       "name": "VN Wall Street",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        1,
-        3
-      ],
+      "destinations": [],
       "history_limit": 20
     },
     {
       "url": "@uncutnews_schlagzeilen",
       "name": "Uncut News",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "@RFI_Vi",
       "name": "RFI Tiếng Việt",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "@no100sin",
       "name": "Kênh Hàn Quốc TG",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0,
-        1
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "@geopolitics_prime",
       "name": "Geopolitics",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "@uncut_news",
       "name": "Uncut News",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0,
-        1
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "@InsiderPaper",
       "name": "Inside Paper",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "@abcdnewstest",
       "name": "ABCD new test",
-      "category": "Khác",
       "show_link": false,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "@rtnews",
       "name": "RT News",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "@tempvaxscam",
       "name": "Thuyết Âm U",
-      "category": "Khác",
       "show_link": false,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/HeathSafetyTps",
       "name": "Health Safety TIPS",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 10
     },
     {
       "url": "https://t.me/naturalcuresforbody",
       "name": "Natural Cures",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        2
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/P_McCulloughMD",
       "name": "Peter A. McCullough, MD, MPH™",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/DrTenpenny",
       "name": "Dr. Tenpenny",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/dr_judymikovitss",
       "name": "Dr. Judy Mikovits",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/BarbaraOneill_official",
       "name": "Barbara O'Neill",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/Edward_Dowd",
       "name": "Edward Dowd",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/naomirwolf",
       "name": "Dr Naomi R Wolf",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/DrSimoneGold",
       "name": "Dr. Simone Gold",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/NicHulscher",
       "name": "Nicolas Hulscher",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 10
     },
     {
       "url": "https://t.me/ShankaraChetty",
       "name": "Dr. Shankara Chetty",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 10
     },
     {
       "url": "https://t.me/DrPaulMarik",
       "name": "Dr. Paul Marik",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 10
     },
     {
       "url": "https://t.me/RogerHodkinson",
       "name": "Dr Roger Hodkinson",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/DrMikeYeadon",
       "name": "Dr Mike Yeadon",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/RWMaloneMD",
       "name": "Robert W Malone, MD",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/SherriTenpenny",
       "name": "Dr Sherri Tenpenny",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/RobertKennedyQ",
       "name": "Robert F. Kennedy Jr.",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/AmericasDoctors",
       "name": "America’s Doctors",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/NaturalNewsMedia",
       "name": "Natural News",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/DrJohnCampbell",
       "name": "Dr. John Campbell",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/realpetermcculloughmd",
       "name": "Dr Peter McCullough™ Channel",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/AseemMalhotra",
       "name": "Dr. Aseem Malhotra",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/DrSimoneGold",
       "name": "Dr. Simone Gold",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/RobertKennedyChannell",
       "name": "Robert F. Kennedy Jr.",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/ZFoundation",
       "name": "Zelenko Freedom Foundation",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/LeeMerritt",
       "name": "Dr. Lee Merritt",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/MdBreathe",
       "name": "Mary Talley Bowden MD",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/BREAKINGHEADLINES",
       "name": "BREAKING HEADLINES",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/RealWorldNewsChannel",
       "name": "Real World News",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
+      "destinations": [],
       "history_limit": 20
     },
     {
       "url": "https://t.me/conspiracy_theory3",
       "name": "Conspiracy Theory",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/covid_vaccine_injuries",
       "name": "Covid Vaccine Injuries",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/GesundUndGut",
       "name": "Gesund und Gut",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/JimCaviezel_TG",
       "name": "Jim Caviezel",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/free_energyyy",
       "name": "FREE ENERGY",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/midwesterndoc",
       "name": "Midwestern Doctor",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/LauraAbolichannel",
       "name": "LauraAboli",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/TruthAboutCOVID",
       "name": "TruthAboutCOVID",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/unabhaengig_neutral",
       "name": "UNN",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/NVIC_VaccineFreedom",
       "name": "NVIC.org",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/cruel_historyy",
       "name": "Cruel History",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/insider_amigo",
       "name": "Insider Amigo",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/vaccinechoicecanada",
       "name": "Vaccine Choice Canada",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/COVID19VACCINEVICTIMSANDFAMILIES",
       "name": "COVID19 VACCINE VICTIMS",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/schwurbelfunk",
       "name": "Schwurbelfunk",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/History_JackRaven",
       "name": "History by Jack Raven",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/Medienzensur",
       "name": "Das darfst du nicht sehen",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/COVID19Up",
       "name": "COVID-19 Up",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/awakenedspecies",
       "name": "The Awakened Species",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/ExiledMedicFabian",
       "name": "Exiled Medic Unzensiert",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/Traditional_Medicine_folk",
       "name": "TRADITIONAL MEDICINE",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/INSIDERR_POLITIC",
       "name": "INSIDER | News | Politics | USA",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/INSIDER_USA_NEWS",
       "name": "INSIDER USA | News",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/schwurbelfunk",
       "name": "Schwurbelfunk",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/dilya_asliddinovna_dietolog",
       "name": "DIETOLOG DILYA",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/TelegramTips",
       "name": "Telegram Tips",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/telegram",
       "name": "Telegram News",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/trendingapps",
       "name": "Trending Apps",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://news.google.com/rss/search?q=technology+OR+AI+OR+robotics+OR+semiconductor&hl=en-US&gl=US&ceid=US:en",
       "name": "Google News Tech",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": false,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://feeds.bloomberg.com/markets/news.rss",
       "name": "Bloomberg",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://www.cnbc.com/id/100003114/device/rss/rss.html",
       "name": "CNBC",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://www.ft.com/rss/home/international",
       "name": "Financial Times",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://feeds.bbci.co.uk/news/world/rss.xml",
       "name": "BBC News",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": false,
-      "target_channels": [
-        1
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
       "name": "NewYork Times",
-      "category": "Sức khỏe",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml",
       "name": "NewYork TimesNewYork Technology",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://news.google.com/rss/search?q=Reuters+world&hl=en-US&gl=US&ceid=US:en",
       "name": "Reuters World",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://news.google.com/rss/search?q=Reuters+technology&hl=en-US&gl=US&ceid=US:en",
       "name": "Reuters Tech",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        1
-      ],
+      "destinations": [],
       "history_limit": 5
     },
     {
       "url": "https://t.me/antiilluminaten",
       "name": "Aktuell360",
-      "category": "Khác",
       "show_link": true,
+      "translate_link": true,
       "auto_fwd": true,
-      "target_channels": [
-        0
-      ],
+      "destinations": [],
       "history_limit": 5
+    },
+    {
+      "url": "https://t.me/vnwallstreet",
+      "name": "VN Wall Street",
+      "show_link": true,
+      "translate_link": true,
+      "auto_fwd": true,
+      "destinations": [
+        {
+          "ch_idx": 1,
+          "topic_ids": ""
+        },
+        {
+          "ch_idx": 3,
+          "topic_ids": ""
+        }
+      ],
+      "history_limit": 20
     }
   ],
   "auto_fwd": true,

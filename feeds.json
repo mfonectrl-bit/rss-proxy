@@ -688,7 +688,7 @@
       "url": "https://t.me/conspiracy_theory3",
       "name": "Conspiracy Theory",
       "show_link": true,
-      "translate_link": true,
+      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {

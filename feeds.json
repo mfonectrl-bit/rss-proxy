@@ -810,12 +810,16 @@
       "url": "https://t.me/TruthAboutCOVID",
       "name": "TruthAboutCOVID",
       "show_link": true,
-      "translate_link": true,
+      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
           "ch_idx": 0,
           "topic_ids": ""
+        },
+        {
+          "ch_idx": 3,
+          "topic_ids": "3"
         }
       ],
       "history_limit": 5

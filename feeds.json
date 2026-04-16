@@ -1350,12 +1350,16 @@
       "url": "https://t.me/antiilluminaten",
       "name": "Aktuell360",
       "show_link": true,
-      "translate_link": true,
+      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
           "ch_idx": 0,
           "topic_ids": ""
+        },
+        {
+          "ch_idx": 3,
+          "topic_ids": "3"
         }
       ],
       "history_limit": 5

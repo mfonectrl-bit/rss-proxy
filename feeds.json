@@ -148,6 +148,10 @@
         {
           "ch_idx": 0,
           "topic_ids": ""
+        },
+        {
+          "ch_idx": 3,
+          "topic_ids": "3"
         }
       ],
       "history_limit": 10

@@ -1333,19 +1333,6 @@
       "history_limit": 5
     },
     {
-      "url": "https://www.theverge.com/rss/index.xml",
-      "name": "The Verge",
-      "show_link": true,
-      "auto_fwd": true,
-      "destinations": [
-        {
-          "ch_idx": 3,
-          "topic_ids": "7"
-        }
-      ],
-      "history_limit": 5
-    },
-    {
       "url": "https://www.technologyreview.com/feed",
       "name": "Technology Review",
       "show_link": true,

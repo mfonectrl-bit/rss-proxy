@@ -676,6 +676,10 @@
         {
           "ch_idx": 1,
           "topic_ids": ""
+        },
+        {
+          "ch_idx": 3,
+          "topic_ids": "9"
         }
       ],
       "history_limit": 20

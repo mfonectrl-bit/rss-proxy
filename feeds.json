@@ -874,8 +874,10 @@
     {
       "username": "@Global_News_Hubs",
       "name": "𝔊𝔩𝔬𝔟𝔞𝔩 ⁿᵉʷˢ ʰᵘᵇˢ",
-      "is_group": false
+      "type": "group",
+      "category_filter": "Sức khỏe",
+      "topic_id": 4
     }
   ],
-  "translate_engine": "google"
+  "translate_engine": "deepl"
 }

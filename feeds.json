@@ -1617,8 +1617,8 @@
       "history_limit": 5
     },
     {
-      "url": "https://laodong.vn/rss/home.rss",
-      "name": "Lao Động",
+      "url": "https://nld.com.vn/rss/home.rss",
+      "name": "Người Lao Động",
       "show_link": true,
       "translate_link": false,
       "auto_fwd": true,

@@ -1475,6 +1475,20 @@
         }
       ],
       "history_limit": 5
+    },
+    {
+      "url": "https://venturebeat.com/feed",
+      "name": "Venture Beat",
+      "show_link": true,
+      "translate_link": false,
+      "auto_fwd": true,
+      "destinations": [
+        {
+          "ch_idx": 3,
+          "topic_ids": "7"
+        }
+      ],
+      "history_limit": 5
     }
   ],
   "auto_fwd": true,

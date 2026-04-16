@@ -1024,7 +1024,12 @@
       "show_link": true,
       "translate_link": true,
       "auto_fwd": false,
-      "destinations": [],
+      "destinations": [
+        {
+          "ch_idx": 1,
+          "topic_ids": ""
+        }
+      ],
       "history_limit": 5
     },
     {

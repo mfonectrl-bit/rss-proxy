@@ -1105,6 +1105,20 @@
         }
       ],
       "history_limit": 20
+    },
+    {
+      "url": "@vnwallstreet",
+      "name": "VN Wall Street",
+      "show_link": true,
+      "translate_link": true,
+      "auto_fwd": false,
+      "destinations": [
+        {
+          "ch_idx": 0,
+          "topic_ids": ""
+        }
+      ],
+      "history_limit": 20
     }
   ],
   "auto_fwd": true,

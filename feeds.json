@@ -4,7 +4,6 @@
       "url": "@uncutnews_schlagzeilen",
       "name": "Uncut News",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -22,7 +21,6 @@
       "url": "@RFI_Vi",
       "name": "RFI Tiếng Việt",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -40,7 +38,6 @@
       "url": "@no100sin",
       "name": "Kênh Hàn Quốc TG",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -58,7 +55,6 @@
       "url": "@geopolitics_prime",
       "name": "Geopolitics",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -76,7 +72,6 @@
       "url": "@uncut_news",
       "name": "Uncut News",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -94,7 +89,6 @@
       "url": "@InsiderPaper",
       "name": "Inside Paper",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -112,7 +106,6 @@
       "url": "@abcdnewstest",
       "name": "ABCD new test",
       "show_link": false,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -130,7 +123,6 @@
       "url": "@rtnews",
       "name": "RT News",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -148,7 +140,6 @@
       "url": "@tempvaxscam",
       "name": "Thuyết Âm U",
       "show_link": false,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -166,7 +157,6 @@
       "url": "https://t.me/HeathSafetyTps",
       "name": "Health Safety TIPS",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -184,7 +174,6 @@
       "url": "https://t.me/naturalcuresforbody",
       "name": "Natural Cures",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -202,7 +191,6 @@
       "url": "https://t.me/P_McCulloughMD",
       "name": "Peter A. McCullough, MD, MPH™",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -220,7 +208,6 @@
       "url": "https://t.me/DrTenpenny",
       "name": "Dr. Tenpenny",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -238,7 +225,6 @@
       "url": "https://t.me/dr_judymikovitss",
       "name": "Dr. Judy Mikovits",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -256,7 +242,6 @@
       "url": "https://t.me/BarbaraOneill_official",
       "name": "Barbara O'Neill",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -274,7 +259,6 @@
       "url": "https://t.me/Edward_Dowd",
       "name": "Edward Dowd",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -292,7 +276,6 @@
       "url": "https://t.me/naomirwolf",
       "name": "Dr Naomi R Wolf",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -310,7 +293,6 @@
       "url": "https://t.me/DrSimoneGold",
       "name": "Dr. Simone Gold",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -328,7 +310,6 @@
       "url": "https://t.me/NicHulscher",
       "name": "Nicolas Hulscher",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -346,7 +327,6 @@
       "url": "https://t.me/ShankaraChetty",
       "name": "Dr. Shankara Chetty",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -364,7 +344,6 @@
       "url": "https://t.me/DrPaulMarik",
       "name": "Dr. Paul Marik",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -382,7 +361,6 @@
       "url": "https://t.me/RogerHodkinson",
       "name": "Dr Roger Hodkinson",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -400,7 +378,6 @@
       "url": "https://t.me/DrMikeYeadon",
       "name": "Dr Mike Yeadon",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -418,7 +395,6 @@
       "url": "https://t.me/RWMaloneMD",
       "name": "Robert W Malone, MD",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -436,7 +412,6 @@
       "url": "https://t.me/SherriTenpenny",
       "name": "Dr Sherri Tenpenny",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -454,7 +429,6 @@
       "url": "https://t.me/RobertKennedyQ",
       "name": "Robert F. Kennedy Jr.",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -472,7 +446,6 @@
       "url": "https://t.me/AmericasDoctors",
       "name": "America’s Doctors",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -490,7 +463,6 @@
       "url": "https://t.me/NaturalNewsMedia",
       "name": "Natural News",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -508,7 +480,6 @@
       "url": "https://t.me/DrJohnCampbell",
       "name": "Dr. John Campbell",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -526,7 +497,6 @@
       "url": "https://t.me/realpetermcculloughmd",
       "name": "Dr Peter McCullough™ Channel",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -544,7 +514,6 @@
       "url": "https://t.me/AseemMalhotra",
       "name": "Dr. Aseem Malhotra",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -562,7 +531,6 @@
       "url": "https://t.me/DrSimoneGold",
       "name": "Dr. Simone Gold",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -580,7 +548,6 @@
       "url": "https://t.me/RobertKennedyChannell",
       "name": "Robert F. Kennedy Jr.",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -598,7 +565,6 @@
       "url": "https://t.me/ZFoundation",
       "name": "Zelenko Freedom Foundation",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -616,7 +582,6 @@
       "url": "https://t.me/LeeMerritt",
       "name": "Dr. Lee Merritt",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -634,7 +599,6 @@
       "url": "https://t.me/MdBreathe",
       "name": "Mary Talley Bowden MD",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -652,7 +616,6 @@
       "url": "https://t.me/BREAKINGHEADLINES",
       "name": "BREAKING HEADLINES",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -670,7 +633,6 @@
       "url": "https://t.me/RealWorldNewsChannel",
       "name": "Real World News",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -688,7 +650,6 @@
       "url": "https://t.me/conspiracy_theory3",
       "name": "Conspiracy Theory",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -706,7 +667,6 @@
       "url": "https://t.me/covid_vaccine_injuries",
       "name": "Covid Vaccine Injuries",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -724,7 +684,6 @@
       "url": "https://t.me/GesundUndGut",
       "name": "Gesund und Gut",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -742,7 +701,6 @@
       "url": "https://t.me/JimCaviezel_TG",
       "name": "Jim Caviezel",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -760,7 +718,6 @@
       "url": "https://t.me/free_energyyy",
       "name": "FREE ENERGY",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -778,7 +735,6 @@
       "url": "https://t.me/midwesterndoc",
       "name": "Midwestern Doctor",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -796,7 +752,6 @@
       "url": "https://t.me/LauraAbolichannel",
       "name": "LauraAboli",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -814,7 +769,6 @@
       "url": "https://t.me/TruthAboutCOVID",
       "name": "TruthAboutCOVID",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -832,7 +786,6 @@
       "url": "https://t.me/unabhaengig_neutral",
       "name": "UNN",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -850,7 +803,6 @@
       "url": "https://t.me/NVIC_VaccineFreedom",
       "name": "NVIC.org",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -868,7 +820,6 @@
       "url": "https://t.me/cruel_historyy",
       "name": "Cruel History",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -886,7 +837,6 @@
       "url": "https://t.me/insider_amigo",
       "name": "Insider Amigo",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -904,7 +854,6 @@
       "url": "https://t.me/vaccinechoicecanada",
       "name": "Vaccine Choice Canada",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -922,7 +871,6 @@
       "url": "https://t.me/COVID19VACCINEVICTIMSANDFAMILIES",
       "name": "COVID19 VACCINE VICTIMS",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -940,7 +888,6 @@
       "url": "https://t.me/schwurbelfunk",
       "name": "Schwurbelfunk",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -958,7 +905,6 @@
       "url": "https://t.me/History_JackRaven",
       "name": "History by Jack Raven",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -976,7 +922,6 @@
       "url": "https://t.me/Medienzensur",
       "name": "Das darfst du nicht sehen",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -994,7 +939,6 @@
       "url": "https://t.me/COVID19Up",
       "name": "COVID-19 Up",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1012,7 +956,6 @@
       "url": "https://t.me/awakenedspecies",
       "name": "The Awakened Species",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1030,7 +973,6 @@
       "url": "https://t.me/ExiledMedicFabian",
       "name": "Exiled Medic Unzensiert",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1048,7 +990,6 @@
       "url": "https://t.me/Traditional_Medicine_folk",
       "name": "TRADITIONAL MEDICINE",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1066,7 +1007,6 @@
       "url": "https://t.me/INSIDERR_POLITIC",
       "name": "INSIDER | News | Politics | USA",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1084,7 +1024,6 @@
       "url": "https://t.me/INSIDER_USA_NEWS",
       "name": "INSIDER USA | News",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1102,7 +1041,6 @@
       "url": "https://t.me/dilya_asliddinovna_dietolog",
       "name": "DIETOLOG DILYA",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1120,7 +1058,6 @@
       "url": "https://t.me/TelegramTips",
       "name": "Telegram Tips",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1138,7 +1075,6 @@
       "url": "https://t.me/telegram",
       "name": "Telegram News",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1156,7 +1092,6 @@
       "url": "https://t.me/trendingapps",
       "name": "Trending Apps",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1174,7 +1109,6 @@
       "url": "https://feeds.bloomberg.com/markets/news.rss",
       "name": "Bloomberg",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1192,7 +1126,6 @@
       "url": "https://www.cnbc.com/id/100003114/device/rss/rss.html",
       "name": "CNBC",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1210,7 +1143,6 @@
       "url": "https://www.ft.com/rss/home/international",
       "name": "Financial Times",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1228,7 +1160,6 @@
       "url": "https://feeds.bbci.co.uk/news/world/rss.xml",
       "name": "BBC News",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": false,
       "destinations": [
         {
@@ -1246,7 +1177,6 @@
       "url": "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
       "name": "NewYork Times",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1264,7 +1194,6 @@
       "url": "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml",
       "name": "NewYork TimesNewYork Technology",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1282,7 +1211,6 @@
       "url": "https://t.me/antiilluminaten",
       "name": "Aktuell360",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1300,7 +1228,6 @@
       "url": "@vnwallstreet",
       "name": "VN Wall Street",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1318,7 +1245,6 @@
       "url": "https://t.me/verge",
       "name": "The Verge",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1332,7 +1258,6 @@
       "url": "https://t.me/perplexity",
       "name": "Discover • Tech News",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1346,7 +1271,6 @@
       "url": "https://t.me/techcrunchcom",
       "name": "TechCrunch",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1360,7 +1284,6 @@
       "url": "https://t.me/ArtificialIntelligenceAINews",
       "name": "AI News IT",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1374,7 +1297,6 @@
       "url": "https://t.me/githubtrending",
       "name": "GitHub Trends",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1388,7 +1310,6 @@
       "url": "https://techcrunch.com/feed/",
       "name": "TechCrunch RSS",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1402,7 +1323,6 @@
       "url": "https://www.wired.com/feed/rss",
       "name": "Wired",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1416,7 +1336,6 @@
       "url": "https://www.theverge.com/rss/index.xml",
       "name": "The Verge",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1430,7 +1349,6 @@
       "url": "https://www.technologyreview.com/feed",
       "name": "Technology Review",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1444,7 +1362,6 @@
       "url": "https://venturebeat.com/feed",
       "name": "Venture Beat",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1458,7 +1375,6 @@
       "url": "https://t.me/internationalgeographic",
       "name": "International Geographic",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1472,7 +1388,6 @@
       "url": "https://t.me/theplacetobe1",
       "name": "The place to be",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1486,7 +1401,6 @@
       "url": "https://t.me/voyage",
       "name": "Voyage.Travel.Tourism",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1500,7 +1414,6 @@
       "url": "https://t.me/NationGeographic",
       "name": "Nation Geographic",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1514,7 +1427,6 @@
       "url": "https://vnexpress.net/rss/tin-moi-nhat.rss",
       "name": "VnExpress",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1528,7 +1440,6 @@
       "url": "https://t.me/thehackernews",
       "name": "The Hacker News",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1542,7 +1453,6 @@
       "url": "https://t.me/leaklive",
       "name": "LiveLeak",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1556,7 +1466,6 @@
       "url": "https://dansinh.dantri.com.vn/rss/home.rss",
       "name": "Dân Trí",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1570,7 +1479,6 @@
       "url": "https://tuoitre.vn/rss/tin-moi-nhat.rss",
       "name": "Tuổi Trẻ",
       "show_link": true,
-      "translate_link": true,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1584,7 +1492,6 @@
       "url": "https://nld.com.vn/rss/home.rss",
       "name": "Người Lao Động",
       "show_link": true,
-      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1616,12 +1523,10 @@
       "category_filter": "Sức khỏe"
     },
     {
-      "username": "@Global_News_Hubs",
+      "username": "-1003997185142",
       "name": "𝔊𝔩𝔬𝔟𝔞𝔩 ⁿᵉʷˢ ʰᵘᵇˢ",
-      "type": "group",
-      "category_filter": "Sức khỏe",
-      "topic_id": 4
+      "is_group": true
     }
   ],
-  "translate_engine": "deepl"
+  "translate_engine": "google"
 }

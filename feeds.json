@@ -1587,20 +1587,6 @@
         }
       ],
       "history_limit": 5
-    },
-    {
-      "url": "https://rss.app/feeds/M20GEfmXPxVRYpOC.xml",
-      "name": "Báo Mới",
-      "show_link": true,
-      "translate_link": false,
-      "auto_fwd": true,
-      "destinations": [
-        {
-          "ch_idx": 3,
-          "topic_ids": "915"
-        }
-      ],
-      "history_limit": 5
     }
   ],
   "auto_fwd": true,

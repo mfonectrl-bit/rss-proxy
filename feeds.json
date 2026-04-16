@@ -1444,6 +1444,19 @@
         }
       ],
       "history_limit": 5
+    },
+    {
+      "url": "https://news.yahoo.com/rss/topstories",
+      "name": "Yahoo Top Story",
+      "show_link": true,
+      "auto_fwd": true,
+      "destinations": [
+        {
+          "ch_idx": 3,
+          "topic_ids": "5663"
+        }
+      ],
+      "history_limit": 5
     }
   ],
   "auto_fwd": true,

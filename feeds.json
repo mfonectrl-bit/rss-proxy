@@ -1561,20 +1561,6 @@
       "history_limit": 5
     },
     {
-      "url": "https://m.cafef.vn/thi-truong-chung-khoan.rss",
-      "name": "CafeF",
-      "show_link": true,
-      "translate_link": false,
-      "auto_fwd": true,
-      "destinations": [
-        {
-          "ch_idx": 3,
-          "topic_ids": "915"
-        }
-      ],
-      "history_limit": 5
-    },
-    {
       "url": "https://t.me/thehackernews",
       "name": "The Hacker News",
       "show_link": true,

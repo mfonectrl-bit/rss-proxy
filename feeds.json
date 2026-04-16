@@ -1152,7 +1152,7 @@
       "url": "https://t.me/telegram",
       "name": "Telegram News",
       "show_link": true,
-      "translate_link": true,
+      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
@@ -1161,7 +1161,7 @@
         },
         {
           "ch_idx": 3,
-          "topic_ids": ""
+          "topic_ids": "7"
         }
       ],
       "history_limit": 5

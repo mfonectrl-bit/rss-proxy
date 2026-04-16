@@ -1062,7 +1062,7 @@
       "url": "https://t.me/INSIDERR_POLITIC",
       "name": "INSIDER | News | Politics | USA",
       "show_link": true,
-      "translate_link": true,
+      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {

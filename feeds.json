@@ -166,7 +166,7 @@
       "url": "https://t.me/HeathSafetyTps",
       "name": "Health Safety TIPS",
       "show_link": true,
-      "translate_link": true,
+      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {

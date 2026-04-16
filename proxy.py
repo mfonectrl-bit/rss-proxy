@@ -1514,9 +1514,10 @@ function setFilter(url){
 }
 
 function syncFeedsHttp(){
-    const payload=feeds.map(f=>({url:f.url,name:f.name,category:f.category,
-        show_link:f.show_link!==false,auto_fwd:f.auto_fwd===true,
-        target_channels:f.target_channels||[],
+    const payload=feeds.map(f=>({url:f.url,name:f.name,
+        show_link:f.show_link!==false,translate_link:f.translate_link!==false,
+        auto_fwd:f.auto_fwd===true,
+        destinations:f.destinations||[],
         history_limit:f.history_limit!=null?f.history_limit:20}));
     fetch('/sync_feeds',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({feeds:payload})})
@@ -1782,9 +1783,10 @@ function connectWS(){
         wsReady=true;
         document.getElementById('ws-dot').className='ws-dot on';
         document.getElementById('ws-lbl').textContent='Đang kết nối...';
-        feedsPayload=feeds.map(f=>({url:f.url,name:f.name,category:f.category,
-            show_link:f.show_link!==false,auto_fwd:f.auto_fwd===true,
-            target_channels:f.target_channels||[],
+        feedsPayload=feeds.map(f=>({url:f.url,name:f.name,
+            show_link:f.show_link!==false,translate_link:f.translate_link!==false,
+            auto_fwd:f.auto_fwd===true,
+            destinations:f.destinations||[],
             history_limit:f.history_limit!=null?f.history_limit:20}));
         wsReconnectCount++;
         if(wsHeartbeatTimer) clearInterval(wsHeartbeatTimer);
@@ -2187,71 +2189,86 @@ _send_semaphore = threading.Semaphore(3)  # tối đa 3 send song song
 def _do_forward(processed, category, url):
     """
     Gửi tin lên các kênh đích qua Telethon.
+    Đọc feed.destinations = [{ch_idx, topic_ids}] — topic_ids là string phân cách bằng dấu phẩy.
+    Tương thích ngược với target_channels cũ (array of int).
     """
     with lock:
         do_fwd   = auto_fwd_enabled
         cfgs     = list(tg_channels)
         feed_cfg = next((u for u in watched_urls if u['url'] == url), {})
     if not do_fwd:
-        print(f'[Forward] Bỏ qua — auto_fwd=False')
         return
     if not cfgs:
-        print(f'[Forward] Bỏ qua — không có kênh đích')
         return
     if not feed_cfg.get('auto_fwd', True):
-        print(f'[Forward] Bỏ qua — feed {url} tắt auto_fwd')
         return
     if not TELETHON_AVAILABLE or tg_client is None:
         print('[Forward] Telethon chưa kết nối — bỏ qua forward')
         return
 
-    target_channels = feed_cfg.get('target_channels', [])
+    show_link    = feed_cfg.get('show_link', True)
+    translate_lk = feed_cfg.get('translate_link', False)
+
+    # --- Resolve destinations từ feed config ---
+    # Format mới: destinations = [{ch_idx, topic_ids}, ...]
+    # Format cũ:  target_channels = [0, 1, 2, ...]  (chỉ index, không topic)
+    destinations = feed_cfg.get('destinations') or []
+    if not destinations:
+        # fallback tương thích ngược
+        old = feed_cfg.get('target_channels', [])
+        destinations = [{'ch_idx': i, 'topic_ids': ''} for i in old] if old else []
+
+    # Nếu feed không cấu hình đích nào → gửi tới tất cả kênh (hành vi cũ)
+    if not destinations:
+        destinations = [{'ch_idx': i, 'topic_ids': ''} for i in range(len(cfgs))]
+
     total_sent = 0
 
-    for ch_idx, ch in enumerate(cfgs):
-        if target_channels and ch_idx not in target_channels:
-            continue
-        should_send = False
-        if ch['type'] == 'master':
-            should_send = True
-        elif ch['type'] in ['category', 'group']:
-            if ch.get('category_filter') == category:
-                should_send = True
-        if not should_send:
-            continue
+    for dest_cfg in destinations:
+        ch_idx    = dest_cfg.get('ch_idx', dest_cfg) if isinstance(dest_cfg, dict) else dest_cfg
+        topic_ids_str = dest_cfg.get('topic_ids', '') if isinstance(dest_cfg, dict) else ''
 
+        if ch_idx < 0 or ch_idx >= len(cfgs):
+            continue
+        ch   = cfgs[ch_idx]
         dest = ch.get('username') or ch.get('channel_id', '')
         if not dest:
             print(f'[Forward] Kênh "{ch.get("name")}" thiếu username — bỏ qua')
             continue
 
         channel_name = ch.get('name', dest)
-        show_link    = feed_cfg.get('show_link', True)
-        topic_id     = ch.get('topic_id') or None  # None = không phải group topic
 
-        for it in reversed(processed):
-            desc_plain = strip_html(it.get('desc', '').replace('<br>', '\n')).strip()
-            caption    = desc_plain
-            if show_link and it.get('link'):
-                caption += f'\n\n<a href="{it["link"]}">Xem bài gốc →</a>'
-            if channel_name:
-                caption += f'\n\n<i>{channel_name}</i>'
+        # Parse topic IDs: "123, 456" → [123, 456]; "" → [None]
+        raw_topics = [t.strip() for t in topic_ids_str.split(',') if t.strip()] if topic_ids_str else []
+        topic_list = [int(t) for t in raw_topics if t.isdigit()] or [None]
 
-            acquired = _send_semaphore.acquire(timeout=10)
-            if not acquired:
-                print(f'[Forward] Bỏ qua tin — _send_semaphore timeout (hệ thống bận)')
-                continue
-            try:
-                ok = tg_run(_tg_send_item(dest, it, caption, topic_id=topic_id))
-            except Exception as e:
-                print(f'[Forward] tg_run lỗi: {e}')
-                ok = False
-            finally:
-                _send_semaphore.release()
-            if ok:
-                total_sent += 1
-            # Delay chống flood Telegram (0.3s đủ cho text, media cần nhiều hơn)
-            time.sleep(0.3)
+        for topic_id in topic_list:
+            for it in reversed(processed):
+                desc_plain = strip_html(it.get('desc', '').replace('<br>', '\n')).strip()
+                caption    = desc_plain
+
+                if show_link and it.get('link'):
+                    link_url = it['link']
+                    if translate_lk:
+                        link_url = f'https://translate.google.com/translate?sl=auto&tl=vi&u={urllib.parse.quote(link_url, safe="")}'
+                    caption += f'\n\n<a href="{link_url}">Xem bài gốc →</a>'
+                if channel_name:
+                    caption += f'\n\n<i>{channel_name}</i>'
+
+                acquired = _send_semaphore.acquire(timeout=10)
+                if not acquired:
+                    print(f'[Forward] Bỏ qua tin — _send_semaphore timeout')
+                    continue
+                try:
+                    ok = tg_run(_tg_send_item(dest, it, caption, topic_id=topic_id))
+                except Exception as e:
+                    print(f'[Forward] tg_run lỗi: {e}')
+                    ok = False
+                finally:
+                    _send_semaphore.release()
+                if ok:
+                    total_sent += 1
+                time.sleep(0.3)
 
     if total_sent > 0:
         broadcast({'type': 'auto_fwd_sent', 'count': total_sent, 'url': url})
@@ -2875,61 +2892,70 @@ class HttpHandler(BaseHTTPRequestHandler):
         elif p.path == '/tg_forward':
             # Forward thủ công từ UI — dùng Telethon, không Bot API, không download
             body = self._read_json()
-            channels  = body.get('channels', [])
-            items_raw = body.get('items', [])
-            if not channels:
-                self._json({'error': 'missing channels'}, 400); return
+            # Format mới: destinations = [{username, name, is_group, topic_ids}, ...]
+            # Format cũ:  channels = [{username, name, type, topic_id}, ...]
+            destinations = body.get('destinations') or body.get('channels', [])
+            items_raw    = body.get('items', [])
+            if not destinations:
+                self._json({'error': 'missing destinations'}, 400); return
             if not TELETHON_AVAILABLE or tg_client is None:
                 self._json({'error': 'Telethon chưa kết nối'}, 503); return
 
             all_results = []
-            for ch in channels:
-                dest = ch.get('username') or ch.get('channel_id', '')
+            for dest_cfg in destinations:
+                dest = dest_cfg.get('username') or dest_cfg.get('channel_id', '')
                 if not dest:
-                    all_results.append({'title': ch.get('name','?'), 'ok': False, 'error': 'Thiếu username kênh đích'})
+                    all_results.append({'title': dest_cfg.get('name','?'), 'ok': False, 'error': 'Thiếu username kênh đích'})
                     continue
-                channel_name = ch.get('name', dest)
-                topic_id     = ch.get('topic_id') or None
-                for it in items_raw:
-                    feed_url = it.get('feedUrl', '')
-                    # Ưu tiên show_link từ client gửi lên
-                    # Fallback: tra cứu trong watched_urls (nếu client không gửi)
-                    if 'show_link' in it:
-                        show_link = it.get('show_link', True)
-                    else:
-                        with lock:
-                            show_link = next((u.get('show_link', True) for u in watched_urls if u['url'] == feed_url), True)
-                    print(f'[Forward] feed={feed_url} show_link={show_link}')
-                    # Build caption
-                    desc_plain = strip_html((it.get('desc','') or '').replace('<br>','\n')).strip()
-                    caption    = desc_plain
-                    if show_link and it.get('link'):
-                        caption += f'\n\n<a href="{it["link"]}">Xem bài gốc →</a>'
-                    if channel_name:
-                        caption += f'\n\n<i>{channel_name}</i>'
-                    # Reconstruct item để _tg_send_item nhận diện được
-                    send_item = {**it, '_source': 'telethon' if is_tg_source(feed_url) else 'rss'}
-                    if is_tg_source(feed_url):
+                channel_name = dest_cfg.get('name', dest)
+
+                # Hỗ trợ cả topic_ids string mới lẫn topic_id int cũ
+                topic_ids_str = dest_cfg.get('topic_ids', '') or ''
+                raw_topics = [t.strip() for t in topic_ids_str.split(',') if t.strip()] if topic_ids_str else []
+                topic_list = [int(t) for t in raw_topics if t.isdigit()]
+                if not topic_list:
+                    # fallback topic_id cũ (int)
+                    old_tid = dest_cfg.get('topic_id')
+                    topic_list = [int(old_tid)] if old_tid else [None]
+
+                for topic_id in topic_list:
+                    for it in items_raw:
+                        feed_url     = it.get('feedUrl', '')
+                        show_link    = it.get('show_link', True)
+                        translate_lk = it.get('translate_link', False)
+
+                        desc_plain = strip_html((it.get('desc','') or '').replace('<br>','\n')).strip()
+                        caption    = desc_plain
+                        if show_link and it.get('link'):
+                            link_url = it['link']
+                            if translate_lk:
+                                link_url = f'https://translate.google.com/translate?sl=auto&tl=vi&u={urllib.parse.quote(link_url, safe="")}'
+                            caption += f'\n\n<a href="{link_url}">Xem bài gốc →</a>'
+                        if channel_name:
+                            caption += f'\n\n<i>{channel_name}</i>'
+
+                        send_item = {**it, '_source': 'telethon' if is_tg_source(feed_url) else 'rss'}
+                        if is_tg_source(feed_url):
+                            try:
+                                link   = it.get('link','')
+                                msg_id = int(link.rstrip('/').split('/')[-1])
+                                chat   = normalize_tg_channel(feed_url).lstrip('@')
+                                send_item['_tg_msg_id']    = msg_id
+                                send_item['_tg_chat']      = chat
+                                send_item['_tg_has_media'] = True
+                            except Exception:
+                                send_item['_tg_has_media'] = False
+                        else:
+                            imgs, _ = extract_media(it.get('desc',''))
+                            send_item['_rss_media_url'] = imgs[0] if imgs else None
                         try:
-                            link   = it.get('link','')
-                            msg_id = int(link.rstrip('/').split('/')[-1])
-                            chat   = normalize_tg_channel(feed_url).lstrip('@')
-                            send_item['_tg_msg_id']   = msg_id
-                            send_item['_tg_chat']     = chat
-                            send_item['_tg_has_media'] = True  # thử gửi media, send_item sẽ fallback text nếu không có
-                        except Exception:
-                            send_item['_tg_has_media'] = False
-                    else:
-                        imgs, _ = extract_media(it.get('desc',''))
-                        send_item['_rss_media_url'] = imgs[0] if imgs else None
-                    try:
-                        ok = tg_run(_tg_send_item(dest, send_item, caption, topic_id=topic_id))
-                        all_results.append({'title': it.get('title',''), 'ok': ok, 'error': '' if ok else 'Gửi thất bại'})
-                    except RuntimeError as e:
-                        all_results.append({'title': it.get('title',''), 'ok': False, 'error': str(e)})
-                    except Exception as e:
-                        all_results.append({'title': it.get('title',''), 'ok': False, 'error': str(e)})
-                    time.sleep(0.3)  # delay nhỏ giữa các tin
+                            ok = tg_run(_tg_send_item(dest, send_item, caption, topic_id=topic_id))
+                            all_results.append({'title': it.get('title',''), 'ok': ok, 'error': '' if ok else 'Gửi thất bại'})
+                        except RuntimeError as e:
+                            all_results.append({'title': it.get('title',''), 'ok': False, 'error': str(e)})
+                        except Exception as e:
+                            all_results.append({'title': it.get('title',''), 'ok': False, 'error': str(e)})
+                        time.sleep(0.3)
 
             resp = json.dumps({'results': all_results}, ensure_ascii=False).encode('utf-8')
             self.send_response(200)

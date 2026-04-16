@@ -652,7 +652,7 @@
       "url": "https://t.me/BREAKINGHEADLINES",
       "name": "BREAKING HEADLINES",
       "show_link": true,
-      "translate_link": true,
+      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {

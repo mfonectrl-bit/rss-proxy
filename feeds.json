@@ -1332,12 +1332,16 @@
       "url": "https://news.google.com/rss/search?q=Reuters+technology&hl=en-US&gl=US&ceid=US:en",
       "name": "Reuters Tech",
       "show_link": true,
-      "translate_link": true,
+      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
           "ch_idx": 1,
           "topic_ids": ""
+        },
+        {
+          "ch_idx": 3,
+          "topic_ids": "4"
         }
       ],
       "history_limit": 5

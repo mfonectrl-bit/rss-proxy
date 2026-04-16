@@ -220,7 +220,7 @@
       "url": "https://t.me/DrTenpenny",
       "name": "Dr. Tenpenny",
       "show_link": true,
-      "translate_link": true,
+      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {

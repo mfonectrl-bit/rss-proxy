@@ -36,9 +36,14 @@
       "url": "@RFI_Vi",
       "name": "RFI Tiếng Việt",
       "show_link": true,
-      "translate_link": true,
+      "translate_link": false,
       "auto_fwd": true,
-      "destinations": [],
+      "destinations": [
+        {
+          "ch_idx": 1,
+          "topic_ids": ""
+        }
+      ],
       "history_limit": 5
     },
     {

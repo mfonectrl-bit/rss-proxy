@@ -4,7 +4,7 @@
       "url": "@uncutnews_schlagzeilen",
       "name": "Uncut News",
       "show_link": true,
-      "translate_link": true,
+      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {

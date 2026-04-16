@@ -322,7 +322,14 @@ def _translate_with_engine(text, engine=None):
         else:
             return _translate_google(text)
     except Exception as e:
-        print(f'[!] Dịch [{eng}] lỗi: {e}, fallback Google')
+        err_str = str(e)
+        # SSL/network lỗi thoáng qua — thử Google 1 lần, không print log dài
+        if 'SSL' in err_str or 'Max retries' in err_str or 'EOF' in err_str:
+            try:
+                return _translate_google(text)
+            except Exception:
+                return text  # cả hai đều lỗi → trả text gốc, không log
+        print(f'[!] Dịch [{eng}] lỗi: {e}')
         try:
             return _translate_google(text)
         except Exception:
@@ -337,19 +344,25 @@ def _translate_deepl(text):
         'target_lang': 'VI',
         'source_lang': 'EN',
     }).encode('utf-8')
-    # DeepL Free dùng api-free.deepl.com, Pro dùng api.deepl.com
     base = 'api-free.deepl.com' if DEEPL_API_KEY.endswith(':fx') else 'api.deepl.com'
     req = urllib.request.Request(
         f'https://{base}/v2/translate', data=payload,
         headers={'Content-Type': 'application/x-www-form-urlencoded'}
     )
-    resp = urllib.request.urlopen(req, timeout=15)
+    resp = urllib.request.urlopen(req, timeout=10)
     data = json.loads(resp.read())
     return data['translations'][0]['text'].strip()
 
 def _translate_google(text):
     """Dịch bằng Google Translate (deep_translator) — fallback"""
-    return GoogleTranslator(source='auto', target='vi').translate(text) or text
+    try:
+        result = GoogleTranslator(source='auto', target='vi').translate(text)
+        return result or text
+    except Exception as e:
+        err_str = str(e)
+        if 'SSL' in err_str or 'EOF' in err_str or 'Max retries' in err_str:
+            raise  # ném lại để caller xử lý yên lặng
+        raise
 
 def strip_html(text):
     return re.sub(r'<[^>]+>', ' ', text).strip()
@@ -744,7 +757,6 @@ ws_clients = set()
 translate_enabled = TRANSLATE_ENABLE
 auto_fwd_enabled = False
 tg_channels = []
-categories = ['Sức khỏe', 'Tài chính', 'Xã hội', 'Công nghệ', 'Giải trí', 'Khác']
 poll_next_time = time.time() + POLL_INTERVAL
 
 # --- WebSocket thuần RFC 6455 (không cần thư viện websockets) ---
@@ -1034,10 +1046,6 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
     <input type="checkbox" id="new-show-link" checked style="width:15px;height:15px;cursor:pointer">
     Hiển thị link gốc
   </label>
-  <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
-    <input type="checkbox" id="new-translate-link" checked style="width:15px;height:15px;cursor:pointer">
-    Dịch nguồn (Google Translate)
-  </label>
 </div>
 <div style="margin-bottom:10px">
   <label style="font-size:12px;color:#555;font-weight:600;display:block;margin-bottom:4px">Số bài lịch sử lấy về khi khởi động:</label>
@@ -1070,6 +1078,10 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
 <select id="ch-select-modal" onchange="loadChannelToForm(this.value)"></select>
 <input type="text" id="ch-username" placeholder="@kênh_đích hoặc -100xxxxxxxxx (Group ID)">
 <input type="text" id="ch-name" placeholder="Tên hiển thị">
+<label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-bottom:10px">
+  <input type="checkbox" id="ch-is-group" style="width:15px;height:15px;cursor:pointer">
+  Là Group/Supergroup (có Topic IDs)
+</label>
 <div class="modal-btns">
 <button id="btn-ch-del" onclick="deleteChannel()" style="display:none">Xóa</button>
 <button class="btn-ok" onclick="saveTgSettings()">Lưu</button>
@@ -1368,10 +1380,12 @@ function loadChannelToForm(idx){
         const ch=tgChannels[selectedChannelIndex];
         document.getElementById('ch-username').value=ch.username||'';
         document.getElementById('ch-name').value=ch.name||'';
+        document.getElementById('ch-is-group').checked=ch.is_group===true;
         document.getElementById('btn-ch-del').style.display='inline-block';
     } else {
         document.getElementById('ch-username').value='';
         document.getElementById('ch-name').value='';
+        document.getElementById('ch-is-group').checked=false;
         document.getElementById('btn-ch-del').style.display='none';
     }
 }
@@ -1381,8 +1395,8 @@ function saveTgSettings(){
     const name=document.getElementById('ch-name').value.trim()||username;
     if(!username){alert('Nhập @username hoặc channel ID');return;}
     const normUsername=(!username.startsWith('@')&&!username.startsWith('-')&&!/^\d/.test(username))?'@'+username:username;
-    // Auto-detect group: ID số âm (-100xxx) là group/supergroup
-    const is_group=normUsername.startsWith('-');
+    // Dùng checkbox thay vì auto-detect — cho phép @username cũng là group
+    const is_group=document.getElementById('ch-is-group').checked;
     const chObj={username:normUsername,name,is_group};
     if(selectedChannelIndex>=0){
         tgChannels[selectedChannelIndex]=chObj;
@@ -1471,8 +1485,7 @@ async function forwardSelected(){
         const feedCfg=feeds.find(f=>f.url===it.feedUrl)||{};
         return {guid:it.guid,title:it.title,desc:it.desc,link:it.link,
                 category:it.category,feedUrl:it.feedUrl,
-                show_link:feedCfg.show_link!==false,
-                translate_link:feedCfg.translate_link!==false};
+                show_link:feedCfg.show_link!==false};
     });
     try{
         const r=await fetch('/tg_forward',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -1483,7 +1496,11 @@ async function forwardSelected(){
         ).join('');
         document.getElementById('result-modal').classList.add('open');
         selected.clear();updateFwdBar();
-        document.querySelectorAll('.item.selected').forEach(el=>el.classList.remove('selected'));
+        document.querySelectorAll('.item.selected').forEach(el=>{
+            el.classList.remove('selected');
+            const cb=el.querySelector('input[type=checkbox]');
+            if(cb) cb.checked=false;
+        });
     }catch(e){alert('Lỗi: '+e.message);}
     document.getElementById('fwd-modal').classList.remove('open');
 }
@@ -1515,7 +1532,7 @@ function setFilter(url){
 
 function syncFeedsHttp(){
     const payload=feeds.map(f=>({url:f.url,name:f.name,
-        show_link:f.show_link!==false,translate_link:f.translate_link!==false,
+        show_link:f.show_link!==false,
         auto_fwd:f.auto_fwd===true,
         destinations:f.destinations||[],
         history_limit:f.history_limit!=null?f.history_limit:20}));
@@ -1535,29 +1552,11 @@ function deleteFeed(i){
     renderSidebar();renderStream();
 }
 
-function renderFeedChannelList(selectedIds){
-    const wrap=document.getElementById('feed-channel-wrap');
-    const list=document.getElementById('feed-channel-list');
-    if(!tgChannels.length){wrap.style.display='none';return;}
-    wrap.style.display='block';
-    list.innerHTML=tgChannels.map((ch,idx)=>`
-        <label style="display:flex;align-items:center;gap:8px;padding:6px 10px;cursor:pointer;font-size:13px;hover:background:#f5f5f0">
-            <input type="checkbox" class="feed-ch-cb" value="${idx}" ${selectedIds&&selectedIds.includes(idx)?'checked':''} style="width:14px;height:14px">
-            <span>${ch.name} <span style="color:#aaa;font-size:11px">(${ch.type})</span></span>
-        </label>
-    `).join('');
-}
-
-function getSelectedFeedChannels(){
-    return Array.from(document.querySelectorAll('.feed-ch-cb:checked')).map(el=>parseInt(el.value));
-}
-
 function openEditFeed(i){
     editFeedIndex=i;const f=feeds[i];
     document.getElementById('new-name').value=f.name;
     document.getElementById('new-url').value=f.url;
     document.getElementById('new-show-link').checked=f.show_link!==false;
-    document.getElementById('new-translate-link').checked=f.translate_link!==false;
     document.getElementById('new-auto-fwd').checked=f.auto_fwd===true;
     document.getElementById('new-history-limit').value=String(f.history_limit!=null?f.history_limit:20);
     document.getElementById('modal-title').textContent='Sửa feed';
@@ -1573,7 +1572,6 @@ function openModal(){
     document.getElementById('new-name').value='';
     document.getElementById('new-url').value='';
     document.getElementById('new-show-link').checked=true;
-    document.getElementById('new-translate-link').checked=true;
     document.getElementById('new-auto-fwd').checked=false;
     document.getElementById('new-history-limit').value='20';
     document.getElementById('modal-title').textContent='Thêm feed';
@@ -1588,12 +1586,11 @@ function addFeed(){
     const name=document.getElementById('new-name').value.trim(),
           url=document.getElementById('new-url').value.trim(),
           show_link=document.getElementById('new-show-link').checked,
-          translate_link=document.getElementById('new-translate-link').checked,
           auto_fwd=document.getElementById('new-auto-fwd').checked,
           history_limit=parseInt(document.getElementById('new-history-limit').value)||20,
           destinations=getFeedDests();
     if(!name||!url){alert('Nhập đủ tên và URL');return;}
-    const feedObj={name,url,show_link,translate_link,auto_fwd,destinations,history_limit};
+    const feedObj={name,url,show_link,auto_fwd,destinations,history_limit};
     if(editFeedIndex>=0){feeds[editFeedIndex]=feedObj;}
     else{feeds.push(feedObj);}
     saveFeeds();
@@ -1664,6 +1661,13 @@ function _buildItemEl(it,guid){
     const div=document.createElement('div');
     div.className='item'+(isSel?' selected':'');
     div.dataset.guid=guid;
+    // Web preview: chỉ hiển thị khi có link (không phải TG source)
+    const hasLink=it.link&&it.link.trim()&&!isTgSource(it.feedUrl||'');
+    const previewHtml=hasLink?`<div style="margin:8px 0 4px;border:1px solid #e8e8e0;border-radius:8px;overflow:hidden;background:#fafaf8">
+        <iframe src="${it.link}" style="width:100%;height:200px;border:none;display:block"
+            loading="lazy" sandbox="allow-scripts allow-same-origin allow-popups"
+            onerror="this.parentElement.style.display='none'"></iframe>
+    </div>`:'';
     div.innerHTML=`
         <div style="display:flex;gap:8px;padding:.85rem">
             <input type="checkbox"${isSel?' checked':''} onchange="toggleSelect('${safeGuid}',this.checked)">
@@ -1673,14 +1677,9 @@ function _buildItemEl(it,guid){
             </div>
             <span onclick="toggleBody('${safeGuid}',this)" style="cursor:pointer;color:#ccc;user-select:none">+</span>
         </div>
-        <div class="item-body-div" style="display:none;padding:0 1.1rem .9rem;border-top:1px solid #f4f4f0;line-height:1.6">${it.desc||''}</div>
+        <div class="item-body-div" style="display:none;padding:0 1.1rem .9rem;border-top:1px solid #f4f4f0;line-height:1.6">${it.desc||''}${previewHtml}</div>
         ${it.link?`<div class="item-footer"><a href="${it.link}" target="_blank">Xem bài gốc →</a></div>`:''}`;
     return div;
-}
-
-function itemHTML(it,i){
-    // Kept for compatibility — không còn dùng trong renderStream
-    return _buildItemEl(it, it.guid||('tmp_'+i)).outerHTML;
 }
 
 function toggleBody(guid, btn){
@@ -1784,7 +1783,7 @@ function connectWS(){
         document.getElementById('ws-dot').className='ws-dot on';
         document.getElementById('ws-lbl').textContent='Đang kết nối...';
         feedsPayload=feeds.map(f=>({url:f.url,name:f.name,
-            show_link:f.show_link!==false,translate_link:f.translate_link!==false,
+            show_link:f.show_link!==false,
             auto_fwd:f.auto_fwd===true,
             destinations:f.destinations||[],
             history_limit:f.history_limit!=null?f.history_limit:20}));
@@ -1802,8 +1801,7 @@ function connectWS(){
             settingsSent = true;
             setTimeout(()=>{ if(wsReady) wsSend({type:'tg_settings',channels:tgChannels}); }, 100);
             setTimeout(()=>{ if(wsReady) wsSend({type:'auto_fwd',enabled:autoFwd,channels:tgChannels}); }, 200);
-            setTimeout(()=>{ if(wsReady) wsSend({type:'categories',categories}); }, 300);
-            setTimeout(()=>{ if(wsReady) wsSend({type:'translate_engine',engine:translateEngine}); }, 400);
+            setTimeout(()=>{ if(wsReady) wsSend({type:'translate_engine',engine:translateEngine}); }, 300);
         }
         // Gửi feeds qua HTTP chỉ 1 lần — không lặp lại mỗi khi WS reconnect
         if(feedsSynced) return;
@@ -1905,7 +1903,6 @@ function showToastMsg(msg){
 }
 
 (function(){
-    renderCategoryList();
     renderSidebar();
     checkTelethonStatus();
     // Khôi phục engine đã chọn từ localStorage
@@ -2206,8 +2203,7 @@ def _do_forward(processed, category, url):
         print('[Forward] Telethon chưa kết nối — bỏ qua forward')
         return
 
-    show_link    = feed_cfg.get('show_link', True)
-    translate_lk = feed_cfg.get('translate_link', False)
+    show_link = feed_cfg.get('show_link', True)
 
     # --- Resolve destinations từ feed config ---
     # Format mới: destinations = [{ch_idx, topic_ids}, ...]
@@ -2248,10 +2244,7 @@ def _do_forward(processed, category, url):
                 caption    = desc_plain
 
                 if show_link and it.get('link'):
-                    link_url = it['link']
-                    if translate_lk:
-                        link_url = f'https://translate.google.com/translate?sl=auto&tl=vi&u={urllib.parse.quote(link_url, safe="")}'
-                    caption += f'\n\n<a href="{link_url}">Xem bài gốc →</a>'
+                    caption += f'\n\n<a href="{it["link"]}">Xem bài gốc →</a>'
                 if channel_name:
                     caption += f'\n\n<i>{channel_name}</i>'
 
@@ -2590,7 +2583,7 @@ def poller():
             time.sleep(5)   # tránh cpu 100% nếu lỗi liên tục
 
 def ws_handler(ws):
-    global translate_enabled, auto_fwd_enabled, tg_channels, categories, translate_engine
+    global translate_enabled, auto_fwd_enabled, tg_channels, translate_engine
     
     with lock:
         ws_clients.add(ws)
@@ -2665,8 +2658,7 @@ def ws_handler(ws):
                     tg_channels = msg.get('channels', tg_channels)
                 print(f'[WS] auto_fwd={auto_fwd_enabled}, channels={len(tg_channels)}')
 
-            elif t == 'tg_settings' or t == 'categories':
-                # Có thể xử lý thêm nếu cần
+            elif t == 'tg_settings':
                 pass
 
     except BrokenPipeError:
@@ -2920,17 +2912,13 @@ class HttpHandler(BaseHTTPRequestHandler):
 
                 for topic_id in topic_list:
                     for it in items_raw:
-                        feed_url     = it.get('feedUrl', '')
-                        show_link    = it.get('show_link', True)
-                        translate_lk = it.get('translate_link', False)
+                        feed_url  = it.get('feedUrl', '')
+                        show_link = it.get('show_link', True)
 
                         desc_plain = strip_html((it.get('desc','') or '').replace('<br>','\n')).strip()
                         caption    = desc_plain
                         if show_link and it.get('link'):
-                            link_url = it['link']
-                            if translate_lk:
-                                link_url = f'https://translate.google.com/translate?sl=auto&tl=vi&u={urllib.parse.quote(link_url, safe="")}'
-                            caption += f'\n\n<a href="{link_url}">Xem bài gốc →</a>'
+                            caption += f'\n\n<a href="{it["link"]}">Xem bài gốc →</a>'
                         if channel_name:
                             caption += f'\n\n<i>{channel_name}</i>'
 

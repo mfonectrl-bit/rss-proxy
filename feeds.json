@@ -1224,12 +1224,16 @@
       "url": "https://www.cnbc.com/id/100003114/device/rss/rss.html",
       "name": "CNBC",
       "show_link": true,
-      "translate_link": true,
+      "translate_link": false,
       "auto_fwd": true,
       "destinations": [
         {
           "ch_idx": 1,
           "topic_ids": ""
+        },
+        {
+          "ch_idx": 3,
+          "topic_ids": "9"
         }
       ],
       "history_limit": 5

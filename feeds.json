@@ -1507,8 +1507,8 @@
       "history_limit": 5
     },
     {
-      "url": "https://mufon.com/feed/",
-      "name": "Mufon (UFO)",
+      "url": "https://www.theblackvault.com/casefiles/feed/",
+      "name": "The Black Vault (UFO)",
       "show_link": true,
       "auto_fwd": true,
       "destinations": [

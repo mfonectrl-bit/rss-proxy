@@ -1728,8 +1728,8 @@
       "history_limit": 5
     },
     {
-      "url": "https://t.me/veganrecipes",
-      "name": "Healthy Food",
+      "url": "https://t.me/recipes_eng",
+      "name": "Popular Recipes",
       "show_link": true,
       "auto_fwd": true,
       "destinations": [

@@ -1598,8 +1598,8 @@
       "history_limit": 20
     },
     {
-      "url": "https://www.flickr.com/services/feeds/photos_public.gne?tags=ancient,architecture&format=rss2",
-      "name": "Flickr",
+      "url": "https://rarehistoricalphotos.com/feed/",
+      "name": "Rare Historical Photos",
       "show_link": true,
       "auto_fwd": true,
       "destinations": [

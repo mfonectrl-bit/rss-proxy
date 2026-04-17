@@ -1622,19 +1622,6 @@
         }
       ],
       "history_limit": 5
-    },
-    {
-      "url": "https://vietnam.vnanet.vn/english/rss.rss",
-      "name": "VNANET",
-      "show_link": true,
-      "auto_fwd": true,
-      "destinations": [
-        {
-          "ch_idx": 3,
-          "topic_ids": "19266"
-        }
-      ],
-      "history_limit": 5
     }
   ],
   "auto_fwd": true,

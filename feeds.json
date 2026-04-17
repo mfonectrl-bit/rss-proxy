@@ -1598,8 +1598,8 @@
       "history_limit": 20
     },
     {
-      "url": "https://oldsaigon.tumblr.com/rss",
-      "name": "Old Saigon",
+      "url": "https://www.flickr.com/services/feeds/photos_public.gne?tags=ancient,architecture&format=rss2",
+      "name": "Flickr",
       "show_link": true,
       "auto_fwd": true,
       "destinations": [
@@ -1608,7 +1608,7 @@
           "topic_ids": "19266"
         }
       ],
-      "history_limit": 20
+      "history_limit": 5
     }
   ],
   "auto_fwd": true,

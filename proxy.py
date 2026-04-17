@@ -2073,7 +2073,7 @@ async def _resolve_dest(dest_channel):
     return dest
 
 
-async def _tg_send_item(dest_channel, item, caption, topic_id=None):
+async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_link=False):
     """
     Gửi 1 item lên kênh/group đích qua Telethon (không dùng Bot API).
 
@@ -2099,8 +2099,8 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None):
         grouped   = item.get('_tg_grouped_id')
         has_media = item.get('_tg_has_media', False)
         rss_media = item.get('_rss_media_url')
-        # link_preview chỉ bật khi caption có URL — tránh preview rỗng chiếm chỗ
-        show_preview = bool(re.search(r'https?://', caption or ''))
+        # link_preview chỉ bật khi desc gốc có URL — không tính t.me link trong 'Xem bài gốc'
+        show_preview = desc_has_link
 
         # reply_to = topic_id nếu gửi vào topic của group, None nếu gửi bình thường
         thread_reply = int(topic_id) if topic_id else None
@@ -2133,10 +2133,12 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None):
                     # Caption trong giới hạn Telegram (4096 ký tự) — gửi 1 tin gồm media + caption
                     if len(media_list) == 1:
                         await tg_client.send_file(dest, media_list[0], caption=caption,
-                                                  parse_mode='html', reply_to=thread_reply)
+                                                  parse_mode='html', reply_to=thread_reply,
+                                                  link_preview=show_preview)
                     else:
                         await tg_client.send_file(dest, media_list, caption=caption,
-                                                  parse_mode='html', reply_to=thread_reply)
+                                                  parse_mode='html', reply_to=thread_reply,
+                                                  link_preview=show_preview)
                 else:
                     # Caption quá dài (>4096) — gửi media trống, reply text riêng
                     if len(media_list) == 1:
@@ -2160,7 +2162,8 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None):
             if len(caption) <= 4096:
                 # Caption trong giới hạn Telegram (4096 ký tự) — gửi 1 tin gồm media + caption
                 await tg_client.send_file(dest, rss_media, caption=caption,
-                                          parse_mode='html', reply_to=thread_reply)
+                                          parse_mode='html', reply_to=thread_reply,
+                                          link_preview=show_preview)
             else:
                 # Caption quá dài (>4096) — gửi media trống, reply text riêng
                 sent = await tg_client.send_file(dest, rss_media, caption='',
@@ -2244,6 +2247,8 @@ def _do_forward(processed, category, url):
             for it in reversed(processed):
                 desc_plain = strip_html(it.get('desc', '').replace('<br>', '\n')).strip()
                 caption    = desc_plain
+                # desc_has_link: chỉ check https link trong nội dung gốc, bỏ qua t.me
+                desc_has_link = bool(re.search(r'https?://(?!t\.me)', it.get('desc', '') or ''))
 
                 if show_link and it.get('link'):
                     caption += f'\n\n<a href="{it["link"]}">Xem bài gốc →</a>'
@@ -2255,7 +2260,7 @@ def _do_forward(processed, category, url):
                     print(f'[Forward] Bỏ qua tin — _send_semaphore timeout')
                     continue
                 try:
-                    ok = tg_run(_tg_send_item(dest, it, caption, topic_id=topic_id))
+                    ok = tg_run(_tg_send_item(dest, it, caption, topic_id=topic_id, desc_has_link=desc_has_link))
                 except Exception as e:
                     print(f'[Forward] tg_run lỗi: {e}')
                     ok = False
@@ -2938,8 +2943,10 @@ class HttpHandler(BaseHTTPRequestHandler):
                         else:
                             imgs, _ = extract_media(it.get('desc',''))
                             send_item['_rss_media_url'] = imgs[0] if imgs else None
+                        # desc_has_link: check link thật trong desc, bỏ t.me
+                        desc_has_link = bool(re.search(r'https?://(?!t\.me)', it.get('desc', '') or ''))
                         try:
-                            ok = tg_run(_tg_send_item(dest, send_item, caption, topic_id=topic_id))
+                            ok = tg_run(_tg_send_item(dest, send_item, caption, topic_id=topic_id, desc_has_link=desc_has_link))
                             all_results.append({'title': it.get('title',''), 'ok': ok, 'error': '' if ok else 'Gửi thất bại'})
                         except RuntimeError as e:
                             all_results.append({'title': it.get('title',''), 'ok': False, 'error': str(e)})

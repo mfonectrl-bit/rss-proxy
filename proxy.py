@@ -146,8 +146,10 @@ TRANSLATE_ENABLE = True
 SESSION_FILE     = 'tg_session'
 TG_CONFIG_FILE   = 'tg_config.json'
 
-# Global thread pool — giới hạn tối đa 40 threads đồng thời
+# Pool cho poll/fetch/setup — giới hạn 40 threads
 _thread_pool = ThreadPoolExecutor(max_workers=40)
+# Pool riêng cho forward — tách biệt, không bị poll/fetch chiếm chỗ
+_forward_pool = ThreadPoolExecutor(max_workers=10)
 
 # --- Engine dịch ---
 # Gemini đã bị loại bỏ — 429 rate limit quá thấp (15 req/phút), không dùng được với nhiều feed
@@ -265,7 +267,7 @@ class BatchPipeline:
 
             # 2. Forward — dùng pool có giới hạn, không spawn thread mới mỗi batch
             feed_category = processed[0].get('category', '')
-            _thread_pool.submit(_do_forward, processed, feed_category, feed_url)
+            _forward_pool.submit(_do_forward, processed, feed_category, feed_url)
 
     def qsize(self):
         return self._q.qsize()

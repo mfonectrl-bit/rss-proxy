@@ -1622,6 +1622,19 @@
         }
       ],
       "history_limit": 5
+    },
+    {
+      "url": "https://www.atlasobscura.com/feeds/latest",
+      "name": "Atlas Obscura",
+      "show_link": true,
+      "auto_fwd": true,
+      "destinations": [
+        {
+          "ch_idx": 3,
+          "topic_ids": "19266"
+        }
+      ],
+      "history_limit": 5
     }
   ],
   "auto_fwd": true,

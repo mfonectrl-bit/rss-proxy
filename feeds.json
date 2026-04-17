@@ -1583,6 +1583,19 @@
         }
       ],
       "history_limit": 20
+    },
+    {
+      "url": "https://vietnamtruoc.wordpress.com/feed/",
+      "name": "Việt Nam Xưa",
+      "show_link": true,
+      "auto_fwd": true,
+      "destinations": [
+        {
+          "ch_idx": 3,
+          "topic_ids": "19266"
+        }
+      ],
+      "history_limit": 20
     }
   ],
   "auto_fwd": true,

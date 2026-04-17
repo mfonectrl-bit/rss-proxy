@@ -334,7 +334,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 10
+      "history_limit": 5
     },
     {
       "url": "https://t.me/RogerHodkinson",
@@ -623,7 +623,7 @@
           "topic_ids": "5663"
         }
       ],
-      "history_limit": 20
+      "history_limit": 5
     },
     {
       "url": "https://t.me/conspiracy_theory3",

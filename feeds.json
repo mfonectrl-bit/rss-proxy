@@ -1531,6 +1531,19 @@
         }
       ],
       "history_limit": 5
+    },
+    {
+      "url": "https://tricycle.org/feed/",
+      "name": "Tricycle",
+      "show_link": true,
+      "auto_fwd": true,
+      "destinations": [
+        {
+          "ch_idx": 3,
+          "topic_ids": "19111"
+        }
+      ],
+      "history_limit": 20
     }
   ],
   "auto_fwd": true,

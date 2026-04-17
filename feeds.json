@@ -1520,8 +1520,8 @@
       "history_limit": 5
     },
     {
-      "url": "https://mufon.com/feed/",
-      "name": "Mufon",
+      "url": "https://alienufoblog.com/feed/",
+      "name": "Alien UFO Blog",
       "show_link": true,
       "auto_fwd": true,
       "destinations": [

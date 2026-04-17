@@ -1598,8 +1598,8 @@
       "history_limit": 20
     },
     {
-      "url": "https://rarehistoricalphotos.com/feed/",
-      "name": "Rare Historical Photos",
+      "url": "https://www.vintag.es/feeds/posts/default",
+      "name": "Vintage Everyday",
       "show_link": true,
       "auto_fwd": true,
       "destinations": [

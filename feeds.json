@@ -1585,8 +1585,8 @@
       "history_limit": 20
     },
     {
-      "url": "https://vietnamtruoc.wordpress.com/feed/",
-      "name": "Việt Nam Xưa",
+      "url": "https://t.me/history_photo_look",
+      "name": "History photo",
       "show_link": true,
       "auto_fwd": true,
       "destinations": [

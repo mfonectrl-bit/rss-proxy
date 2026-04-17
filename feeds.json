@@ -317,7 +317,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 10
+      "history_limit": 5
     },
     {
       "url": "https://t.me/DrPaulMarik",
@@ -334,7 +334,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 10
+      "history_limit": 5
     },
     {
       "url": "https://t.me/RogerHodkinson",

@@ -2099,6 +2099,8 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None):
         grouped   = item.get('_tg_grouped_id')
         has_media = item.get('_tg_has_media', False)
         rss_media = item.get('_rss_media_url')
+        # link_preview chỉ bật khi caption có URL — tránh preview rỗng chiếm chỗ
+        show_preview = bool(re.search(r'https?://', caption or ''))
 
         # reply_to = topic_id nếu gửi vào topic của group, None nếu gửi bình thường
         thread_reply = int(topic_id) if topic_id else None
@@ -2146,12 +2148,12 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None):
                     reply_to = sent.id if not isinstance(sent, list) else sent[0].id
                     for chunk in _split_text(caption, 4096):
                         await tg_client.send_message(dest, chunk, parse_mode='html',
-                                                     reply_to=reply_to, link_preview=False)
+                                                     reply_to=reply_to, link_preview=show_preview)
                 return True
             # Không lấy được media → fallback text
             for chunk in _split_text(caption, 4096):
                 await tg_client.send_message(dest, chunk, parse_mode='html',
-                                             reply_to=thread_reply, link_preview=False)
+                                             reply_to=thread_reply, link_preview=show_preview)
             return True
 
         elif rss_media:
@@ -2166,13 +2168,13 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None):
                 reply_to = sent.id if not isinstance(sent, list) else sent[0].id
                 for chunk in _split_text(caption, 4096):
                     await tg_client.send_message(dest, chunk, parse_mode='html',
-                                                 reply_to=reply_to, link_preview=False)
+                                                 reply_to=reply_to, link_preview=show_preview)
             return True
 
         else:
             for chunk in _split_text(caption, 4096):
                 await tg_client.send_message(dest, chunk, parse_mode='html',
-                                             reply_to=thread_reply, link_preview=False)
+                                             reply_to=thread_reply, link_preview=show_preview)
             return True
 
     except Exception as e:

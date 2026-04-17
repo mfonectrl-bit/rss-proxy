@@ -1520,8 +1520,8 @@
       "history_limit": 5
     },
     {
-      "url": "https://openminds.tv/feed/",
-      "name": "Open Mind (UFO)",
+      "url": "http://feeds.feedburner.com/TheUfoChronicles",
+      "name": "The Ufo Chronicles",
       "show_link": true,
       "auto_fwd": true,
       "destinations": [

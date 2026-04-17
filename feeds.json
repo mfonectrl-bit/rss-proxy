@@ -1624,8 +1624,8 @@
       "history_limit": 5
     },
     {
-      "url": "https://whc.unesco.org/en/list/rss/",
-      "name": "Di sản TG",
+      "url": "https://feeds.feedburner.com/Archdaily",
+      "name": "Arch Daily",
       "show_link": true,
       "auto_fwd": true,
       "destinations": [

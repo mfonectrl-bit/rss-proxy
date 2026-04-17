@@ -1557,6 +1557,19 @@
         }
       ],
       "history_limit": 5
+    },
+    {
+      "url": "https://plumvillage.org/feed/",
+      "name": "Plum Village",
+      "show_link": true,
+      "auto_fwd": true,
+      "destinations": [
+        {
+          "ch_idx": 3,
+          "topic_ids": "19111"
+        }
+      ],
+      "history_limit": 5
     }
   ],
   "auto_fwd": true,

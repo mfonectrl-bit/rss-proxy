@@ -1017,23 +1017,6 @@
       "history_limit": 5
     },
     {
-      "url": "https://t.me/dilya_asliddinovna_dietolog",
-      "name": "DIETOLOG DILYA",
-      "show_link": true,
-      "auto_fwd": true,
-      "destinations": [
-        {
-          "ch_idx": 0,
-          "topic_ids": ""
-        },
-        {
-          "ch_idx": 3,
-          "topic_ids": "3"
-        }
-      ],
-      "history_limit": 5
-    },
-    {
       "url": "https://t.me/TelegramTips",
       "name": "Telegram Tips",
       "show_link": true,

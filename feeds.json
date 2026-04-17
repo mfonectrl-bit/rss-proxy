@@ -1520,8 +1520,8 @@
       "history_limit": 5
     },
     {
-      "url": "https://buddhaweekly.com/feed/",
-      "name": "Buddha Weekly",
+      "url": "https://t.me/wordsofbuddha",
+      "name": "Words of the Buddha",
       "show_link": true,
       "auto_fwd": true,
       "destinations": [

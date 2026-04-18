@@ -140,16 +140,16 @@ def load_feeds_from_file():
 
 
 # --- CẤU HÌNH ---
-POLL_INTERVAL    = 60
+POLL_INTERVAL    = 90
 HTTP_PORT = int(os.environ.get("PORT", 8765))
 TRANSLATE_ENABLE = True
 SESSION_FILE     = 'tg_session'
 TG_CONFIG_FILE   = 'tg_config.json'
 
 # Pool cho poll/fetch/setup — giới hạn 40 threads
-_thread_pool = ThreadPoolExecutor(max_workers=40)
+_thread_pool = ThreadPoolExecutor(max_workers=20)
 # Pool riêng cho forward — tách biệt, không bị poll/fetch chiếm chỗ
-_forward_pool = ThreadPoolExecutor(max_workers=10)
+_forward_pool = ThreadPoolExecutor(max_workers=5)
 
 # --- Engine dịch ---
 # Gemini đã bị loại bỏ — 429 rate limit quá thấp (15 req/phút), không dùng được với nhiều feed
@@ -176,8 +176,8 @@ class BatchPipeline:
     """
     BATCH_SIZE     = 3
     FLUSH_TIMEOUT  = 0.5   # giây: flush nhanh để UI cập nhật ngay
-    NUM_WORKERS    = 4
-    MAX_QUEUE_SIZE = 200
+    NUM_WORKERS    = 2
+    MAX_QUEUE_SIZE = 100
 
     def __init__(self):
         self._q = _queue.Queue(maxsize=self.MAX_QUEUE_SIZE)
@@ -426,9 +426,9 @@ def translate_text(text):
         print(f'[!] Dịch lỗi: {e}')
         result = text
     with translate_lock:
-        if len(translate_cache) > 500:
+        if len(translate_cache) > 150:
             keys = list(translate_cache.keys())
-            for k in keys[:250]:
+            for k in keys[:100]:
                 del translate_cache[k]
         translate_cache[key] = result
     return result
@@ -1051,10 +1051,12 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
 </div>
 <div style="margin-bottom:10px">
   <label style="font-size:12px;color:#555;font-weight:600;display:block;margin-bottom:4px">Số bài lịch sử lấy về khi khởi động:</label>
-  <input type="number" id="new-history-limit" min="0" max="200" value="20"
-    placeholder="0 = không lấy lịch sử"
-    style="width:100%;padding:7px;border:1px solid #d0d0c8;border-radius:8px;font-size:13px">
-  <div style="font-size:11px;color:#aaa;margin-top:3px">Nhập 0 để không lấy lịch sử. Tối đa 200 bài.</div>
+  <select id="new-history-limit" style="width:100%;padding:7px;border:1px solid #d0d0c8;border-radius:8px;font-size:13px">
+    <option value="20">20 bài (mặc định)</option>
+    <option value="10">10 bài</option>
+    <option value="5">5 bài</option>
+    <option value="0">Không lấy lịch sử</option>
+  </select>
 </div>
 <!-- Đích forward — hiển thị khi có kênh -->
 <div id="feed-dest-wrap" style="display:none;margin-bottom:10px">
@@ -2285,7 +2287,7 @@ def _cleanup_known_guids():
     for u in urls_snapshot:
         url = u.get('url')
         limit = int(u.get('history_limit', 20))
-        max_keep = limit * 2
+        max_keep = max(limit, 10)
         guids = guids_snapshot.get(url)
         if not guids or len(guids) <= max_keep:
             continue
@@ -2304,6 +2306,40 @@ def _cleanup_known_guids():
         with lock:
             known_guids[url] = trimmed
         print(f'[CLEANUP] {url}: {len(guids)} → {len(trimmed)} GUIDs')
+
+def _memory_cleanup():
+    """
+    Dọn dẹp RAM định kỳ: translate_cache, _resolved_channels_cache, gc.
+    Gọi mỗi 20 phút từ poller.
+    """
+    import gc
+
+    # Trim translate_cache xuống còn tối đa 50 entries
+    with translate_lock:
+        if len(translate_cache) > 50:
+            keys = list(translate_cache.keys())
+            for k in keys[:-50]:
+                del translate_cache[k]
+            print(f'[MEM] translate_cache trimmed → {len(translate_cache)} entries')
+
+    # Trim _resolved_channels_cache nếu quá lớn (không cần giữ nhiều)
+    global _resolved_channels_cache
+    if len(_resolved_channels_cache) > 200:
+        _resolved_channels_cache = set(list(_resolved_channels_cache)[-100:])
+        print(f'[MEM] _resolved_channels_cache trimmed → {len(_resolved_channels_cache)}')
+
+    # Force GC
+    collected = gc.collect()
+    print(f'[MEM] GC collected {collected} objects')
+
+    # Log RAM usage nếu có psutil
+    try:
+        import psutil, os as _os
+        proc = psutil.Process(_os.getpid())
+        mb = proc.memory_info().rss / 1024 / 1024
+        print(f'[MEM] RAM hiện tại: {mb:.1f} MB')
+    except ImportError:
+        pass
 
 def _poll_one(url_obj):
     """
@@ -2479,7 +2515,7 @@ def poller():
     Poller background chính
     """
     global poll_next_time
-    FAST_INTERVAL    = 30
+    FAST_INTERVAL    = 60
     fast_next: dict  = {}
     tg_inited: set   = set()
     tg_init_pending: set = set()
@@ -2576,10 +2612,11 @@ def poller():
                     total_feeds = len(watched_urls)
                 print(f"[POLL] Đang chạy | Feeds: {total_feeds} | Queue: {_pipeline.qsize()} | Known GUIDs: {len(known_guids)} | TG inited: {len(tg_inited)}")
 
-            # Dọn dẹp known_guids mỗi giờ — dùng timer thay vì % 3600 tránh bị miss
-            if now - _last_cleanup >= 3600:
+            # Dọn dẹp known_guids + RAM mỗi 20 phút
+            if now - _last_cleanup >= 1200:
                 _last_cleanup = now
                 _cleanup_known_guids()
+                _memory_cleanup()
 
             time.sleep(0.5)
 

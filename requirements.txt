@@ -3,3 +3,4 @@ telethon>=1.36.0
 deep-translator>=1.11.0
 langdetect>=1.0.9
 redis>=5.0.0
+psutil>=5.9.0

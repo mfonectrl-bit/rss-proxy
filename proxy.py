@@ -761,9 +761,8 @@ auto_fwd_enabled = False
 tg_channels = []
 poll_next_time = time.time() + POLL_INTERVAL
 
-# Flag chặn forward tin cũ lúc khởi động
-# Chỉ bật sau khi tất cả feeds đã init xong known_guids
-_forward_ready = False
+# Set chứa các feed URL đã init xong known_guids — chỉ feed nào có trong set mới được forward
+_forward_ready_feeds = set()
 
 # --- WebSocket thuần RFC 6455 (không cần thư viện websockets) ---
 
@@ -2214,8 +2213,8 @@ def _do_forward(processed, category, url):
     if not TELETHON_AVAILABLE or tg_client is None:
         print('[Forward] Telethon chưa kết nối — bỏ qua forward')
         return
-    if not _forward_ready:
-        return  # Chưa init xong — bỏ qua tin cũ lúc khởi động
+    if url not in _forward_ready_feeds:
+        return  # Feed này chưa init xong — bỏ qua tin cũ lúc khởi động
 
     show_link = feed_cfg.get('show_link', True)
 
@@ -2380,6 +2379,7 @@ def _poll_one(url_obj):
             # Lần đầu hoặc bị reset → init known_guids
             with lock:
                 known_guids[url] = {it['guid'] for it in items if it['guid']}
+            _forward_ready_feeds.add(url)
             print(f'[INIT] known_guids khởi tạo lần đầu cho: {url} ({len(items)} items)')
             return True   # Không forward tin cũ
 
@@ -2453,6 +2453,7 @@ def _init_tg_feed(url_obj):
         ws_items = [{k: v for k, v in it.items() if k != '_tg_media_bytes'} for it in items]
         if ws_items:
             broadcast({'type': 'new_items', 'url': url, 'items': ws_items})
+        _forward_ready_feeds.add(url)
         print(f'[TG] Load lịch sử {channel}: {len(items)} tin (history_limit={history_limit})')
     except Exception as e:
         print(f'[!] Load lịch sử lỗi {channel}: {e}')
@@ -2626,16 +2627,7 @@ def poller():
                     _ram_str = ''
                 print(f"[POLL] Đang chạy | Feeds: {total_feeds} | Queue: {_pipeline.qsize()} | Known GUIDs: {len(known_guids)} | TG inited: {len(tg_inited)}{_ram_str}")
 
-            # Bật forward sau khi tất cả feeds đã init known_guids
-            # Điều kiện: không còn feed nào chưa có known_guids + không còn tg_init_pending
-            global _forward_ready
-            if not _forward_ready and not tg_init_pending:
-                with lock:
-                    total_feeds = len(watched_urls)
-                    inited_count = len(known_guids)
-                if inited_count >= total_feeds and total_feeds > 0:
-                    _forward_ready = True
-                    print(f'[Forward] ✅ Tất cả {total_feeds} feeds đã init — bắt đầu forward tin mới')
+
 
             # Dọn dẹp known_guids + RAM mỗi 20 phút
             if now - _last_cleanup >= 1200:

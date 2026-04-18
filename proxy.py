@@ -2366,31 +2366,21 @@ def _poll_one(url_obj):
         with lock:
             prev = known_guids.get(url)
 
-        # ==================== SLIDING WINDOW ====================
+        # ==================== DEDUP ====================
         if prev is None or len(prev) == 0:
-            # Lần đầu hoặc bị reset → init known_guids với history_limit GUIDs gần nhất
-            init_guids = [it['guid'] for it in items if it['guid']][-history_limit:]
+            # Lần đầu hoặc bị reset → init known_guids
             with lock:
-                known_guids[url] = set(init_guids)
-            print(f'[INIT] known_guids khởi tạo lần đầu cho: {url} ({len(init_guids)} items)')
+                known_guids[url] = {it['guid'] for it in items if it['guid']}
+            print(f'[INIT] known_guids khởi tạo lần đầu cho: {url} ({len(items)} items)')
             return True   # Không forward tin cũ
 
         # Bình thường: tìm tin mới
         new_items = [it for it in items if it['guid'] and it['guid'] not in prev]
 
         if new_items:
-            # Sliding window: thêm GUID mới, xóa GUID cũ nhất nếu vượt history_limit
+            # Ghi đè known_guids bằng toàn bộ feed lần này
             with lock:
-                current = known_guids.get(url, set())
-                for it in new_items:
-                    if it['guid']:
-                        current.add(it['guid'])
-                # Giữ tối đa history_limit GUIDs — xóa cũ nhất nếu phình
-                if len(current) > history_limit:
-                    # Không thể sort set → chuyển sang list, trim
-                    guids_list = list(current)
-                    current = set(guids_list[-history_limit:])
-                known_guids[url] = current
+                known_guids[url] = {it['guid'] for it in items if it['guid']}
 
             print(f'[+] {len(new_items)} bài mới → pipeline: {url}')
             
@@ -2619,7 +2609,13 @@ def poller():
                 _last_debug_sec = cur_sec
                 with lock:
                     total_feeds = len(watched_urls)
-                print(f"[POLL] Đang chạy | Feeds: {total_feeds} | Queue: {_pipeline.qsize()} | Known GUIDs: {len(known_guids)} | TG inited: {len(tg_inited)}")
+                try:
+                    import psutil as _psutil, os as _os2
+                    _mb = _psutil.Process(_os2.getpid()).memory_info().rss / 1024 / 1024
+                    _ram_str = f' | RAM: {_mb:.0f}MB'
+                except ImportError:
+                    _ram_str = ''
+                print(f"[POLL] Đang chạy | Feeds: {total_feeds} | Queue: {_pipeline.qsize()} | Known GUIDs: {len(known_guids)} | TG inited: {len(tg_inited)}{_ram_str}")
 
             # Dọn dẹp known_guids + RAM mỗi 20 phút
             if now - _last_cleanup >= 1200:

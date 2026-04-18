@@ -1933,11 +1933,14 @@ def fetch_feed(url):
     req = urllib.request.Request(url, headers=headers)
     return urllib.request.urlopen(req, timeout=8).read()
 
-def parse_items(xml_bytes, category_hint=''):
+def parse_items(xml_bytes, category_hint='', limit=None):
     root = ET.fromstring(xml_bytes)
     is_atom = 'feed' in root.tag
     ns = '{http://www.w3.org/2005/Atom}'
     entries = (root.findall(f'.//{ns}entry') or root.findall('.//entry')) if is_atom else root.findall('.//item')
+    # Giới hạn số bài lấy về theo history_limit
+    if limit and limit > 0:
+        entries = entries[:limit]
     items = []
     for e in entries:
         def g(*tags):
@@ -2364,7 +2367,7 @@ def _poll_one(url_obj):
                     it['category'] = category
         else:
             xml   = fetch_feed(url)
-            items = parse_items(xml, category)
+            items = parse_items(xml, category, limit=history_limit)
 
         if not items:
             return True

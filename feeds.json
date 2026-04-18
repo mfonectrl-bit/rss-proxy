@@ -1065,7 +1065,7 @@
           "topic_ids": "7"
         }
       ],
-      "history_limit": 2
+      "history_limit": 5
     },
     {
       "url": "https://feeds.bloomberg.com/markets/news.rss",

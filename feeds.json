@@ -1526,7 +1526,7 @@
           "topic_ids": "19266"
         }
       ],
-      "history_limit": 20
+      "history_limit": 5
     },
     {
       "url": "https://t.me/history_photo_look",

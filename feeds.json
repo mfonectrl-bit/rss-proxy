@@ -1487,7 +1487,7 @@
           "topic_ids": "19111"
         }
       ],
-      "history_limit": 20
+      "history_limit": 5
     },
     {
       "url": "https://t.me/whichtimes",

@@ -1386,19 +1386,6 @@
       "history_limit": 5
     },
     {
-      "url": "https://thanhnien.vn/rss/home.rss",
-      "name": "Thann Niên",
-      "show_link": true,
-      "auto_fwd": true,
-      "destinations": [
-        {
-          "ch_idx": 3,
-          "topic_ids": "5666"
-        }
-      ],
-      "history_limit": 5
-    },
-    {
       "url": "https://www.worldfinance.com/feed",
       "name": "World Finance",
       "show_link": true,

@@ -1051,12 +1051,10 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
 </div>
 <div style="margin-bottom:10px">
   <label style="font-size:12px;color:#555;font-weight:600;display:block;margin-bottom:4px">Số bài lịch sử lấy về khi khởi động:</label>
-  <select id="new-history-limit" style="width:100%;padding:7px;border:1px solid #d0d0c8;border-radius:8px;font-size:13px">
-    <option value="20">20 bài (mặc định)</option>
-    <option value="10">10 bài</option>
-    <option value="5">5 bài</option>
-    <option value="0">Không lấy lịch sử</option>
-  </select>
+  <input type="number" id="new-history-limit" min="0" max="200" value="20"
+    placeholder="0 = không lấy lịch sử"
+    style="width:100%;padding:7px;border:1px solid #d0d0c8;border-radius:8px;font-size:13px">
+  <div style="font-size:11px;color:#aaa;margin-top:3px">Nhập 0 để không lấy lịch sử. Tối đa 200 bài.</div>
 </div>
 <!-- Đích forward — hiển thị khi có kênh -->
 <div id="feed-dest-wrap" style="display:none;margin-bottom:10px">

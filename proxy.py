@@ -244,15 +244,19 @@ class BatchPipeline:
             processed = []
             for item in items:
                 text = item.get('text', '')
-                translated = _fast_translate(text)
+                should_translate = item.get('do_translate', True)
+                if should_translate:
+                    translated = _fast_translate(text)
+                else:
+                    translated = text  # Không dịch — giữ nguyên bản gốc
                 if not item.get('category'):
-                    item['category'] = item.get('category') or 'Khác' 
+                    item['category'] = item.get('category') or 'Khác'
                 item['text_translated'] = translated
                 desc_html = translated.replace('\n', '<br>')
                 title     = (translated[:80] + '...') if len(translated) > 80 else translated
                 item['desc']       = desc_html
                 item['title']      = title
-                item['translated'] = True
+                item['translated'] = should_translate
                 item['show_link']  = item.get('show_link', True)
                 processed.append(item)
 
@@ -444,12 +448,32 @@ def _fast_translate(text):
     Dịch nhanh cho pipeline — không classification, không AI phức tạp.
     Dùng engine được chọn trong UI, fallback Google nếu lỗi.
     Bỏ qua nếu text đã là tiếng Việt.
+    URLs được tách ra trước khi dịch để tránh bị dịch hỏng.
     """
     if not text or len(text.strip()) < 4:
         return text
     if is_vietnamese(text[:400]):
         return text
-    return _translate_with_engine(text)
+
+    # Tách URL ra, thay bằng placeholder trước khi dịch
+    url_pattern = re.compile(r'https?://[^\s\)<>]+')
+    urls = url_pattern.findall(text)
+    placeholders = {}
+    masked = text
+    for i, url in enumerate(urls):
+        placeholder = f'URLTOKEN{i}URLTOKEN'
+        placeholders[placeholder] = url
+        masked = masked.replace(url, placeholder, 1)
+
+    translated = _translate_with_engine(masked)
+
+    # Khôi phục URL gốc
+    for placeholder, url in placeholders.items():
+        translated = translated.replace(placeholder, url)
+        # Đề phòng engine chèn space vào placeholder
+        translated = translated.replace(placeholder.replace('URLTOKEN', ' URLTOKEN ').strip(), url)
+
+    return translated
 
 def extract_media(desc_html):
     if not desc_html:
@@ -1051,6 +1075,10 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
     <input type="checkbox" id="new-show-link" checked style="width:15px;height:15px;cursor:pointer">
     Hiển thị link gốc
   </label>
+  <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+    <input type="checkbox" id="new-translate" checked style="width:15px;height:15px;cursor:pointer">
+    Dịch nội dung
+  </label>
 </div>
 <div style="margin-bottom:10px">
   <label style="font-size:12px;color:#555;font-weight:600;display:block;margin-bottom:4px">Số bài lịch sử lấy về khi khởi động:</label>
@@ -1561,6 +1589,7 @@ function openEditFeed(i){
     document.getElementById('new-url').value=f.url;
     document.getElementById('new-show-link').checked=f.show_link!==false;
     document.getElementById('new-auto-fwd').checked=f.auto_fwd===true;
+    document.getElementById('new-translate').checked=f.do_translate!==false;
     document.getElementById('new-history-limit').value=String(f.history_limit!=null?f.history_limit:20);
     document.getElementById('modal-title').textContent='Sửa feed';
     document.getElementById('btn-add-feed').textContent='Cập nhật';
@@ -1576,6 +1605,7 @@ function openModal(){
     document.getElementById('new-url').value='';
     document.getElementById('new-show-link').checked=true;
     document.getElementById('new-auto-fwd').checked=false;
+    document.getElementById('new-translate').checked=true;
     document.getElementById('new-history-limit').value='20';
     document.getElementById('modal-title').textContent='Thêm feed';
     document.getElementById('btn-add-feed').textContent='Thêm';
@@ -1590,10 +1620,11 @@ function addFeed(){
           url=document.getElementById('new-url').value.trim(),
           show_link=document.getElementById('new-show-link').checked,
           auto_fwd=document.getElementById('new-auto-fwd').checked,
+          do_translate=document.getElementById('new-translate').checked,
           history_limit=parseInt(document.getElementById('new-history-limit').value)||20,
           destinations=getFeedDests();
     if(!name||!url){alert('Nhập đủ tên và URL');return;}
-    const feedObj={name,url,show_link,auto_fwd,destinations,history_limit};
+    const feedObj={name,url,show_link,auto_fwd,do_translate,destinations,history_limit};
     if(editFeedIndex>=0){feeds[editFeedIndex]=feedObj;}
     else{feeds.push(feedObj);}
     saveFeeds();
@@ -2403,8 +2434,9 @@ def _poll_one(url_obj):
             print(f'[+] {len(new_items)} bài mới → pipeline: {url}')
             
             for it in new_items:
-                it['show_link'] = show_link
-                it['feed_url']  = url
+                it['show_link']    = show_link
+                it['feed_url']     = url
+                it['do_translate'] = url_obj.get('do_translate', True)
                 raw_text = it.get('title', '') + '\n' + strip_html(it.get('desc', ''))
                 it['text']    = raw_text.strip()
                 it['_source'] = 'rss'
@@ -2512,11 +2544,13 @@ def _process_tg_queue():
 
         # Đẩy vào BatchPipeline thay vì xử lý sync
         for it in new_items:
+            feed_cfg_tg = next((u for u in watched_urls if u['url'] == feed_url), {})
             pipeline_item = {
                 'text': strip_html(it.get('desc', '').replace('<br>', '\n')) or it.get('title', ''),
                 'feed_url': feed_url,
                 'category': category,
                 'show_link': show_link,
+                'do_translate': feed_cfg_tg.get('do_translate', True),
                 'guid': it.get('guid', ''),
                 'link': it.get('link', ''),
                 'pubDate': it.get('pubDate', ''),

@@ -117,7 +117,7 @@
           "topic_ids": "5663"
         }
       ],
-      "history_limit": 20
+      "history_limit": 1
     },
     {
       "url": "@rtnews",

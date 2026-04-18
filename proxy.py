@@ -2366,21 +2366,32 @@ def _poll_one(url_obj):
         with lock:
             prev = known_guids.get(url)
 
-        # ==================== FIX Ở ĐÂY ====================
+        # ==================== SLIDING WINDOW ====================
         if prev is None or len(prev) == 0:
-            # Lần đầu hoặc bị reset → init known_guids
+            # Lần đầu hoặc bị reset → init known_guids với history_limit GUIDs gần nhất
+            init_guids = [it['guid'] for it in items if it['guid']][-history_limit:]
             with lock:
-                known_guids[url] = {it['guid'] for it in items if it['guid']}
-            print(f'[INIT] known_guids khởi tạo lần đầu cho: {url} ({len(items)} items)')
+                known_guids[url] = set(init_guids)
+            print(f'[INIT] known_guids khởi tạo lần đầu cho: {url} ({len(init_guids)} items)')
             return True   # Không forward tin cũ
 
         # Bình thường: tìm tin mới
         new_items = [it for it in items if it['guid'] and it['guid'] not in prev]
-        
+
         if new_items:
+            # Sliding window: thêm GUID mới, xóa GUID cũ nhất nếu vượt history_limit
             with lock:
-                known_guids[url] = {it['guid'] for it in items if it['guid']}
-            
+                current = known_guids.get(url, set())
+                for it in new_items:
+                    if it['guid']:
+                        current.add(it['guid'])
+                # Giữ tối đa history_limit GUIDs — xóa cũ nhất nếu phình
+                if len(current) > history_limit:
+                    # Không thể sort set → chuyển sang list, trim
+                    guids_list = list(current)
+                    current = set(guids_list[-history_limit:])
+                known_guids[url] = current
+
             print(f'[+] {len(new_items)} bài mới → pipeline: {url}')
             
             for it in new_items:

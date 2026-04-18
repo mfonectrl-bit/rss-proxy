@@ -1253,7 +1253,7 @@
           "topic_ids": "7"
         }
       ],
-      "history_limit": 2
+      "history_limit": 5
     },
     {
       "url": "https://techcrunch.com/feed/",

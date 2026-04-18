@@ -761,6 +761,10 @@ auto_fwd_enabled = False
 tg_channels = []
 poll_next_time = time.time() + POLL_INTERVAL
 
+# Flag chặn forward tin cũ lúc khởi động
+# Chỉ bật sau khi tất cả feeds đã init xong known_guids
+_forward_ready = False
+
 # --- WebSocket thuần RFC 6455 (không cần thư viện websockets) ---
 
 class WsConn:
@@ -2207,6 +2211,8 @@ def _do_forward(processed, category, url):
     if not TELETHON_AVAILABLE or tg_client is None:
         print('[Forward] Telethon chưa kết nối — bỏ qua forward')
         return
+    if not _forward_ready:
+        return  # Chưa init xong — bỏ qua tin cũ lúc khởi động
 
     show_link = feed_cfg.get('show_link', True)
 
@@ -2616,6 +2622,17 @@ def poller():
                 except ImportError:
                     _ram_str = ''
                 print(f"[POLL] Đang chạy | Feeds: {total_feeds} | Queue: {_pipeline.qsize()} | Known GUIDs: {len(known_guids)} | TG inited: {len(tg_inited)}{_ram_str}")
+
+            # Bật forward sau khi tất cả feeds đã init known_guids
+            # Điều kiện: không còn feed nào chưa có known_guids + không còn tg_init_pending
+            global _forward_ready
+            if not _forward_ready and not tg_init_pending:
+                with lock:
+                    total_feeds = len(watched_urls)
+                    inited_count = len(known_guids)
+                if inited_count >= total_feeds and total_feeds > 0:
+                    _forward_ready = True
+                    print(f'[Forward] ✅ Tất cả {total_feeds} feeds đã init — bắt đầu forward tin mới')
 
             # Dọn dẹp known_guids + RAM mỗi 20 phút
             if now - _last_cleanup >= 1200:

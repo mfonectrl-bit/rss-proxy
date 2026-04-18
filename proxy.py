@@ -1720,7 +1720,7 @@ async function fetchAndMerge(url,feedName,category,markNew){
             const data=await r.json();
             items=data.items||[];
         } else {
-            const r=await fetch('/fetch?url='+encodeURIComponent(url)+'&translate='+(translateOn?'1':'0')+'&category='+encodeURIComponent(category));
+            const r=await fetch('/fetch?url='+encodeURIComponent(url)+'&translate='+(translateOn?'1':'0')+'&category='+encodeURIComponent(category)+'&history_limit='+historyLimit);
             if(!r.ok) throw new Error('HTTP '+r.status);
             const data=await r.json();
             items=data.items||[];
@@ -2381,6 +2381,15 @@ def _poll_one(url_obj):
                 known_guids[url] = {it['guid'] for it in items if it['guid']}
             _forward_ready_feeds.add(url)
             print(f'[INIT] known_guids khởi tạo lần đầu cho: {url} ({len(items)} items)')
+            # Broadcast lên UI để hiển thị ngay — không dịch, không forward
+            ws_items = []
+            for it in items:
+                ws_it = {k: v for k, v in it.items() if k not in ('_tg_media_bytes', 'text', 'text_translated')}
+                ws_it['feed_url'] = url
+                ws_it['show_link'] = show_link
+                ws_items.append(ws_it)
+            if ws_items:
+                broadcast({'type': 'new_items', 'url': url, 'items': ws_items})
             return True   # Không forward tin cũ
 
         # Bình thường: tìm tin mới
@@ -2777,7 +2786,8 @@ class HttpHandler(BaseHTTPRequestHandler):
                 self.send_error(400); return
             try:
                 xml = fetch_feed(url)
-                items = parse_items(xml, category)
+                _hlimit = int(qs.get('history_limit', ['20'])[0])
+                items = parse_items(xml, category, limit=_hlimit)
                 if do_tl and translate_enabled and TRANSLATE_AVAILABLE:
                     items = process_items(items)
                 resp = json.dumps({'items': items}, ensure_ascii=False).encode('utf-8')

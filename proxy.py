@@ -691,7 +691,12 @@ async def _register_handler(channels_list):
 
     async def handler(event):
         msg = event.message
-        if not msg or not msg.message:
+        # Bỏ qua nếu không có cả text lẫn media
+        if not msg:
+            return
+        has_text  = bool(msg.message)
+        has_media = bool(msg.media)
+        if not has_text and not has_media:
             return
         chat_username = getattr(event.chat, 'username', None)
         if not chat_username:
@@ -716,11 +721,12 @@ async def _register_handler(channels_list):
                 handled_groups.clear()
             handled_groups.add(msg.grouped_id)
 
-        guid  = f'tg_@{chat_username}_{msg.id}'
-        link  = f'https://t.me/{chat_username}/{msg.id}'
-        desc  = msg.message.replace('\n', '<br>')
-        title = (msg.message[:80] + '...') if len(msg.message) > 80 else msg.message
-        pub   = msg.date.isoformat() if msg.date else ''
+        guid     = f'tg_@{chat_username}_{msg.id}'
+        link     = f'https://t.me/{chat_username}/{msg.id}'
+        msg_text = msg.message or ''  # an toàn khi tin chỉ có media, không có text
+        desc     = msg_text.replace('\n', '<br>')
+        title    = (msg_text[:80] + '...') if len(msg_text) > 80 else (msg_text or f'[Media] @{chat_username}')
+        pub      = msg.date.isoformat() if msg.date else ''
         has_media = bool(msg.media and isinstance(msg.media, (MessageMediaPhoto, MessageMediaDocument)))
 
         item = {
@@ -2147,13 +2153,18 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
             from telethon.tl.types import MessageMediaWebPage
             async with tg_semaphore:
                 if grouped:
-                    all_msgs = await tg_client.get_messages(chat, ids=list(range(msg_id, msg_id + 10)))
+                    # Lấy ~20 messages gần msg_id để tìm đủ album
+                    # Album Telegram thường nằm trong khoảng nhỏ quanh msg_id
+                    id_range = list(range(max(1, msg_id - 5), msg_id + 15))
+                    all_msgs = await tg_client.get_messages(chat, ids=id_range)
                     if not isinstance(all_msgs, list):
                         all_msgs = [all_msgs] if all_msgs else []
+                    # Lọc đúng grouped_id, bỏ WebPage
                     group_msgs = [m for m in all_msgs
                                   if m and m.grouped_id == grouped and m.media
                                   and not isinstance(m.media, MessageMediaWebPage)]
                     if not group_msgs:
+                        # Fallback: chỉ lấy msg_id gốc
                         single = await tg_client.get_messages(chat, ids=msg_id)
                         is_real = single and single.media and not isinstance(single.media, MessageMediaWebPage)
                         group_msgs = [single] if is_real else []

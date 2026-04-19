@@ -1812,6 +1812,19 @@
         }
       ],
       "history_limit": 5
+    },
+    {
+      "url": "https://t.me/tgrealnature",
+      "name": "Real Nature",
+      "show_link": true,
+      "auto_fwd": true,
+      "destinations": [
+        {
+          "ch_idx": 3,
+          "topic_ids": "8"
+        }
+      ],
+      "history_limit": 5
     }
   ],
   "auto_fwd": true,

@@ -1799,6 +1799,19 @@
         }
       ],
       "history_limit": 5
+    },
+    {
+      "url": "Best Funny Videos",
+      "name": "Funny Videos",
+      "show_link": true,
+      "auto_fwd": true,
+      "destinations": [
+        {
+          "ch_idx": 3,
+          "topic_ids": ""
+        }
+      ],
+      "history_limit": 5
     }
   ],
   "auto_fwd": true,

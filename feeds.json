@@ -1700,6 +1700,19 @@
         }
       ],
       "history_limit": 5
+    },
+    {
+      "url": "https://vnexpress.net/rss/tin-moi-nhat.rss",
+      "name": "VnExpress",
+      "show_link": true,
+      "auto_fwd": true,
+      "destinations": [
+        {
+          "ch_idx": 3,
+          "topic_ids": "32692"
+        }
+      ],
+      "history_limit": 5
     }
   ],
   "auto_fwd": true,

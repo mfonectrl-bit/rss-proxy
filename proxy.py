@@ -858,7 +858,7 @@ def tg_setup_realtime_sync(feed_urls):
     _tg_realtime_last_setup = now
     if tg_loop and TELETHON_AVAILABLE:
         try:
-            tg_run_long(_tg_setup_realtime(feed_urls), timeout=120)
+            tg_run_long(_tg_setup_realtime(feed_urls), timeout=600)
         except Exception as e:
             print(f'[!] Setup real-time lỗi: {e}')
 

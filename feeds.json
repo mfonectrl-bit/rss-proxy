@@ -109,10 +109,15 @@
     {
       "url": "@abcdnewstest",
       "name": "ABCD news test",
-      "show_link": false,
+      "show_link": true,
       "auto_fwd": false,
-      "destinations": [],
-      "history_limit": 1
+      "destinations": [
+        {
+          "ch_idx": 3,
+          "topic_ids": "33200"
+        }
+      ],
+      "history_limit": 5
     },
     {
       "url": "@rtnews",

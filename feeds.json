@@ -140,8 +140,13 @@
       "url": "@tempvaxscam",
       "name": "Thuyết Âm U",
       "show_link": false,
-      "auto_fwd": false,
-      "destinations": [],
+      "auto_fwd": true,
+      "destinations": [
+        {
+          "ch_idx": 0,
+          "topic_ids": ""
+        }
+      ],
       "history_limit": 1
     },
     {

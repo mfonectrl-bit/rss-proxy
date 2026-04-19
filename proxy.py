@@ -893,6 +893,7 @@ poll_next_time = time.time() + POLL_INTERVAL
 
 # Set chứa các feed URL đã init xong known_guids — chỉ feed nào có trong set mới được forward
 _forward_ready_feeds = set()
+_watchdog_running = False  # Tránh watchdog chạy trùng
 
 # --- WebSocket thuần RFC 6455 (không cần thư viện websockets) ---
 
@@ -2308,8 +2309,9 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
 
             if group_msgs:
                 media_list = [m.media for m in group_msgs[:10]]
-                if len(caption) <= 4096:
-                    # Caption trong giới hạn Telegram (4096 ký tự) — gửi 1 tin gồm media + caption
+                # Telegram giới hạn caption kèm media tối đa 1024 ký tự hiển thị (sau strip HTML)
+                caption_plain_len = len(re.sub(r'<[^>]+>', '', caption))
+                if caption_plain_len <= 1024:
                     if len(media_list) == 1:
                         await tg_client.send_file(dest, media_list[0], caption=caption,
                                                   parse_mode='html', reply_to=thread_reply,
@@ -2319,7 +2321,7 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
                                                   parse_mode='html', reply_to=thread_reply,
                                                   link_preview=show_preview)
                 else:
-                    # Caption quá dài (>4096) — gửi media trống, reply text riêng
+                    # Caption quá dài — gửi media không caption, reply text riêng
                     if len(media_list) == 1:
                         sent = await tg_client.send_file(dest, media_list[0], caption='',
                                                          parse_mode='html', reply_to=thread_reply)
@@ -2338,13 +2340,14 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
             return True
 
         elif rss_media:
-            if len(caption) <= 4096:
-                # Caption trong giới hạn Telegram (4096 ký tự) — gửi 1 tin gồm media + caption
+            # Telegram giới hạn caption kèm media tối đa 1024 ký tự hiển thị (sau strip HTML)
+            caption_plain_len = len(re.sub(r'<[^>]+>', '', caption))
+            if caption_plain_len <= 1024:
                 await tg_client.send_file(dest, rss_media, caption=caption,
                                           parse_mode='html', reply_to=thread_reply,
                                           link_preview=show_preview)
             else:
-                # Caption quá dài (>4096) — gửi media trống, reply text riêng
+                # Caption quá dài — gửi media không caption, reply text riêng
                 sent = await tg_client.send_file(dest, rss_media, caption='',
                                                   parse_mode='html', reply_to=thread_reply)
                 reply_to = sent.id if not isinstance(sent, list) else sent[0].id
@@ -2745,10 +2748,13 @@ def poller():
             _process_tg_queue()
 
             # --- Watchdog: kiểm tra TG connection mỗi 10 phút, tự reconnect nếu mất ---
-            if TELETHON_AVAILABLE and tg_client is not None and now - _last_tg_watchdog > 600:
+            if TELETHON_AVAILABLE and tg_client is not None and now - _last_tg_watchdog > 1800:
                 _last_tg_watchdog = now
                 def _watchdog():
-                    global _tg_realtime_last_setup, tg_loop, tg_loop_thread
+                    global _tg_realtime_last_setup, tg_loop, tg_loop_thread, _watchdog_running
+                    if _watchdog_running:
+                        return
+                    _watchdog_running = True
                     try:
                         # Kiểm tra loop còn sống không
                         if tg_loop is None or not tg_loop.is_running():
@@ -2778,6 +2784,8 @@ def poller():
                             print('[TG Watchdog] ⚠️ Mất xác thực Telethon')
                     except Exception as e:
                         print(f'[TG Watchdog] Lỗi: {type(e).__name__}: {e}')
+                    finally:
+                        _watchdog_running = False
                 threading.Thread(target=_watchdog, daemon=True).start()
 
             # --- Init history cho TG feed mới ---

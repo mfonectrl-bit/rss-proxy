@@ -110,14 +110,14 @@
       "url": "@abcdnewstest",
       "name": "ABCD news test",
       "show_link": true,
-      "auto_fwd": false,
+      "auto_fwd": true,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "33200"
         }
       ],
-      "history_limit": 5
+      "history_limit": 50
     },
     {
       "url": "@rtnews",

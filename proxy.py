@@ -757,9 +757,15 @@ async def _tg_setup_realtime(feed_urls):
             try:
                 await tg_client.get_input_entity(ch)
                 _resolved_channels_cache.add(ch)
+                await asyncio.sleep(2.0)  # 2s/channel tránh FloodWait ResolveUsername
             except Exception as e:
+                err_str = str(e)
+                if 'FloodWait' in err_str or 'flood' in err_str.lower():
+                    # Bị rate limit resolve → dừng lại, không resolve tiếp
+                    print(f'[TG] FloodWait khi resolve — dừng resolve, dùng cache hiện có: {e}')
+                    break
                 print(f'[TG] Bỏ qua @{ch}: {e}')
-            await asyncio.sleep(0.5)
+                await asyncio.sleep(2.0)
 
     # Luôn đăng ký với TẤT CẢ channels đã resolve thành công
     all_channels = [ch for ch in raw_channels if ch in _resolved_channels_cache]
@@ -2495,11 +2501,7 @@ def _memory_cleanup():
                 del translate_cache[k]
             print(f'[MEM] translate_cache trimmed → {len(translate_cache)} entries')
 
-    # Trim _resolved_channels_cache nếu quá lớn (không cần giữ nhiều)
-    global _resolved_channels_cache
-    if len(_resolved_channels_cache) > 200:
-        _resolved_channels_cache = set(list(_resolved_channels_cache)[-100:])
-        print(f'[MEM] _resolved_channels_cache trimmed → {len(_resolved_channels_cache)}')
+    # Không trim _resolved_channels_cache — giữ nguyên để tránh resolve lại gây FloodWait
 
     # Force GC
     collected = gc.collect()
@@ -2762,11 +2764,16 @@ def poller():
 
                         ok = tg_run(_tg_check_auth())
                         if ok:
-                            tg_urls_all = [u['url'] for u in watched_urls if is_tg_source(u.get('url', ''))]
-                            if tg_urls_all:
-                                tg_run_long(_tg_setup_realtime(tg_urls_all), timeout=120)
-                                _tg_realtime_last_setup = time.time()
-                                print(f'[TG Watchdog] ✅ Đã re-register {len(tg_urls_all)} channels')
+                            # Chỉ re-register nếu handler bị mất (không còn handler nào)
+                            handlers = tg_client.list_event_handlers()
+                            if not handlers:
+                                tg_urls_all = [u['url'] for u in watched_urls if is_tg_source(u.get('url', ''))]
+                                if tg_urls_all:
+                                    tg_run_long(_tg_setup_realtime(tg_urls_all), timeout=300)
+                                    _tg_realtime_last_setup = time.time()
+                                    print(f'[TG Watchdog] ✅ Re-register {len(tg_urls_all)} channels (handler bị mất)')
+                            else:
+                                print(f'[TG Watchdog] ✅ Handler OK — không cần re-register')
                         else:
                             print('[TG Watchdog] ⚠️ Mất xác thực Telethon')
                     except Exception as e:

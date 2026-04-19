@@ -1168,6 +1168,9 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
 </div>
 <input type="text" id="new-name" placeholder="Tên feed">
 <input type="text" id="new-url" placeholder="URL RSS hoặc @username / t.me/channel">
+<div id="url-duplicate-warn" style="display:none;color:#dc2626;font-size:12px;margin-bottom:6px;padding:6px 10px;background:#fef2f2;border-radius:6px;border:1px solid #fecaca">
+  ⚠️ Feed này đã tồn tại trong danh sách: <span id="url-dup-name"></span>
+</div>
 <div id="feed-type-hint" style="font-size:11px;color:#6366f1;margin-bottom:8px;display:none">⚡ Nguồn Telegram — sẽ dùng Telethon</div>
 <!-- Checkboxes hàng ngang -->
 <div style="display:flex;gap:16px;margin-bottom:10px;flex-wrap:wrap">
@@ -1445,6 +1448,28 @@ function refreshTelethonBadge(){
 document.getElementById('new-url').addEventListener('input',function(){
     const hint=document.getElementById('feed-type-hint');
     hint.style.display=isTgSource(this.value.trim())?'block':'none';
+
+    // Kiểm tra URL trùng realtime
+    const val=this.value.trim().toLowerCase();
+    const warn=document.getElementById('url-duplicate-warn');
+    const warnName=document.getElementById('url-dup-name');
+    if(val.length > 5){
+        const dup=feeds.find((f,i)=>f.url.toLowerCase()===val && i!==editFeedIndex);
+        if(dup){
+            warnName.textContent=dup.name||dup.url;
+            warn.style.display='block';
+            document.getElementById('btn-add-feed').disabled=true;
+            document.getElementById('btn-add-feed').style.opacity='0.5';
+        } else {
+            warn.style.display='none';
+            document.getElementById('btn-add-feed').disabled=false;
+            document.getElementById('btn-add-feed').style.opacity='1';
+        }
+    } else {
+        warn.style.display='none';
+        document.getElementById('btn-add-feed').disabled=false;
+        document.getElementById('btn-add-feed').style.opacity='1';
+    }
 });
 
 // --- Render destination list inside feed modal ---
@@ -1703,6 +1728,9 @@ function openModal(){
     editFeedIndex=-1;
     document.getElementById('new-name').value='';
     document.getElementById('new-url').value='';
+    document.getElementById('url-duplicate-warn').style.display='none';
+    document.getElementById('btn-add-feed').disabled=false;
+    document.getElementById('btn-add-feed').style.opacity='1';
     document.getElementById('new-show-link').checked=true;
     document.getElementById('new-auto-fwd').checked=false;
     document.getElementById('new-translate').checked=true;
@@ -1724,6 +1752,9 @@ function addFeed(){
           history_limit=parseInt(document.getElementById('new-history-limit').value)||20,
           destinations=getFeedDests();
     if(!name||!url){alert('Nhập đủ tên và URL');return;}
+    // Kiểm tra trùng URL (backup check)
+    const dupFeed=feeds.find((f,i)=>f.url.toLowerCase()===url.toLowerCase() && i!==editFeedIndex);
+    if(dupFeed){alert('Feed "'+( dupFeed.name||dupFeed.url)+'" đã tồn tại trong danh sách!');return;}
     const feedObj={name,url,show_link,auto_fwd,do_translate,destinations,history_limit};
     if(editFeedIndex>=0){feeds[editFeedIndex]=feedObj;}
     else{feeds.push(feedObj);}

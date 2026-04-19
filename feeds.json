@@ -110,7 +110,7 @@
       "url": "@abcdnewstest",
       "name": "ABCD news",
       "show_link": true,
-      "auto_fwd": true,
+      "auto_fwd": false,
       "destinations": [
         {
           "ch_idx": 3,

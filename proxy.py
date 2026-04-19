@@ -188,7 +188,11 @@ class RSSDeduplicator:
         guid  = item.get('guid', '') or ''
         link  = self._normalize_url(item.get('link', ''))
         title = self._clean_title(item.get('title', ''))
-        return hashlib.md5(f'{guid}|{link}|{title}'.encode()).hexdigest()
+        raw = f'{guid}|{link}|{title}'
+        # Nếu tất cả đều rỗng → thêm timestamp để tránh hash trùng
+        if not guid and not link and not title:
+            raw = f'empty|{time.time()}|{id(item)}'
+        return hashlib.md5(raw.encode()).hexdigest()
 
     def _is_old(self, item):
         ts = item.get('timestamp')
@@ -204,14 +208,19 @@ class RSSDeduplicator:
                 return True
             if self.r.sismember(self.key_items, fid):
                 return True
-            recent = self.r.lrange(self.key_titles, 0, 50)
-            for t in recent:
-                if self._is_similar(title, t.decode()):
-                    return True
+            # Chỉ check fuzzy title nếu title không rỗng
+            # Item không có title (media-only) → bỏ qua fuzzy check, luôn cho qua
+            if title:
+                recent = self.r.lrange(self.key_titles, 0, 50)
+                for t in recent:
+                    t_decoded = t.decode()
+                    if t_decoded and self._is_similar(title, t_decoded):
+                        return True
             pipe = self.r.pipeline()
             pipe.sadd(self.key_items, fid)
-            pipe.lpush(self.key_titles, title)
-            pipe.ltrim(self.key_titles, 0, self.max_items)
+            if title:  # Chỉ lưu title nếu có — tránh lưu string rỗng
+                pipe.lpush(self.key_titles, title)
+                pipe.ltrim(self.key_titles, 0, self.max_items)
             pipe.expire(self.key_items, int(self.time_window))
             pipe.expire(self.key_titles, int(self.time_window))
             pipe.execute()

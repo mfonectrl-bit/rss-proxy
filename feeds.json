@@ -1672,8 +1672,8 @@
       "history_limit": 5
     },
     {
-      "url": "https://dansinh.dantri.com.vn/rss/home.rss",
-      "name": "Dân Trí",
+      "url": "https://thanhnien.vn/rss/home.rss",
+      "name": "Thanh Niên",
       "show_link": true,
       "auto_fwd": true,
       "destinations": [

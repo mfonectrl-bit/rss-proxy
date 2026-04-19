@@ -1813,19 +1813,6 @@
         }
       ],
       "history_limit": 5
-    },
-    {
-      "url": "https://t.me/Yogamusicyoga",
-      "name": "Yoga Music",
-      "show_link": true,
-      "auto_fwd": true,
-      "destinations": [
-        {
-          "ch_idx": 3,
-          "topic_ids": "26"
-        }
-      ],
-      "history_limit": 5
     }
   ],
   "auto_fwd": true,

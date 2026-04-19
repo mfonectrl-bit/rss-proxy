@@ -15,8 +15,9 @@ import socket
 import xml.etree.ElementTree as ET
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, urlunparse
 from concurrent.futures import ThreadPoolExecutor
+from difflib import SequenceMatcher
 
 FEEDS_FILE = 'feeds.json'
 
@@ -138,6 +139,90 @@ def load_feeds_from_file():
     return []
 
 
+
+# --- Redis / Dedup ---
+try:
+    import redis as _redis_lib
+    REDIS_AVAILABLE = True
+except ImportError:
+    REDIS_AVAILABLE = False
+    print('[!] Thư viện redis chưa cài — pip install redis')
+
+
+class RSSDeduplicator:
+    """
+    Chống trùng tin 3 lớp: time filter → exact hash → fuzzy title.
+    Dùng Redis để persist qua restart.
+    """
+    def __init__(self, redis_client,
+                 key_prefix='rss_dedupe',
+                 max_items=5000,
+                 similarity_threshold=0.9,
+                 time_window_hours=24):
+        self.r = redis_client
+        self.key_items  = f'{key_prefix}:items'
+        self.key_titles = f'{key_prefix}:titles'
+        self.max_items  = max_items
+        self.similarity_threshold = similarity_threshold
+        self.time_window = time_window_hours * 3600
+
+    def _normalize_url(self, url):
+        try:
+            parsed = urlparse(url)
+            return urlunparse((parsed.scheme, parsed.netloc, parsed.path, '', '', ''))
+        except Exception:
+            return url or ''
+
+    def _clean_title(self, title):
+        if not title:
+            return ''
+        title = title.lower()
+        title = re.sub(r'\s+', ' ', title)
+        title = re.sub(r'[^\w\s]', '', title)
+        return title.strip()
+
+    def _is_similar(self, t1, t2):
+        return SequenceMatcher(None, t1, t2).ratio() >= self.similarity_threshold
+
+    def _make_id(self, item):
+        guid  = item.get('guid', '') or ''
+        link  = self._normalize_url(item.get('link', ''))
+        title = self._clean_title(item.get('title', ''))
+        return hashlib.md5(f'{guid}|{link}|{title}'.encode()).hexdigest()
+
+    def _is_old(self, item):
+        ts = item.get('timestamp')
+        if not ts:
+            return False
+        return (time.time() - ts) > self.time_window
+
+    def is_duplicate(self, item):
+        try:
+            fid   = self._make_id(item)
+            title = self._clean_title(item.get('title', ''))
+            if self._is_old(item):
+                return True
+            if self.r.sismember(self.key_items, fid):
+                return True
+            recent = self.r.lrange(self.key_titles, 0, 50)
+            for t in recent:
+                if self._is_similar(title, t.decode()):
+                    return True
+            pipe = self.r.pipeline()
+            pipe.sadd(self.key_items, fid)
+            pipe.lpush(self.key_titles, title)
+            pipe.ltrim(self.key_titles, 0, self.max_items)
+            pipe.expire(self.key_items, int(self.time_window))
+            pipe.expire(self.key_titles, int(self.time_window))
+            pipe.execute()
+            return False
+        except Exception as e:
+            print(f'[Dedup] Redis lỗi (bỏ qua): {e}')
+            return False
+
+
+# Khởi tạo deduplicator — None nếu không có Redis
+_deduplicator = None
 
 # --- CẤU HÌNH ---
 POLL_INTERVAL    = 90
@@ -2437,6 +2522,14 @@ def _poll_one(url_obj):
         # Bình thường: tìm tin mới
         new_items = [it for it in items if it['guid'] and it['guid'] not in prev]
 
+        # Lớp 2: Redis dedup (fuzzy title + persist qua restart)
+        if new_items and _deduplicator:
+            before = len(new_items)
+            new_items = [it for it in new_items if not _deduplicator.is_duplicate(it)]
+            skipped = before - len(new_items)
+            if skipped:
+                print(f'[Dedup] Lọc {skipped} tin trùng (Redis): {url}')
+
         if new_items:
             # Ghi đè known_guids bằng toàn bộ feed lần này
             with lock:
@@ -2543,6 +2636,14 @@ def _process_tg_queue():
         new_items = [it for it in items if not prev or it['guid'] not in prev]
         if not new_items:
             continue
+
+        # Lớp 2: Redis dedup
+        if _deduplicator:
+            before = len(new_items)
+            new_items = [it for it in new_items if not _deduplicator.is_duplicate(it)]
+            skipped = before - len(new_items)
+            if skipped:
+                print(f'[Dedup] Lọc {skipped} tin trùng TG (Redis): {feed_url}')
 
         # Cập nhật known_guids ngay để poller không xử lý lại
         with lock:
@@ -3116,6 +3217,22 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
         super().handle_error(request, client_address)
 
 if __name__ == '__main__':
+    # === REDIS DEDUPLICATOR ===
+    _redis_url = os.environ.get('REDIS_URL', '').strip()
+    if REDIS_AVAILABLE and _redis_url:
+        try:
+            _redis_client = _redis_lib.from_url(_redis_url, decode_responses=False)
+            _redis_client.ping()
+            _deduplicator = RSSDeduplicator(_redis_client)
+            print('[i] Redis Deduplicator: OK ✅')
+        except Exception as e:
+            print(f'[!] Redis kết nối lỗi — dedup tắt: {e}')
+    else:
+        if not _redis_url:
+            print('[i] REDIS_URL chưa cấu hình — dedup Redis tắt')
+        elif not REDIS_AVAILABLE:
+            print('[i] Thư viện redis chưa cài — dedup Redis tắt')
+
     # === PERSIST FEEDS - TỰ ĐỘNG LOAD KHI RESTART ===
     default_feeds = load_feeds_from_file()
     if default_feeds:

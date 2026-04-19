@@ -1713,6 +1713,19 @@
         }
       ],
       "history_limit": 5
+    },
+    {
+      "url": "https://tienphong.vn/rss/home.rss",
+      "name": "Tiền Phong",
+      "show_link": true,
+      "auto_fwd": true,
+      "destinations": [
+        {
+          "ch_idx": 3,
+          "topic_ids": "32692"
+        }
+      ],
+      "history_limit": 5
     }
   ],
   "auto_fwd": true,

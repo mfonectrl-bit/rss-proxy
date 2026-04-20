@@ -233,7 +233,9 @@ class RSSDeduplicator:
 _deduplicator = None
 
 # --- State "đọc toàn bộ nguồn" ---
-_read_all_stop = False
+# Set chứa URL của các job cần dừng (thay vì 1 flag global duy nhất)
+_read_all_stop_urls = set()
+_read_all_stop = False  # giữ lại để tương thích, không dùng logic nữa
 # Job chạy ngầm: None hoặc dict {url, name, done, total, status, error}
 # status: 'running' | 'done' | 'error' | 'stopped'
 _read_all_job = None
@@ -1969,7 +1971,12 @@ async function runReadAllBg() {
 
 function stopReadAll() {
     _raAbort = true;
-    fetch('/tg_read_all_stop', {method:'POST'}).catch(()=>{});
+    const f = _raCurrentFeedIdx >= 0 ? feeds[_raCurrentFeedIdx] : null;
+    fetch('/tg_read_all_stop', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({url: f ? f.url : ''})
+    }).catch(()=>{});
     document.getElementById('read-all-modal').classList.remove('open');
     _stopBgPoll();
     _updateBgIndicator(null);
@@ -2749,7 +2756,7 @@ def _run_read_all_bg(url, feed_cfg):
 
         done = 0
         for msg in all_msgs:
-            if _read_all_stop:
+            if url in _read_all_stop_urls:
                 break
             if not msg:
                 continue
@@ -2790,11 +2797,11 @@ def _run_read_all_bg(url, feed_cfg):
 
             waited = 0
             delay = _random.uniform(5, 20)
-            while waited < delay and not _read_all_stop:
+            while waited < delay and url not in _read_all_stop_urls:
                 time.sleep(0.5)
                 waited += 0.5
 
-        if _read_all_stop:
+        if url in _read_all_stop_urls:
             _upd(status="stopped", current="⏹ Đã dừng.")
             broadcast({"type": "read_all_status", "status": "stopped", "done": done, "total": total, "name": feed_name})
         else:
@@ -3068,8 +3075,12 @@ def _process_tg_queue():
         # Đẩy vào BatchPipeline thay vì xử lý sync
         for it in new_items:
             feed_cfg_tg = next((u for u in watched_urls if u['url'] == feed_url), {})
+            # Khôi phục newline từ <br> trước khi dịch — strip_html thay <br> bằng space
+            _raw_desc = it.get('desc', '') or ''
+            _raw_text = re.sub(r'<br\s*/?>', '\n', _raw_desc, flags=re.I)
+            _raw_text = re.sub(r'<[^>]+>', '', _raw_text).strip() or it.get('title', '')
             pipeline_item = {
-                'text': strip_html(it.get('desc', '').replace('<br>', '\n')) or it.get('title', ''),
+                'text': _raw_text,
                 'feed_url': feed_url,
                 'category': category,
                 'show_link': show_link,
@@ -3602,7 +3613,15 @@ class HttpHandler(BaseHTTPRequestHandler):
             self.wfile.write(resp)
 
         elif p.path == '/tg_read_all_stop':
-            _read_all_stop = True
+            body_stop = self._read_json()
+            stop_url = body_stop.get('url', '')
+            if stop_url:
+                _read_all_stop_urls.add(stop_url)
+            else:
+                # fallback: dừng tất cả job đang chạy
+                with _read_all_job_lock:
+                    if _read_all_job and _read_all_job.get('url'):
+                        _read_all_stop_urls.add(_read_all_job['url'])
             self._json({'ok': True})
 
         elif p.path == '/tg_read_all_status':
@@ -3626,7 +3645,7 @@ class HttpHandler(BaseHTTPRequestHandler):
                     done_n = _read_all_job['done']; total_n = _read_all_job['total']
                     self._json({'error': 'blocked', 'msg': f'Đang có job chạy ngầm cho kênh này ({done_n}/{total_n} tin)'}); return
                 _read_all_job = {'url': url, 'name': feed_cfg.get('name', url), 'done': 0, 'total': 0, 'status': 'running', 'current': 'Đang khởi động...'}
-            _read_all_stop = False
+            _read_all_stop_urls.discard(url)  # reset stop flag cho url này
             threading.Thread(target=_run_read_all_bg, args=(url, feed_cfg), daemon=True, name='ReadAllBG').start()
             self._json({'ok': True, 'msg': 'Job chạy ngầm đã bắt đầu'})
 
@@ -3641,7 +3660,7 @@ class HttpHandler(BaseHTTPRequestHandler):
                 if _read_all_job and _read_all_job.get('status') == 'running' and _read_all_job.get('url') == url:
                     done_n = _read_all_job['done']; total_n = _read_all_job['total']
                     self._json({'error': 'blocked', 'msg': f'Đang có job chạy ngầm cho kênh này ({done_n}/{total_n} tin)'}); return
-            _read_all_stop = False
+            _read_all_stop_urls.discard(url)  # reset stop flag cho url này
 
             # Lấy feed config để biết destinations và settings
             with lock:
@@ -3691,7 +3710,7 @@ class HttpHandler(BaseHTTPRequestHandler):
 
                 done = 0
                 for msg in all_msgs:
-                    if _read_all_stop:
+                    if url in _read_all_stop_urls:
                         break
                     if not msg:
                         continue
@@ -3740,7 +3759,7 @@ class HttpHandler(BaseHTTPRequestHandler):
                     delay = _random.uniform(5, 20)
                     # Chờ delay nhưng kiểm tra stop mỗi 0.5s
                     waited = 0
-                    while waited < delay and not _read_all_stop:
+                    while waited < delay and url not in _read_all_stop_urls:
                         time.sleep(0.5)
                         waited += 0.5
 

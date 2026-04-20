@@ -232,6 +232,9 @@ class RSSDeduplicator:
 # Khởi tạo deduplicator — None nếu không có Redis
 _deduplicator = None
 
+# Flag dừng "đọc toàn bộ nguồn"
+_read_all_stop = False
+
 # --- CẤU HÌNH ---
 POLL_INTERVAL    = 90
 HTTP_PORT = int(os.environ.get("PORT", 8765))
@@ -1189,6 +1192,15 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
     Dịch nội dung
   </label>
 </div>
+<div id="read-all-wrap" style="display:none;margin-bottom:10px;padding:8px 12px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px">
+  <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+    <input type="checkbox" id="new-read-all" style="width:15px;height:15px;cursor:pointer">
+    <div>
+      <div style="font-weight:600;color:#92400e">📚 Đọc toàn bộ nguồn</div>
+      <div style="font-size:11px;color:#b45309;margin-top:2px">Lấy tất cả tin từ cũ đến mới, delay random 5-20s/tin, forward tới kênh đích</div>
+    </div>
+  </label>
+</div>
 <div style="margin-bottom:10px">
   <label style="font-size:12px;color:#555;font-weight:600;display:block;margin-bottom:4px">Số bài lịch sử lấy về khi khởi động:</label>
   <input type="number" id="new-history-limit" min="0" max="200" value="20"
@@ -1304,6 +1316,19 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
 </div>
 
 <div id="toast"></div>
+
+<!-- Modal tiến trình Đọc toàn bộ nguồn -->
+<div class="modal-bg" id="read-all-modal" style="z-index:300">
+<div class="modal" style="width:460px;text-align:center">
+  <h2 id="ra-title" style="margin-bottom:12px">📚 Đang đọc toàn bộ nguồn...</h2>
+  <div style="background:#f5f5f0;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:13px;color:#555" id="ra-current">Đang khởi động...</div>
+  <div style="background:#e0e0d8;border-radius:8px;height:8px;margin-bottom:8px;overflow:hidden">
+    <div id="ra-bar" style="background:#2563eb;height:100%;width:0%;transition:width 0.3s;border-radius:8px"></div>
+  </div>
+  <div style="font-size:12px;color:#aaa;margin-bottom:16px" id="ra-progress">0 / 0 tin</div>
+  <button id="ra-stop-btn" onclick="stopReadAll()" style="padding:7px 20px;border:1px solid #e0e0d8;border-radius:8px;background:#fff;cursor:pointer;font-size:13px;color:#dc2626">⏹ Dừng lại</button>
+</div>
+</div>
 
 <script>
 const WS_URL=(location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws';
@@ -1454,6 +1479,9 @@ function refreshTelethonBadge(){
 document.getElementById('new-url').addEventListener('input',function(){
     const hint=document.getElementById('feed-type-hint');
     hint.style.display=isTgSource(this.value.trim())?'block':'none';
+
+    // Hiện/ẩn "Đọc toàn bộ nguồn" chỉ khi là TG feed
+    document.getElementById('read-all-wrap').style.display=isTgSource(this.value.trim())?'block':'none';
 
     // Kiểm tra URL trùng realtime
     const val=this.value.trim().toLowerCase();
@@ -1677,10 +1705,11 @@ function renderSidebar(){
         const n=newBadges[f.url]||0,active=filterUrl===f.url;
         const isTg=isTgSource(f.url);
         const badge=`<span class="feed-badge ${isTg?'badge-tg':'badge-rss'}">${isTg?'TG':'RSS'}</span>`;
+        const readAllBtn=f.read_all&&isTg?`<span title="Đọc toàn bộ nguồn" onclick="startReadAll(${i})" style="cursor:pointer;color:#f59e0b;font-size:13px;padding:0 2px" class="fedit">▶</span>`:'';
         html+=`<div class="feed-row${active?' active':''}">
             <span class="fname" style="flex:1" onclick="setFilter('${f.url}')">${f.name}${badge}</span>
             ${n>0&&!active?`<span style="background:#dbeafe;color:#1d4ed8;padding:1px 5px;border-radius:8px;font-size:10px">+${n}</span>`:''}
-            <span class="fedit" onclick="openEditFeed(${i})">✎</span><span class="fdel" onclick="deleteFeed(${i})">×</span></div>`;
+            ${readAllBtn}<span class="fedit" onclick="openEditFeed(${i})">✎</span><span class="fdel" onclick="deleteFeed(${i})">×</span></div>`;
     });
     list.innerHTML=html;
 }
@@ -1721,6 +1750,8 @@ function openEditFeed(i){
     document.getElementById('new-show-link').checked=f.show_link!==false;
     document.getElementById('new-auto-fwd').checked=f.auto_fwd===true;
     document.getElementById('new-translate').checked=f.do_translate!==false;
+    document.getElementById('new-read-all').checked=f.read_all===true;
+    document.getElementById('read-all-wrap').style.display=isTgSource(f.url)?'block':'none';
     document.getElementById('new-history-limit').value=String(f.history_limit!=null?f.history_limit:20);
     document.getElementById('modal-title').textContent='Sửa feed';
     document.getElementById('btn-add-feed').textContent='Cập nhật';
@@ -1740,6 +1771,8 @@ function openModal(){
     document.getElementById('new-show-link').checked=true;
     document.getElementById('new-auto-fwd').checked=false;
     document.getElementById('new-translate').checked=true;
+    document.getElementById('new-read-all').checked=false;
+    document.getElementById('read-all-wrap').style.display='none';
     document.getElementById('new-history-limit').value='20';
     document.getElementById('modal-title').textContent='Thêm feed';
     document.getElementById('btn-add-feed').textContent='Thêm';
@@ -1755,13 +1788,14 @@ function addFeed(){
           show_link=document.getElementById('new-show-link').checked,
           auto_fwd=document.getElementById('new-auto-fwd').checked,
           do_translate=document.getElementById('new-translate').checked,
+          read_all=document.getElementById('new-read-all').checked,
           history_limit=parseInt(document.getElementById('new-history-limit').value)||20,
           destinations=getFeedDests();
     if(!name||!url){alert('Nhập đủ tên và URL');return;}
     // Kiểm tra trùng URL (backup check)
     const dupFeed=feeds.find((f,i)=>f.url.toLowerCase()===url.toLowerCase() && i!==editFeedIndex);
     if(dupFeed){alert('Feed "'+( dupFeed.name||dupFeed.url)+'" đã tồn tại trong danh sách!');return;}
-    const feedObj={name,url,show_link,auto_fwd,do_translate,destinations,history_limit};
+    const feedObj={name,url,show_link,auto_fwd,do_translate,read_all,destinations,history_limit};
     if(editFeedIndex>=0){feeds[editFeedIndex]=feedObj;}
     else{feeds.push(feedObj);}
     saveFeeds();
@@ -1774,6 +1808,80 @@ function addFeed(){
 }
 
 function applyFilter(){searchQ=document.getElementById('search').value.trim().toLowerCase();shownCount=PAGE_SIZE;renderStream();}
+
+// --- Đọc toàn bộ nguồn ---
+let _raAbort = false;
+
+async function startReadAll(feedIdx) {
+    const f = feeds[feedIdx];
+    if (!f || !isTgSource(f.url)) return;
+    _raAbort = false;
+    document.getElementById('read-all-modal').classList.add('open');
+    document.getElementById('ra-title').textContent = '📚 Đang đọc: ' + f.name;
+    document.getElementById('ra-current').textContent = 'Đang lấy tổng số tin...';
+    document.getElementById('ra-bar').style.width = '0%';
+    document.getElementById('ra-progress').textContent = '0 / ? tin';
+    document.getElementById('ra-stop-btn').disabled = false;
+
+    try {
+        // Gọi backend để bắt đầu đọc toàn bộ
+        const resp = await fetch('/tg_read_all', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({url: f.url})
+        });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        while (true) {
+            if (_raAbort) break;
+            const {done, value} = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, {stream: true});
+            const lines = buf.split('
+');
+            buf = lines.pop();
+            for (const line of lines) {
+                if (!line.startsWith('data:')) continue;
+                try {
+                    const ev = JSON.parse(line.slice(5).trim());
+                    if (ev.type === 'progress') {
+                        const pct = ev.total > 0 ? Math.round(ev.done / ev.total * 100) : 0;
+                        document.getElementById('ra-bar').style.width = pct + '%';
+                        document.getElementById('ra-progress').textContent = ev.done + ' / ' + ev.total + ' tin';
+                        document.getElementById('ra-current').textContent = ev.title || ('Tin #' + ev.done);
+                    } else if (ev.type === 'done') {
+                        document.getElementById('ra-bar').style.width = '100%';
+                        document.getElementById('ra-progress').textContent = ev.total + ' / ' + ev.total + ' tin';
+                        document.getElementById('ra-current').textContent = '✅ Hoàn thành! Đã forward ' + ev.total + ' tin.';
+                        document.getElementById('ra-title').textContent = '📚 Hoàn thành: ' + f.name;
+                        document.getElementById('ra-stop-btn').textContent = '✓ Đóng';
+                        document.getElementById('ra-stop-btn').style.color = '#16a34a';
+                        document.getElementById('ra-stop-btn').onclick = () => document.getElementById('read-all-modal').classList.remove('open');
+                        showToast('✅ Đã đọc xong ' + ev.total + ' tin từ ' + f.name);
+                        return;
+                    } else if (ev.type === 'error') {
+                        document.getElementById('ra-current').textContent = '❌ Lỗi: ' + ev.msg;
+                    }
+                } catch(e) {}
+            }
+        }
+        if (_raAbort) {
+            document.getElementById('ra-current').textContent = '⏹ Đã dừng.';
+            document.getElementById('ra-stop-btn').textContent = '✓ Đóng';
+            document.getElementById('ra-stop-btn').onclick = () => document.getElementById('read-all-modal').classList.remove('open');
+        }
+    } catch(e) {
+        document.getElementById('ra-current').textContent = '❌ Lỗi kết nối: ' + e.message;
+    }
+}
+
+function stopReadAll() {
+    _raAbort = true;
+    fetch('/tg_read_all_stop', {method:'POST'}).catch(()=>{});
+    document.getElementById('read-all-modal').classList.remove('open');
+}
 function getVisible(){
     let items=filterUrl?allItems.filter(it=>it.feedUrl===filterUrl):[...allItems];
     if(searchQ) items=items.filter(it=>(it.title+it.desc).toLowerCase().includes(searchQ));
@@ -3246,6 +3354,126 @@ class HttpHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'application/json; charset=utf-8')
             self.end_headers()
             self.wfile.write(resp)
+
+        elif p.path == '/tg_read_all_stop':
+            global _read_all_stop
+            _read_all_stop = True
+            self._json({'ok': True})
+
+        elif p.path == '/tg_read_all':
+            global _read_all_stop
+            _read_all_stop = False
+            body = self._read_json()
+            url = body.get('url', '')
+            if not url or not is_tg_source(url):
+                self._json({'error': 'URL không hợp lệ'}, 400); return
+            if not TELETHON_AVAILABLE or tg_client is None:
+                self._json({'error': 'Telethon chưa kết nối'}, 503); return
+
+            # Lấy feed config để biết destinations và settings
+            with lock:
+                feed_cfg = next((u for u in watched_urls if u['url'] == url), None)
+            if not feed_cfg:
+                self._json({'error': 'Feed không tồn tại'}, 404); return
+
+            # Gửi SSE stream response
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
+            self.send_header('Cache-Control', 'no-cache')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+
+            def sse(data):
+                try:
+                    msg = 'data: ' + json.dumps(data, ensure_ascii=False) + '\n\n'
+                    self.wfile.write(msg.encode('utf-8'))
+                    self.wfile.flush()
+                    return True
+                except Exception:
+                    return False
+
+            try:
+                channel = normalize_tg_channel(url)
+                show_link = feed_cfg.get('show_link', True)
+                category  = feed_cfg.get('category', '')
+                do_translate = feed_cfg.get('do_translate', True)
+
+                # Lấy tổng số tin bằng cách get 1 tin để biết total_count
+                import random as _random
+                sse({'type': 'progress', 'done': 0, 'total': 0, 'title': 'Đang lấy tổng số tin...'})
+
+                # Lấy toàn bộ tin theo batch, từ cũ đến mới
+                # Telethon get_messages với reverse=True lấy từ cũ nhất
+                async def _fetch_all():
+                    msgs = []
+                    async for msg in tg_client.iter_messages(channel, reverse=True):
+                        msgs.append(msg)
+                    return msgs
+
+                all_msgs = tg_run_long(_fetch_all(), timeout=300)
+                total = len(all_msgs)
+
+                if not sse({'type': 'progress', 'done': 0, 'total': total, 'title': f'Tìm thấy {total} tin, bắt đầu xử lý...'}):
+                    return
+
+                done = 0
+                for msg in all_msgs:
+                    if _read_all_stop:
+                        break
+                    if not msg:
+                        continue
+
+                    # Tạo item
+                    msg_text = msg.message or ''
+                    chat_username = channel.lstrip('@')
+                    guid  = f'tg_@{chat_username}_{msg.id}'
+                    link  = f'https://t.me/{chat_username}/{msg.id}'
+                    desc  = msg_text.replace('\n', '<br>')
+                    title = (msg_text[:80] + '...') if len(msg_text) > 80 else (msg_text or f'[Media] @{chat_username}')
+                    pub   = msg.date.isoformat() if msg.date else ''
+                    has_media = bool(msg.media)
+
+                    item = {
+                        'guid': guid, 'title': title, 'desc': desc, 'link': link,
+                        'pubDate': pub, 'translated': False, 'category': category,
+                        'show_link': show_link, 'feed_url': url,
+                        '_tg_has_media': has_media,
+                        '_tg_msg_id': msg.id, '_tg_chat': chat_username,
+                        '_tg_grouped_id': getattr(msg, 'grouped_id', None),
+                        '_source': 'telethon',
+                        'do_translate': do_translate,
+                    }
+
+                    # Dịch nếu cần
+                    if do_translate and msg_text:
+                        raw_text = strip_html(desc)
+                        item['text'] = raw_text
+                        translated = _fast_translate(raw_text)
+                        item['desc'] = translated.replace('\n', '<br>')
+                        item['title'] = (translated[:80] + '...') if len(translated) > 80 else translated
+                        item['translated'] = True
+
+                    # Forward tới kênh đích
+                    if auto_fwd_enabled and tg_channels:
+                        _do_forward([item], category, url)
+
+                    done += 1
+                    if not sse({'type': 'progress', 'done': done, 'total': total, 'title': title}):
+                        break
+
+                    # Delay random 5-20 giây
+                    delay = _random.uniform(5, 20)
+                    # Chờ delay nhưng kiểm tra stop mỗi 0.5s
+                    waited = 0
+                    while waited < delay and not _read_all_stop:
+                        time.sleep(0.5)
+                        waited += 0.5
+
+                sse({'type': 'done', 'total': done})
+
+            except Exception as e:
+                sse({'type': 'error', 'msg': str(e)})
+                print(f'[ReadAll] Lỗi: {e}')
 
         else:
             self.send_error(404)

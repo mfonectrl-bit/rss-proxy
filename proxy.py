@@ -139,7 +139,6 @@ def load_feeds_from_file():
     return []
 
 
-
 # --- Redis / Dedup ---
 try:
     import redis as _redis_lib
@@ -2491,7 +2490,7 @@ def _cleanup_known_guids():
 
 def _memory_cleanup():
     """
-    Dọn dẹp RAM định kỳ: translate_cache, _resolved_channels_cache, gc.
+    Dọn dẹp RAM định kỳ: translate_cache, Telethon session, gc.
     Gọi mỗi 20 phút từ poller.
     """
     import gc
@@ -2504,7 +2503,15 @@ def _memory_cleanup():
                 del translate_cache[k]
             print(f'[MEM] translate_cache trimmed → {len(translate_cache)} entries')
 
-    # Không trim _resolved_channels_cache — giữ nguyên để tránh resolve lại gây FloodWait
+    # Flush Telethon session cache — giải phóng entity cache trong RAM
+    try:
+        if tg_client and tg_loop and tg_loop.is_running():
+            asyncio.run_coroutine_threadsafe(
+                tg_client.session.save() if hasattr(tg_client.session, 'save') else asyncio.sleep(0),
+                tg_loop
+            )
+    except Exception:
+        pass
 
     # Force GC
     collected = gc.collect()
@@ -2576,9 +2583,17 @@ def _poll_one(url_obj):
                 print(f'[Dedup] Lọc {skipped} tin trùng (Redis): {url}')
 
         if new_items:
-            # Ghi đè known_guids bằng toàn bộ feed lần này
+            # Cập nhật known_guids — thêm GUID mới, giữ tối đa history_limit*2
             with lock:
-                known_guids[url] = {it['guid'] for it in items if it['guid']}
+                current = known_guids.get(url, set())
+                for it in items:
+                    if it['guid']:
+                        current.add(it['guid'])
+                # Giới hạn kích thước để tránh phình RAM
+                if len(current) > history_limit * 2:
+                    guids_list = sorted(current)
+                    current = set(guids_list[-(history_limit * 2):])
+                known_guids[url] = current
 
             print(f'[+] {len(new_items)} bài mới → pipeline: {url}')
             
@@ -2838,12 +2853,19 @@ def poller():
                 print(f"[POLL] Đang chạy | Feeds: {total_feeds} | Queue: {_pipeline.qsize()} | Known GUIDs: {len(known_guids)} | TG inited: {len(tg_inited)}{_ram_str}")
 
 
-
             # Dọn dẹp known_guids + RAM mỗi 20 phút
             if now - _last_cleanup >= 1200:
                 _last_cleanup = now
                 _cleanup_known_guids()
                 _memory_cleanup()
+                # Trim fast_next — xóa URLs không còn trong watched_urls
+                with lock:
+                    active_urls = {u['url'] for u in watched_urls}
+                stale = [k for k in list(fast_next.keys()) if k not in active_urls]
+                for k in stale:
+                    del fast_next[k]
+                if stale:
+                    print(f'[MEM] fast_next trimmed {len(stale)} stale entries')
 
             time.sleep(0.5)
 

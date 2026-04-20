@@ -3459,7 +3459,9 @@ class HttpHandler(BaseHTTPRequestHandler):
 
                     # Dịch nếu cần
                     if do_translate and msg_text:
-                        raw_text = strip_html(desc)
+                        # Dùng msg_text gốc (có \n) thay vì strip_html(desc)
+                        # vì strip_html thay <br> bằng space → mất hết xuống dòng trước khi dịch
+                        raw_text = msg_text
                         item['text'] = raw_text
                         translated = _fast_translate(raw_text)
                         item['desc'] = translated.replace('\n', '<br>')

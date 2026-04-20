@@ -232,8 +232,12 @@ class RSSDeduplicator:
 # Khởi tạo deduplicator — None nếu không có Redis
 _deduplicator = None
 
-# Flag dừng "đọc toàn bộ nguồn"
+# --- State "đọc toàn bộ nguồn" ---
 _read_all_stop = False
+# Job chạy ngầm: None hoặc dict {url, name, done, total, status, error}
+# status: 'running' | 'done' | 'error' | 'stopped'
+_read_all_job = None
+_read_all_job_lock = threading.Lock()
 
 # --- CẤU HÌNH ---
 POLL_INTERVAL    = 90
@@ -1119,6 +1123,7 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
 .feed-badge{display:inline-block;padding:1px 5px;border-radius:6px;font-size:10px;font-weight:600;margin-left:4px;vertical-align:middle}
 .badge-tg{background:#dbeafe;color:#1d4ed8}
 .badge-rss{background:#dcfce7;color:#166534}
+@keyframes spin{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
@@ -1335,8 +1340,18 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
     <div id="ra-bar" style="background:#2563eb;height:100%;width:0%;transition:width 0.3s;border-radius:8px"></div>
   </div>
   <div style="font-size:12px;color:#aaa;margin-bottom:16px" id="ra-progress">0 / 0 tin</div>
-  <button id="ra-stop-btn" onclick="stopReadAll()" style="padding:7px 20px;border:1px solid #e0e0d8;border-radius:8px;background:#fff;cursor:pointer;font-size:13px;color:#dc2626">⏹ Dừng lại</button>
+  <div style="display:flex;gap:8px;justify-content:center" id="ra-btn-row">
+    <button id="ra-bg-btn" onclick="runReadAllBg()" style="padding:7px 18px;border:1px solid #d0d0c8;border-radius:8px;background:#fff;cursor:pointer;font-size:13px;color:#2563eb">⬇ Chạy ngầm</button>
+    <button id="ra-stop-btn" onclick="stopReadAll()" style="padding:7px 18px;border:1px solid #e0e0d8;border-radius:8px;background:#fff;cursor:pointer;font-size:13px;color:#dc2626">⏹ Dừng lại</button>
+  </div>
 </div>
+</div>
+
+<!-- Indicator job chạy ngầm -->
+<div id="ra-bg-indicator" onclick="openBgJobPopup()" title="Đang có job chạy ngầm — nhấn để xem tiến độ"
+  style="display:none;position:fixed;bottom:18px;right:18px;z-index:500;background:#2563eb;color:#fff;border-radius:24px;padding:8px 16px;font-size:13px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.2);align-items:center;gap:8px">
+  <span style="display:inline-block;width:10px;height:10px;border-radius:50%;border:2px solid #fff;border-top-color:transparent;animation:spin .8s linear infinite"></span>
+  <span id="ra-bg-indicator-text">Đang chạy ngầm...</span>
 </div>
 
 <script>
@@ -1820,26 +1835,74 @@ function applyFilter(){searchQ=document.getElementById('search').value.trim().to
 
 // --- Đọc toàn bộ nguồn ---
 let _raAbort = false;
+let _raBgPollTimer = null;
+let _raCurrentFeedIdx = -1;
+
+function _raSetBtns(mode) {
+    // mode: 'running' | 'done' | 'bg'
+    const stopBtn = document.getElementById('ra-stop-btn');
+    const bgBtn   = document.getElementById('ra-bg-btn');
+    if (mode === 'running') {
+        stopBtn.textContent = '⏹ Dừng lại'; stopBtn.style.color = '#dc2626';
+        stopBtn.onclick = stopReadAll; stopBtn.disabled = false;
+        bgBtn.style.display = ''; bgBtn.disabled = false;
+    } else if (mode === 'done') {
+        stopBtn.textContent = '✓ Đóng'; stopBtn.style.color = '#16a34a';
+        stopBtn.onclick = () => document.getElementById('read-all-modal').classList.remove('open');
+        stopBtn.disabled = false; bgBtn.style.display = 'none';
+    } else if (mode === 'bg') {
+        stopBtn.textContent = '⏹ Dừng job ngầm'; stopBtn.style.color = '#dc2626';
+        stopBtn.onclick = stopReadAll; stopBtn.disabled = false;
+        bgBtn.style.display = 'none';
+    }
+}
+
+function _raUpdateProgress(done, total, current) {
+    const pct = total > 0 ? Math.round(done / total * 100) : 0;
+    document.getElementById('ra-bar').style.width = pct + '%';
+    document.getElementById('ra-progress').textContent = done + ' / ' + (total||'?') + ' tin';
+    if (current) document.getElementById('ra-current').textContent = current;
+}
 
 async function startReadAll(feedIdx) {
     const f = feeds[feedIdx];
     if (!f || !isTgSource(f.url)) return;
+
+    // Kiểm tra xem có job ngầm đang chạy không
+    try {
+        const sr = await fetch('/tg_read_all_status');
+        const sd = await sr.json();
+        if (sd.job && sd.job.status === 'running') {
+            if (sd.job.url === f.url) {
+                // Mở popup để theo dõi job ngầm đang chạy
+                openBgJobPopup(); return;
+            } else {
+                showToastMsg('⚠️ Đang có job chạy ngầm cho kênh ' + sd.job.name);
+                return;
+            }
+        }
+    } catch(e) {}
+
+    _raCurrentFeedIdx = feedIdx;
     _raAbort = false;
     document.getElementById('read-all-modal').classList.add('open');
     document.getElementById('ra-title').textContent = '📚 Đang đọc: ' + f.name;
     document.getElementById('ra-current').textContent = 'Đang lấy tổng số tin...';
     document.getElementById('ra-bar').style.width = '0%';
     document.getElementById('ra-progress').textContent = '0 / ? tin';
-    document.getElementById('ra-stop-btn').disabled = false;
+    _raSetBtns('running');
 
     try {
-        // Gọi backend để bắt đầu đọc toàn bộ
         const resp = await fetch('/tg_read_all', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({url: f.url})
         });
-        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        if (!resp.ok) {
+            const err = await resp.json().catch(()=>({}));
+            if (err.error === 'blocked') { showToastMsg('⚠️ ' + err.msg); document.getElementById('read-all-modal').classList.remove('open'); return; }
+            throw new Error('HTTP ' + resp.status);
+        }
         const reader = resp.body.getReader();
         const decoder = new TextDecoder();
         let buf = '';
@@ -1855,19 +1918,12 @@ async function startReadAll(feedIdx) {
                 try {
                     const ev = JSON.parse(line.slice(5).trim());
                     if (ev.type === 'progress') {
-                        const pct = ev.total > 0 ? Math.round(ev.done / ev.total * 100) : 0;
-                        document.getElementById('ra-bar').style.width = pct + '%';
-                        document.getElementById('ra-progress').textContent = ev.done + ' / ' + ev.total + ' tin';
-                        document.getElementById('ra-current').textContent = ev.title || ('Tin #' + ev.done);
+                        _raUpdateProgress(ev.done, ev.total, ev.title || ('Tin #' + ev.done));
                     } else if (ev.type === 'done') {
-                        document.getElementById('ra-bar').style.width = '100%';
-                        document.getElementById('ra-progress').textContent = ev.total + ' / ' + ev.total + ' tin';
-                        document.getElementById('ra-current').textContent = '✅ Hoàn thành! Đã forward ' + ev.total + ' tin.';
+                        _raUpdateProgress(ev.total, ev.total, '✅ Hoàn thành! Đã forward ' + ev.total + ' tin.');
                         document.getElementById('ra-title').textContent = '📚 Hoàn thành: ' + f.name;
-                        document.getElementById('ra-stop-btn').textContent = '✓ Đóng';
-                        document.getElementById('ra-stop-btn').style.color = '#16a34a';
-                        document.getElementById('ra-stop-btn').onclick = () => document.getElementById('read-all-modal').classList.remove('open');
-                        showToast('✅ Đã đọc xong ' + ev.total + ' tin từ ' + f.name);
+                        _raSetBtns('done');
+                        showToastMsg('✅ Đã đọc xong ' + ev.total + ' tin từ ' + f.name);
                         return;
                     } else if (ev.type === 'error') {
                         document.getElementById('ra-current').textContent = '❌ Lỗi: ' + ev.msg;
@@ -1877,11 +1933,37 @@ async function startReadAll(feedIdx) {
         }
         if (_raAbort) {
             document.getElementById('ra-current').textContent = '⏹ Đã dừng.';
-            document.getElementById('ra-stop-btn').textContent = '✓ Đóng';
-            document.getElementById('ra-stop-btn').onclick = () => document.getElementById('read-all-modal').classList.remove('open');
+            _raSetBtns('done');
         }
     } catch(e) {
         document.getElementById('ra-current').textContent = '❌ Lỗi kết nối: ' + e.message;
+    }
+}
+
+// Chạy ngầm — ngắt SSE stream, server vẫn tiếp tục job trên thread riêng
+async function runReadAllBg() {
+    // Gọi backend để spawn background thread độc lập
+    const f = _raCurrentFeedIdx >= 0 ? feeds[_raCurrentFeedIdx] : null;
+    if (!f) return;
+    _raAbort = true; // ngắt SSE stream ở browser
+    document.getElementById('read-all-modal').classList.remove('open');
+    try {
+        const r = await fetch('/tg_read_all_bg', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({url: f.url})
+        });
+        const d = await r.json();
+        if (d.error === 'blocked') {
+            showToastMsg('⚠️ ' + d.msg);
+            return;
+        }
+        if (d.ok) {
+            showToastMsg('⬇ Đang chạy ngầm: ' + f.name);
+            _startBgPoll();
+        }
+    } catch(e) {
+        showToastMsg('❌ Lỗi khởi động job ngầm: ' + e.message);
     }
 }
 
@@ -1889,6 +1971,52 @@ function stopReadAll() {
     _raAbort = true;
     fetch('/tg_read_all_stop', {method:'POST'}).catch(()=>{});
     document.getElementById('read-all-modal').classList.remove('open');
+    _stopBgPoll();
+    _updateBgIndicator(null);
+}
+
+// Poll tiến độ job ngầm mỗi 5 giây
+function _startBgPoll() {
+    if (_raBgPollTimer) return;
+    _raBgPollTimer = setInterval(async () => {
+        try {
+            const r = await fetch('/tg_read_all_status');
+            const d = await r.json();
+            _updateBgIndicator(d.job);
+        } catch(e) {}
+    }, 5000);
+    // Cập nhật ngay lần đầu
+    fetch('/tg_read_all_status').then(r=>r.json()).then(d=>_updateBgIndicator(d.job)).catch(()=>{});
+}
+
+function _stopBgPoll() {
+    if (_raBgPollTimer) { clearInterval(_raBgPollTimer); _raBgPollTimer = null; }
+}
+
+function _updateBgIndicator(job) {
+    const el  = document.getElementById('ra-bg-indicator');
+    const txt = document.getElementById('ra-bg-indicator-text');
+    if (!job || job.status !== 'running') {
+        el.style.display = 'none';
+        _stopBgPoll();
+    } else {
+        el.style.display = 'flex';
+        txt.textContent = (job.name||'') + ': ' + job.done + '/' + (job.total||'?') + ' tin';
+    }
+}
+
+// Mở popup xem tiến độ job ngầm đang chạy
+async function openBgJobPopup() {
+    try {
+        const r = await fetch('/tg_read_all_status');
+        const d = await r.json();
+        if (!d.job) return;
+        const job = d.job;
+        document.getElementById('ra-title').textContent = '📚 ' + (job.name||job.url);
+        _raUpdateProgress(job.done, job.total, job.current || '');
+        _raSetBtns('bg');
+        document.getElementById('read-all-modal').classList.add('open');
+    } catch(e) {}
 }
 function getVisible(){
     let items=filterUrl?allItems.filter(it=>it.feedUrl===filterUrl):[...allItems];
@@ -2170,6 +2298,12 @@ function connectWS(){
         }
         if(msg.type==='poll_status'){pollInterval=msg.interval;pollNextIn=msg.next_in;}
         if(msg.type==='auto_fwd_sent'){showToastMsg(`Auto-forward: đã gửi ${msg.count} tin mới lên Telegram`);}
+        if(msg.type==='read_all_status'){
+            _updateBgIndicator(msg.status==='running'?msg:null);
+            if(msg.status==='done') showToastMsg('✅ Đọc xong ' + (msg.done||0) + ' tin từ ' + (msg.name||''));
+            if(msg.status==='error') showToastMsg('❌ Lỗi job ' + (msg.name||'') + ': ' + (msg.error||''));
+            if(msg.status==='stopped') _updateBgIndicator(null);
+        }
     };
     ws.onclose=()=>{
         wsReady=false;
@@ -2191,6 +2325,10 @@ function showToastMsg(msg){
 
 (function(){
     renderSidebar();
+    // Kiểm tra job ngầm đang chạy khi mở lại trang
+    fetch('/tg_read_all_status').then(r=>r.json()).then(d=>{
+        if(d.job && d.job.status==='running') { _updateBgIndicator(d.job); _startBgPoll(); }
+    }).catch(()=>{});
     checkTelethonStatus();
     // Khôi phục engine đã chọn từ localStorage
     const sel=document.getElementById('engine-select');
@@ -2575,6 +2713,99 @@ def _do_forward(processed, category, url):
 
     if total_sent > 0:
         broadcast({'type': 'auto_fwd_sent', 'count': total_sent, 'url': url})
+
+
+def _run_read_all_bg(url, feed_cfg):
+    """
+    Chạy "đọc toàn bộ nguồn" trên background thread — không cần browser mở.
+    Cập nhật _read_all_job để UI có thể poll tiến độ bất cứ lúc nào.
+    """
+    global _read_all_stop, _read_all_job
+    import random as _random
+
+    channel      = normalize_tg_channel(url)
+    show_link    = feed_cfg.get("show_link", True)
+    category     = feed_cfg.get("category", "")
+    do_translate = feed_cfg.get("do_translate", True)
+    feed_name    = feed_cfg.get("name", url)
+
+    def _upd(**kw):
+        with _read_all_job_lock:
+            if _read_all_job:
+                _read_all_job.update(kw)
+
+    _upd(status="running", done=0, total=0, current="Đang lấy tổng số tin...")
+
+    try:
+        async def _fetch_all():
+            msgs = []
+            async for msg in tg_client.iter_messages(channel, reverse=True):
+                msgs.append(msg)
+            return msgs
+
+        all_msgs = tg_run_long(_fetch_all(), timeout=300)
+        total = len(all_msgs)
+        _upd(total=total, current=f"Tìm thấy {total} tin, bắt đầu xử lý...")
+
+        done = 0
+        for msg in all_msgs:
+            if _read_all_stop:
+                break
+            if not msg:
+                continue
+
+            msg_text      = msg.message or ""
+            chat_username = channel.lstrip("@")
+            guid  = f"tg_@{chat_username}_{msg.id}"
+            link  = f"https://t.me/{chat_username}/{msg.id}"
+            desc  = msg_text.replace("\n", "<br>")
+            title = (msg_text[:80] + "...") if len(msg_text) > 80 else (msg_text or f"[Media] @{chat_username}")
+            has_media = bool(msg.media)
+
+            item = {
+                "guid": guid, "title": title, "desc": desc, "link": link,
+                "pubDate": msg.date.isoformat() if msg.date else "",
+                "translated": False, "category": category,
+                "show_link": show_link, "feed_url": url,
+                "_tg_has_media": has_media,
+                "_tg_msg_id": msg.id, "_tg_chat": chat_username,
+                "_tg_grouped_id": getattr(msg, "grouped_id", None),
+                "_source": "telethon",
+                "do_translate": do_translate,
+            }
+
+            if do_translate and msg_text:
+                raw_text = msg_text
+                item["text"] = raw_text
+                translated = _fast_translate(raw_text)
+                item["desc"] = translated.replace("\n", "<br>")
+                item["title"] = (translated[:80] + "...") if len(translated) > 80 else translated
+                item["translated"] = True
+
+            if auto_fwd_enabled and tg_channels:
+                _do_forward([item], category, url)
+
+            done += 1
+            _upd(done=done, current=title)
+
+            waited = 0
+            delay = _random.uniform(5, 20)
+            while waited < delay and not _read_all_stop:
+                time.sleep(0.5)
+                waited += 0.5
+
+        if _read_all_stop:
+            _upd(status="stopped", current="⏹ Đã dừng.")
+            broadcast({"type": "read_all_status", "status": "stopped", "done": done, "total": total, "name": feed_name})
+        else:
+            _upd(status="done", current=f"✅ Hoàn thành! Đã xử lý {done} tin.")
+            broadcast({"type": "read_all_status", "status": "done", "done": done, "total": total, "name": feed_name})
+
+    except Exception as e:
+        _upd(status="error", current=f"❌ Lỗi: {e}")
+        broadcast({"type": "read_all_status", "status": "error", "done": 0, "total": 0, "name": feed_name, "error": str(e)})
+        print(f"[ReadAllBG] Lỗi: {e}")
+
 
 def _cleanup_known_guids():
     """
@@ -3226,7 +3457,7 @@ class HttpHandler(BaseHTTPRequestHandler):
             self.wfile.write(data)
 
     def do_POST(self):
-        global _read_all_stop
+        global _read_all_stop, _read_all_job
         p = urlparse(self.path)
 
         if p.path == '/sync_feeds':
@@ -3374,14 +3605,43 @@ class HttpHandler(BaseHTTPRequestHandler):
             _read_all_stop = True
             self._json({'ok': True})
 
-        elif p.path == '/tg_read_all':
-            _read_all_stop = False
+        elif p.path == '/tg_read_all_status':
+            with _read_all_job_lock:
+                job = dict(_read_all_job) if _read_all_job else None
+            self._json({'job': job})
+
+        elif p.path == '/tg_read_all_bg':
             body = self._read_json()
             url = body.get('url', '')
             if not url or not is_tg_source(url):
                 self._json({'error': 'URL không hợp lệ'}, 400); return
             if not TELETHON_AVAILABLE or tg_client is None:
                 self._json({'error': 'Telethon chưa kết nối'}, 503); return
+            with lock:
+                feed_cfg = next((u for u in watched_urls if u['url'] == url), None)
+            if not feed_cfg:
+                self._json({'error': 'Feed không tồn tại'}, 404); return
+            with _read_all_job_lock:
+                if _read_all_job and _read_all_job.get('status') == 'running' and _read_all_job.get('url') == url:
+                    done_n = _read_all_job['done']; total_n = _read_all_job['total']
+                    self._json({'error': 'blocked', 'msg': f'Đang có job chạy ngầm cho kênh này ({done_n}/{total_n} tin)'}); return
+                _read_all_job = {'url': url, 'name': feed_cfg.get('name', url), 'done': 0, 'total': 0, 'status': 'running', 'current': 'Đang khởi động...'}
+            _read_all_stop = False
+            threading.Thread(target=_run_read_all_bg, args=(url, feed_cfg), daemon=True, name='ReadAllBG').start()
+            self._json({'ok': True, 'msg': 'Job chạy ngầm đã bắt đầu'})
+
+        elif p.path == '/tg_read_all':
+            body = self._read_json()
+            url = body.get('url', '')
+            if not url or not is_tg_source(url):
+                self._json({'error': 'URL không hợp lệ'}, 400); return
+            if not TELETHON_AVAILABLE or tg_client is None:
+                self._json({'error': 'Telethon chưa kết nối'}, 503); return
+            with _read_all_job_lock:
+                if _read_all_job and _read_all_job.get('status') == 'running' and _read_all_job.get('url') == url:
+                    done_n = _read_all_job['done']; total_n = _read_all_job['total']
+                    self._json({'error': 'blocked', 'msg': f'Đang có job chạy ngầm cho kênh này ({done_n}/{total_n} tin)'}); return
+            _read_all_stop = False
 
             # Lấy feed config để biết destinations và settings
             with lock:

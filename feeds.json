@@ -110,11 +110,11 @@
       "url": "@abcdnewstest",
       "name": "ABCD news",
       "show_link": true,
-      "auto_fwd": false,
+      "auto_fwd": true,
       "destinations": [
         {
           "ch_idx": 3,
-          "topic_ids": "33142"
+          "topic_ids": "13227"
         }
       ],
       "history_limit": 5

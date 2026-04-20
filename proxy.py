@@ -1870,18 +1870,25 @@ async function startReadAll(feedIdx) {
     const f = feeds[feedIdx];
     if (!f || !isTgSource(f.url)) return;
 
-    // Kiểm tra xem có job ngầm đang chạy không
+    // Kiểm tra xem có job ngầm đang chạy hoặc vừa xong không
     try {
         const sr = await fetch('/tg_read_all_status');
         const sd = await sr.json();
-        if (sd.job && sd.job.status === 'running') {
-            if (sd.job.url === f.url) {
-                // Mở popup để theo dõi job ngầm đang chạy
+        if (sd.job && sd.job.url === f.url) {
+            if (sd.job.status === 'running') {
+                // Đang chạy ngầm → mở popup theo dõi
                 openBgJobPopup(); return;
-            } else {
-                showToastMsg('⚠️ Đang có job chạy ngầm cho kênh ' + sd.job.name);
-                return;
+            } else if (sd.job.status === 'done' || sd.job.status === 'stopped' || sd.job.status === 'error') {
+                // Job đã xong → hỏi có muốn chạy lại không
+                if (!confirm('Job trước đã ' + (sd.job.status === 'done' ? 'hoàn thành (' + sd.job.done + ' tin)' : sd.job.status) + '.\nBấm OK để chạy lại từ đầu, Cancel để thôi.')) return;
+                // Reset job state trước khi chạy lại
+                // (backend sẽ tự tạo job mới vì status không còn là running)
             }
+        }
+        // Nếu có job kênh khác đang running → chặn
+        if (sd.job && sd.job.status === 'running' && sd.job.url !== f.url) {
+            showToastMsg('⚠️ Đang có job chạy ngầm cho kênh ' + sd.job.name);
+            return;
         }
     } catch(e) {}
 

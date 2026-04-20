@@ -2544,7 +2544,11 @@ def _do_forward(processed, category, url):
 
         for topic_id in topic_list:
             for it in reversed(processed):
-                desc_plain = strip_html(it.get('desc', '').replace('<br>', '\n')).strip()
+                # Chuyển <br> → \n trước, rồi strip các HTML tag còn lại
+                # (strip_html thay tag bằng space nên phải xử lý <br> riêng trước)
+                desc_raw   = it.get('desc', '') or ''
+                desc_plain = re.sub(r'<br\s*/?>', '\n', desc_raw, flags=re.I)
+                desc_plain = re.sub(r'<[^>]+>', '', desc_plain).strip()
                 caption    = desc_plain
                 # desc_has_link: chỉ check https link trong nội dung gốc, bỏ qua t.me
                 desc_has_link = bool(re.search(r'https?://(?!t\.me)', it.get('desc', '') or ''))
@@ -3326,7 +3330,9 @@ class HttpHandler(BaseHTTPRequestHandler):
                         feed_url  = it.get('feedUrl', '')
                         show_link = it.get('show_link', True)
 
-                        desc_plain = strip_html((it.get('desc','') or '').replace('<br>','\n')).strip()
+                        desc_raw   = it.get('desc', '') or ''
+                        desc_plain = re.sub(r'<br\s*/?>', '\n', desc_raw, flags=re.I)
+                        desc_plain = re.sub(r'<[^>]+>', '', desc_plain).strip()
                         caption    = desc_plain
                         if show_link and it.get('link'):
                             caption += f'\n\n<a href="{it["link"]}">Xem bài gốc →</a>'

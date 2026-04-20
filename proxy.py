@@ -1942,31 +1942,15 @@ async function startReadAll(feedIdx) {
     }
 }
 
-// Chạy ngầm — ngắt SSE stream, server vẫn tiếp tục job trên thread riêng
+// Chạy ngầm — chỉ ngắt SSE stream ở browser, server tự tiếp tục qua bg thread
+// /tg_read_all đã tự detect khi SSE disconnect và chuyển sang bg mode
 async function runReadAllBg() {
-    // Gọi backend để spawn background thread độc lập
     const f = _raCurrentFeedIdx >= 0 ? feeds[_raCurrentFeedIdx] : null;
     if (!f) return;
-    _raAbort = true; // ngắt SSE stream ở browser
+    _raAbort = true; // ngắt SSE stream ở browser — server sẽ detect và chạy tiếp ngầm
     document.getElementById('read-all-modal').classList.remove('open');
-    try {
-        const r = await fetch('/tg_read_all_bg', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({url: f.url})
-        });
-        const d = await r.json();
-        if (d.error === 'blocked') {
-            showToastMsg('⚠️ ' + d.msg);
-            return;
-        }
-        if (d.ok) {
-            showToastMsg('⬇ Đang chạy ngầm: ' + f.name);
-            _startBgPoll();
-        }
-    } catch(e) {
-        showToastMsg('❌ Lỗi khởi động job ngầm: ' + e.message);
-    }
+    showToastMsg('⬇ Đang chạy ngầm: ' + f.name);
+    _startBgPoll();
 }
 
 function stopReadAll() {
@@ -2012,16 +1996,53 @@ function _updateBgIndicator(job) {
     }
 }
 
-// Mở popup xem tiến độ job ngầm đang chạy
+// Timer live update khi popup đang mở ở chế độ xem job ngầm
+let _raBgLiveTimer = null;
+
+function _startBgLive() {
+    if (_raBgLiveTimer) return;
+    _raBgLiveTimer = setInterval(async () => {
+        // Chỉ update nếu popup đang mở
+        const modal = document.getElementById('read-all-modal');
+        if (!modal.classList.contains('open')) {
+            _stopBgLive(); return;
+        }
+        try {
+            const r = await fetch('/tg_read_all_status');
+            const d = await r.json();
+            if (!d.job) { _stopBgLive(); return; }
+            const job = d.job;
+            _raUpdateProgress(job.done, job.total, job.current || '');
+            _updateBgIndicator(job);
+            if (job.status !== 'running') {
+                _stopBgLive();
+                _raSetBtns('done');
+                document.getElementById('ra-current').textContent = job.current || '';
+            }
+        } catch(e) {}
+    }, 3000);
+}
+
+function _stopBgLive() {
+    if (_raBgLiveTimer) { clearInterval(_raBgLiveTimer); _raBgLiveTimer = null; }
+}
+
+// Mở popup xem tiến độ job ngầm đang chạy — có live update mỗi 3s
 async function openBgJobPopup() {
     try {
         const r = await fetch('/tg_read_all_status');
         const d = await r.json();
-        if (!d.job) return;
+        if (!d.job) { showToastMsg('Không có job nào đang chạy.'); return; }
         const job = d.job;
         document.getElementById('ra-title').textContent = '📚 ' + (job.name||job.url);
         _raUpdateProgress(job.done, job.total, job.current || '');
-        _raSetBtns('bg');
+        if (job.status === 'running') {
+            _raSetBtns('bg');
+            _startBgLive(); // bắt đầu live update
+        } else {
+            _raSetBtns('done');
+            document.getElementById('ra-current').textContent = job.current || '';
+        }
         document.getElementById('read-all-modal').classList.add('open');
     } catch(e) {}
 }
@@ -3641,7 +3662,10 @@ class HttpHandler(BaseHTTPRequestHandler):
             if not feed_cfg:
                 self._json({'error': 'Feed không tồn tại'}, 404); return
             with _read_all_job_lock:
-                if _read_all_job and _read_all_job.get('status') == 'running' and _read_all_job.get('url') == url:
+                # Chỉ block nếu bg job đang chạy VÀ chưa bị yêu cầu dừng
+                if (_read_all_job and _read_all_job.get('status') == 'running'
+                        and _read_all_job.get('url') == url
+                        and url not in _read_all_stop_urls):
                     done_n = _read_all_job['done']; total_n = _read_all_job['total']
                     self._json({'error': 'blocked', 'msg': f'Đang có job chạy ngầm cho kênh này ({done_n}/{total_n} tin)'}); return
                 _read_all_job = {'url': url, 'name': feed_cfg.get('name', url), 'done': 0, 'total': 0, 'status': 'running', 'current': 'Đang khởi động...'}
@@ -3709,6 +3733,7 @@ class HttpHandler(BaseHTTPRequestHandler):
                     return
 
                 done = 0
+                browser_disconnected = False
                 for msg in all_msgs:
                     if url in _read_all_stop_urls:
                         break
@@ -3753,6 +3778,68 @@ class HttpHandler(BaseHTTPRequestHandler):
 
                     done += 1
                     if not sse({'type': 'progress', 'done': done, 'total': total, 'title': title}):
+                        # Browser ngắt kết nối (bấm "Chạy ngầm") — chuyển sang bg thread
+                        # Tiếp tục từ tin tiếp theo (all_msgs[done:])
+                        remaining_msgs = all_msgs[done:]
+                        if remaining_msgs and url not in _read_all_stop_urls:
+                            print(f'[ReadAll] Browser disconnect → chuyển sang bg ({done}/{total} done, còn {len(remaining_msgs)} tin)')
+                            with _read_all_job_lock:
+                                _read_all_job = {
+                                    'url': url, 'name': feed_cfg.get('name', url),
+                                    'done': done, 'total': total,
+                                    'status': 'running', 'current': title,
+                                }
+                            def _continue_bg(msgs_left, d_start):
+                                import random as _r2
+                                global _read_all_job
+                                try:
+                                    for _msg in msgs_left:
+                                        if url in _read_all_stop_urls:
+                                            break
+                                        if not _msg:
+                                            continue
+                                        _mt = _msg.message or ''
+                                        _cu = channel.lstrip('@')
+                                        _gi = f'tg_@{_cu}_{_msg.id}'
+                                        _li = f'https://t.me/{_cu}/{_msg.id}'
+                                        _de = _mt.replace('\n', '<br>')
+                                        _ti = (_mt[:80] + '...') if len(_mt) > 80 else (_mt or f'[Media] @{_cu}')
+                                        _it = {
+                                            'guid': _gi, 'title': _ti, 'desc': _de, 'link': _li,
+                                            'pubDate': _msg.date.isoformat() if _msg.date else '',
+                                            'translated': False, 'category': category,
+                                            'show_link': show_link, 'feed_url': url,
+                                            '_tg_has_media': bool(_msg.media),
+                                            '_tg_msg_id': _msg.id, '_tg_chat': _cu,
+                                            '_tg_grouped_id': getattr(_msg, 'grouped_id', None),
+                                            '_source': 'telethon', 'do_translate': do_translate,
+                                        }
+                                        if do_translate and _mt:
+                                            _tr = _fast_translate(_mt)
+                                            _it['desc'] = _tr.replace('\n', '<br>')
+                                            _it['title'] = (_tr[:80] + '...') if len(_tr) > 80 else _tr
+                                            _it['translated'] = True
+                                        if auto_fwd_enabled and tg_channels:
+                                            _do_forward([_it], category, url)
+                                        d_start += 1
+                                        with _read_all_job_lock:
+                                            if _read_all_job:
+                                                _read_all_job.update({'done': d_start, 'current': _ti})
+                                        _w = 0; _dl = _r2.uniform(5, 20)
+                                        while _w < _dl and url not in _read_all_stop_urls:
+                                            time.sleep(0.5); _w += 0.5
+                                    _final_status = 'stopped' if url in _read_all_stop_urls else 'done'
+                                    with _read_all_job_lock:
+                                        if _read_all_job:
+                                            _read_all_job.update({'status': _final_status, 'current': f'✅ Hoàn thành! {d_start} tin.' if _final_status == 'done' else '⏹ Đã dừng.'})
+                                    broadcast({'type': 'read_all_status', 'status': _final_status, 'done': d_start, 'total': total, 'name': feed_cfg.get('name', url)})
+                                except Exception as _e:
+                                    print(f'[ReadAllBG-cont] Lỗi: {_e}')
+                                    with _read_all_job_lock:
+                                        if _read_all_job:
+                                            _read_all_job.update({'status': 'error', 'current': f'❌ Lỗi: {_e}'})
+                            threading.Thread(target=_continue_bg, args=(remaining_msgs, done), daemon=True, name='ReadAllBG').start()
+                        browser_disconnected = True
                         break
 
                     # Delay random 5-20 giây
@@ -3763,7 +3850,8 @@ class HttpHandler(BaseHTTPRequestHandler):
                         time.sleep(0.5)
                         waited += 0.5
 
-                sse({'type': 'done', 'total': done})
+                if not browser_disconnected:
+                    sse({'type': 'done', 'total': done})
 
             except Exception as e:
                 sse({'type': 'error', 'msg': str(e)})

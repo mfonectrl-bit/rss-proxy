@@ -544,14 +544,14 @@ def _fast_translate(text):
     Dịch nhanh cho pipeline — không classification, không AI phức tạp.
     Dùng engine được chọn trong UI, fallback Google nếu lỗi.
     Bỏ qua nếu text đã là tiếng Việt.
-    URLs được tách ra trước khi dịch để tránh bị dịch hỏng.
+    URLs và newlines được bảo toàn trước khi dịch.
     """
     if not text or len(text.strip()) < 4:
         return text
     if is_vietnamese(text[:400]):
         return text
 
-    # Tách URL ra, thay bằng placeholder trước khi dịch
+    # Bước 1: Tách URL ra, thay bằng placeholder
     url_pattern = re.compile(r'https?://[^\s\)<>]+')
     urls = url_pattern.findall(text)
     placeholders = {}
@@ -561,12 +561,21 @@ def _fast_translate(text):
         placeholders[placeholder] = url
         masked = masked.replace(url, placeholder, 1)
 
+    # Bước 2: Bảo toàn newlines — thay \n bằng placeholder
+    # Google Translate hay gộp dòng, dùng placeholder để giữ nguyên cấu trúc
+    NL_TOKEN = ' NLTOKEN '
+    masked = masked.replace('\n', NL_TOKEN)
+
     translated = _translate_with_engine(masked)
 
-    # Khôi phục URL gốc
+    # Bước 3: Khôi phục newlines
+    translated = translated.replace(NL_TOKEN, '\n')
+    # Đề phòng engine thêm/bớt space quanh token
+    translated = re.sub(r'\s*NLTOKEN\s*', '\n', translated)
+
+    # Bước 4: Khôi phục URLs
     for placeholder, url in placeholders.items():
         translated = translated.replace(placeholder, url)
-        # Đề phòng engine chèn space vào placeholder
         translated = translated.replace(placeholder.replace('URLTOKEN', ' URLTOKEN ').strip(), url)
 
     return translated

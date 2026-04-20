@@ -3214,6 +3214,7 @@ class HttpHandler(BaseHTTPRequestHandler):
             self.wfile.write(data)
 
     def do_POST(self):
+        global _read_all_stop
         p = urlparse(self.path)
 
         if p.path == '/sync_feeds':
@@ -3356,12 +3357,10 @@ class HttpHandler(BaseHTTPRequestHandler):
             self.wfile.write(resp)
 
         elif p.path == '/tg_read_all_stop':
-            global _read_all_stop
             _read_all_stop = True
             self._json({'ok': True})
 
         elif p.path == '/tg_read_all':
-            global _read_all_stop
             _read_all_stop = False
             body = self._read_json()
             url = body.get('url', '')

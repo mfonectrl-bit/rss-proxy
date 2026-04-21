@@ -929,7 +929,13 @@ async def _tg_setup_realtime(feed_urls):
     if not feed_urls:
         return
 
-    raw_channels = [normalize_tg_channel(u).lstrip('@') for u in feed_urls]
+    def _to_channel_id(u):
+        n = normalize_tg_channel(u)
+        stripped = n.lstrip('-')
+        if stripped.isdigit() and len(stripped) >= 5:
+            return int(n)  # numeric ID → int cho Telethon
+        return n.lstrip('@')
+    raw_channels = [_to_channel_id(u) for u in feed_urls]
 
     # Resolve các channel chưa có trong cache
     need_resolve = [ch for ch in raw_channels if ch not in _resolved_channels_cache]
@@ -1031,12 +1037,18 @@ async def _register_handler(channels_list):
 
 _tg_realtime_last_setup = 0.0
 
+_tg_realtime_last_urls = set()  # track URLs đã setup để tránh re-register không cần thiết
+
 def tg_setup_realtime_sync(feed_urls):
-    """Wrapper đồng bộ để gọi từ thread thường — có debounce 60s"""
-    global _tg_realtime_last_setup
+    """Wrapper đồng bộ để gọi từ thread thường — có debounce 120s + URL change check"""
+    global _tg_realtime_last_setup, _tg_realtime_last_urls
     now = time.time()
-    if now - _tg_realtime_last_setup < 60:
-        return  # bỏ qua nếu vừa setup xong trong vòng 60 giây
+    new_url_set = set(feed_urls)
+    if now - _tg_realtime_last_setup < 120 and new_url_set == _tg_realtime_last_urls:
+        return  # channels không thay đổi, bỏ qua
+    if now - _tg_realtime_last_setup < 30:
+        return  # hard minimum 30s
+    _tg_realtime_last_urls = new_url_set
     _tg_realtime_last_setup = now
     if tg_loop and TELETHON_AVAILABLE:
         try:
@@ -1340,6 +1352,7 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
 <button onclick="clearSelection()" class="btn-sm">Bỏ chọn</button>
 </div>
 <button onclick="manualRefreshAll()" class="btn-sm">Refresh</button>
+<button onclick="openCleanupModal()" title="Dọn bài trong topic" class="btn-sm" style="padding:4px 8px;font-size:15px;background:none;border:1px solid #e0e0d8;border-radius:7px;cursor:pointer;line-height:1">🗑️</button>
 <span id="item-count"></span>
 </div>
 </div>
@@ -1500,6 +1513,51 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
 <div id="toast"></div>
 
 <!-- Modal tiến trình Đọc toàn bộ nguồn -->
+<!-- Modal dọn bài trong topic -->
+<div class="modal-bg" id="cleanup-modal" style="z-index:300">
+<div class="modal" style="width:520px;max-height:90vh;overflow-y:auto">
+  <h2 style="margin-bottom:1rem">🗑️ Dọn bài trong topic</h2>
+
+  <div style="margin-bottom:.75rem">
+    <label style="font-size:12px;color:#666;display:block;margin-bottom:4px">Kênh/Group đích (username hoặc ID)</label>
+    <input id="cu-channel" type="text" placeholder="@mygroup hoặc -1001234567890"
+      style="width:100%;padding:8px;border:1px solid #d0d0c8;border-radius:8px;font-size:13px">
+  </div>
+
+  <div style="display:flex;gap:8px;margin-bottom:.75rem">
+    <div style="flex:1">
+      <label style="font-size:12px;color:#666;display:block;margin-bottom:4px">Topic ID</label>
+      <input id="cu-topic" type="text" placeholder="123456"
+        style="width:100%;padding:8px;border:1px solid #d0d0c8;border-radius:8px;font-size:13px">
+    </div>
+    <div style="width:130px">
+      <label style="font-size:12px;color:#666;display:block;margin-bottom:4px">Số bài xóa</label>
+      <input id="cu-count" type="text" placeholder="100 hoặc All"
+        style="width:100%;padding:8px;border:1px solid #d0d0c8;border-radius:8px;font-size:13px">
+    </div>
+  </div>
+
+  <!-- Danh sách topic đã lưu -->
+  <div style="margin-bottom:.75rem">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <label style="font-size:12px;color:#666;font-weight:600">📌 Topic đã lưu</label>
+      <button onclick="cuSaveCurrentTopic()" style="font-size:11px;padding:3px 10px;border:1px solid #d0d0c8;border-radius:6px;background:#fff;cursor:pointer">+ Lưu topic hiện tại</button>
+    </div>
+    <div id="cu-saved-list" style="max-height:160px;overflow-y:auto;border:1px solid #e0e0d8;border-radius:8px;padding:4px"></div>
+  </div>
+
+  <div id="cu-status" style="font-size:13px;color:#555;min-height:20px;margin-bottom:.5rem"></div>
+  <div style="background:#e0e0d8;border-radius:8px;height:6px;margin-bottom:.75rem;overflow:hidden;display:none" id="cu-bar-wrap">
+    <div id="cu-bar" style="background:#dc2626;height:100%;width:0%;transition:width 0.3s;border-radius:8px"></div>
+  </div>
+
+  <div class="modal-btns">
+    <button onclick="closeCleanupModal()">Đóng</button>
+    <button id="cu-run-btn" class="btn-ok" style="background:#dc2626;border-color:#dc2626" onclick="runCleanup()">🗑️ Dọn ngay</button>
+  </div>
+</div>
+</div>
+
 <div class="modal-bg" id="read-all-modal" style="z-index:300">
 <div class="modal" style="width:460px;text-align:center">
   <h2 id="ra-title" style="margin-bottom:12px">📚 Đang đọc toàn bộ nguồn...</h2>
@@ -1561,7 +1619,12 @@ adjustLayout();
 
 // --- Telethon UI ---
 function isTgSource(url){
-    return url.startsWith('@')||url.includes('t.me/');
+    if(!url) return false;
+    url=url.trim();
+    if(url.startsWith('@')||url.includes('t.me/')) return true;
+    // Numeric ID: -100xxxxxxxxxx
+    const stripped=url.replace(/^-/,'');
+    return /^\d{5,}$/.test(stripped);
 }
 
 function openTelethonModal(){
@@ -2219,6 +2282,124 @@ async function openBgJobPopup() {
         document.getElementById('read-all-modal').classList.add('open');
     } catch(e) {}
 }
+// ===================== CLEANUP TOPIC =====================
+let _cuRunning = false;
+
+function openCleanupModal() {
+    cuRenderSavedList();
+    document.getElementById('cu-status').textContent = '';
+    document.getElementById('cu-bar-wrap').style.display = 'none';
+    document.getElementById('cu-bar').style.width = '0%';
+    document.getElementById('cu-run-btn').disabled = false;
+    document.getElementById('cleanup-modal').classList.add('open');
+}
+
+function closeCleanupModal() {
+    document.getElementById('cleanup-modal').classList.remove('open');
+}
+
+function cuGetSavedTopics() {
+    try { return JSON.parse(localStorage.getItem('cu_saved_topics') || '[]'); }
+    catch(e) { return []; }
+}
+
+function cuSaveTopics(list) {
+    localStorage.setItem('cu_saved_topics', JSON.stringify(list));
+}
+
+function cuRenderSavedList() {
+    const list = cuGetSavedTopics();
+    const el = document.getElementById('cu-saved-list');
+    if (!list.length) {
+        el.innerHTML = '<div style="padding:8px;color:#aaa;font-size:12px;text-align:center">Chưa có topic nào được lưu</div>';
+        return;
+    }
+    el.innerHTML = list.map((t, i) => `
+        <div style="display:flex;align-items:center;gap:6px;padding:5px 8px;border-bottom:1px solid #f0f0e8;font-size:12px">
+            <span style="flex:1;cursor:pointer;color:#2563eb" onclick="cuLoadTopic(${i})" title="Nhấn để điền vào form">
+                <b>${t.channel}</b> › topic ${t.topic}
+                <span style="color:#aaa;margin-left:4px">${t.label||''}</span>
+            </span>
+            <span style="color:#aaa;font-size:11px">${t.autoClean ? '🔄 auto' : ''}</span>
+            <button onclick="cuDeleteTopic(${i})" style="border:none;background:none;cursor:pointer;color:#dc2626;font-size:13px;padding:0 4px">×</button>
+        </div>
+    `).join('');
+}
+
+function cuLoadTopic(idx) {
+    const t = cuGetSavedTopics()[idx];
+    if (!t) return;
+    document.getElementById('cu-channel').value = t.channel || '';
+    document.getElementById('cu-topic').value   = t.topic   || '';
+    document.getElementById('cu-count').value   = t.count   || '100';
+}
+
+function cuSaveCurrentTopic() {
+    const channel = document.getElementById('cu-channel').value.trim();
+    const topic   = document.getElementById('cu-topic').value.trim();
+    const count   = document.getElementById('cu-count').value.trim() || '100';
+    if (!channel || !topic) { showToastMsg('⚠️ Nhập kênh và topic ID trước'); return; }
+    const label = prompt('Tên gợi nhớ cho topic này (để trống nếu không cần):', '') || '';
+    const list = cuGetSavedTopics();
+    // Tránh lưu trùng
+    if (list.find(t => t.channel === channel && t.topic === topic)) {
+        showToastMsg('Topic này đã được lưu rồi'); return;
+    }
+    list.push({ channel, topic, count, label });
+    cuSaveTopics(list);
+    cuRenderSavedList();
+    showToastMsg('✅ Đã lưu topic');
+}
+
+function cuDeleteTopic(idx) {
+    const list = cuGetSavedTopics();
+    list.splice(idx, 1);
+    cuSaveTopics(list);
+    cuRenderSavedList();
+}
+
+async function runCleanup() {
+    if (_cuRunning) return;
+    const channel = document.getElementById('cu-channel').value.trim();
+    const topic   = document.getElementById('cu-topic').value.trim();
+    const countRaw = document.getElementById('cu-count').value.trim() || '100';
+    if (!channel) { showToastMsg('⚠️ Nhập kênh/group đích'); return; }
+    if (!topic)   { showToastMsg('⚠️ Nhập Topic ID'); return; }
+
+    const isAll = countRaw.toLowerCase() === 'all';
+    const count = isAll ? 999999 : parseInt(countRaw);
+    if (!isAll && isNaN(count)) { showToastMsg('⚠️ Số bài không hợp lệ'); return; }
+
+    if (!confirm(`Xóa ${isAll ? 'TẤT CẢ' : count + ' bài'} trong topic ${topic} của ${channel}?\nHành động này không thể hoàn tác!`)) return;
+
+    _cuRunning = true;
+    document.getElementById('cu-run-btn').disabled = true;
+    document.getElementById('cu-status').textContent = 'Đang xóa...';
+    document.getElementById('cu-bar-wrap').style.display = '';
+    document.getElementById('cu-bar').style.width = '0%';
+
+    try {
+        const resp = await fetch('/tg_cleanup_topic', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ channel, topic_id: parseInt(topic), count })
+        });
+        const d = await resp.json();
+        if (d.ok) {
+            document.getElementById('cu-status').textContent = `✅ Đã xóa ${d.deleted} tin trong topic ${topic}`;
+            document.getElementById('cu-bar').style.width = '100%';
+            showToastMsg(`✅ Đã dọn ${d.deleted} tin`);
+        } else {
+            document.getElementById('cu-status').textContent = '❌ Lỗi: ' + (d.error || 'Unknown');
+        }
+    } catch(e) {
+        document.getElementById('cu-status').textContent = '❌ Lỗi kết nối: ' + e.message;
+    }
+    _cuRunning = false;
+    document.getElementById('cu-run-btn').disabled = false;
+}
+// ===================== END CLEANUP TOPIC =====================
+
 function getVisible(){
     let items=filterUrl?allItems.filter(it=>it.feedUrl===filterUrl):[...allItems];
     if(searchQ) items=items.filter(it=>(it.title+it.desc).toLowerCase().includes(searchQ));
@@ -2963,6 +3144,12 @@ def _run_read_all_bg(url, feed_cfg):
             title = (msg_text[:80] + "...") if len(msg_text) > 80 else (msg_text or f"[Media] @{chat_username}")
             has_media = bool(msg.media)
 
+            # Skip nếu đã forward rồi
+            with lock:
+                if url in known_guids and guid in known_guids[url]:
+                    done += 1
+                    continue
+
             item = {
                 "guid": guid, "title": title, "desc": desc, "link": link,
                 "pubDate": msg.date.isoformat() if msg.date else "",
@@ -2982,6 +3169,12 @@ def _run_read_all_bg(url, feed_cfg):
                 item["desc"] = translated.replace("\n", "<br>")
                 item["title"] = (translated[:80] + "...") if len(translated) > 80 else translated
                 item["translated"] = True
+
+            # Ghi guid vào known_guids để tránh forward lại
+            with lock:
+                if url not in known_guids:
+                    known_guids[url] = set()
+                known_guids[url].add(guid)
 
             if auto_fwd_enabled and tg_channels:
                 _do_forward([item], category, url)
@@ -3077,6 +3270,11 @@ def _memory_cleanup():
         print(f'[MEM] RAM hiện tại: {mb:.1f} MB')
     except ImportError:
         pass
+
+def _is_numeric_tg_id(url):
+    """Kiểm tra URL có phải là numeric Telegram channel ID không"""
+    s = str(url).strip().lstrip('-')
+    return s.isdigit() and len(s) >= 5
 
 def _poll_one(url_obj):
     """
@@ -3537,10 +3735,22 @@ def ws_handler(ws):
         print(f'[WS] Client ngắt, tổng còn lại: {len(ws_clients)}')
 
 def is_tg_source(url):
-    return url.startswith('@') or 't.me/' in url
+    if not url:
+        return False
+    url = url.strip()
+    # @username, t.me/ link, hoặc numeric ID (-100xxxxxxxxxx hoặc số thuần)
+    if url.startswith('@') or 't.me/' in url:
+        return True
+    # Numeric ID: -100xxxxxxxxxx hoặc chỉ số âm/dương
+    stripped = url.lstrip('-')
+    return stripped.isdigit() and len(stripped) >= 5
 
 def normalize_tg_channel(url):
     url = url.strip()
+    # Numeric ID — giữ nguyên, không thêm @
+    stripped = url.lstrip('-')
+    if stripped.isdigit() and len(stripped) >= 5:
+        return url  # trả về dạng -1001419735783 hoặc 1001419735783
     if url.startswith('https://t.me/'):
         url = url[len('https://t.me/'):]
     elif url.startswith('t.me/'):
@@ -3819,6 +4029,52 @@ class HttpHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(resp)
 
+        elif p.path == '/tg_cleanup_topic':
+            if not TELETHON_AVAILABLE or tg_client is None:
+                self._json({'error': 'Telethon chưa kết nối'}, 503); return
+            body = self._read_json()
+            channel_str = body.get('channel', '').strip()
+            topic_id    = body.get('topic_id')
+            count       = int(body.get('count', 100))
+            if not channel_str or not topic_id:
+                self._json({'error': 'Thiếu channel hoặc topic_id'}, 400); return
+
+            async def _do_cleanup():
+                try:
+                    from telethon.tl.functions.messages import DeleteMessagesRequest
+                    # Resolve entity
+                    dest = await _resolve_dest(channel_str)
+                    entity = await tg_client.get_entity(dest)
+                    # Lấy tin trong topic (reply_to = topic_id)
+                    msg_ids = []
+                    async for msg in tg_client.iter_messages(
+                        entity,
+                        reply_to=int(topic_id),
+                        limit=min(count, 100000)
+                    ):
+                        if msg and msg.id != int(topic_id):
+                            msg_ids.append(msg.id)
+
+                    # Xóa theo batch 100
+                    deleted = 0
+                    for i in range(0, len(msg_ids), 100):
+                        batch = msg_ids[i:i+100]
+                        await tg_client(DeleteMessagesRequest(
+                            id=batch,
+                            revoke=True
+                        ))
+                        deleted += len(batch)
+                        await asyncio.sleep(0.5)
+                    return {'ok': True, 'deleted': deleted}
+                except Exception as e:
+                    return {'ok': False, 'error': str(e)}
+
+            try:
+                result = tg_run(_do_cleanup())
+                self._json(result)
+            except Exception as e:
+                self._json({'ok': False, 'error': str(e)})
+
         elif p.path == '/tg_read_all_stop':
             body_stop = self._read_json()
             stop_url = body_stop.get('url', '')
@@ -3930,6 +4186,12 @@ class HttpHandler(BaseHTTPRequestHandler):
                     msg_text = msg.message or ''
                     chat_username = channel.lstrip('@')
                     guid  = f'tg_@{chat_username}_{msg.id}'
+
+                    # Skip nếu đã forward rồi (tránh forward lại khi chạy lại)
+                    with lock:
+                        if url in known_guids and guid in known_guids[url]:
+                            done += 1
+                            continue
                     link  = f'https://t.me/{chat_username}/{msg.id}'
                     desc  = msg_text.replace('\n', '<br>')
                     title = (msg_text[:80] + '...') if len(msg_text) > 80 else (msg_text or f'[Media] @{chat_username}')
@@ -3957,6 +4219,12 @@ class HttpHandler(BaseHTTPRequestHandler):
                         item['desc'] = translated.replace('\n', '<br>')
                         item['title'] = (translated[:80] + '...') if len(translated) > 80 else translated
                         item['translated'] = True
+
+                    # Ghi guid vào known_guids để tránh forward lại nếu chạy lại
+                    with lock:
+                        if url not in known_guids:
+                            known_guids[url] = set()
+                        known_guids[url].add(guid)
 
                     # Forward tới kênh đích
                     if auto_fwd_enabled and tg_channels:

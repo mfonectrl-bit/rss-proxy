@@ -238,7 +238,7 @@ _read_all_stop_urls = set()
 _read_all_stop = False  # giữ lại để tương thích, không dùng logic nữa
 # Job chạy ngầm: None hoặc dict {url, name, done, total, status, error}
 # status: 'running' | 'done' | 'error' | 'stopped'
-_read_all_job = None
+_read_all_jobs = {}  # {url: {status, done, total, name, current}} — multi-job support
 _read_all_job_lock = threading.Lock()
 
 # --- CẤU HÌNH ---
@@ -2070,10 +2070,10 @@ function applyFilter(){searchQ=document.getElementById('search').value.trim().to
 // --- Đọc toàn bộ nguồn ---
 let _raAbort = false;
 let _raBgPollTimer = null;
-let _raCurrentFeedIdx = -1;
+// _raCurrentUrl: track URL của feed đang hiển thị trong popup (thay vì index)
+let _raCurrentUrl = null;
 
 function _raSetBtns(mode) {
-    // mode: 'running' | 'done' | 'bg'
     const stopBtn = document.getElementById('ra-stop-btn');
     const bgBtn   = document.getElementById('ra-bg-btn');
     if (mode === 'running') {
@@ -2102,29 +2102,26 @@ async function startReadAll(feedIdx) {
     const f = feeds[feedIdx];
     if (!f || !isTgSource(f.url)) return;
 
-    // Kiểm tra xem có job ngầm đang chạy hoặc vừa xong không
+    // Kiểm tra job theo đúng URL của feed này
     try {
-        const sr = await fetch('/tg_read_all_status');
+        const sr = await fetch('/tg_read_all_status', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({url: f.url})
+        });
         const sd = await sr.json();
-        if (sd.job && sd.job.url === f.url) {
+        if (sd.job) {
             if (sd.job.status === 'running') {
-                // Đang chạy ngầm → mở popup theo dõi
-                openBgJobPopup(); return;
+                // Job ngầm đang chạy → mở popup theo dõi đúng job này
+                _raCurrentUrl = f.url;
+                openBgJobPopup(f.url); return;
             } else if (sd.job.status === 'done' || sd.job.status === 'stopped' || sd.job.status === 'error') {
-                // Job đã xong → hỏi có muốn chạy lại không
                 if (!confirm('Job trước đã ' + (sd.job.status === 'done' ? 'hoàn thành (' + sd.job.done + ' tin)' : sd.job.status) + '.\nBấm OK để chạy lại từ đầu, Cancel để thôi.')) return;
-                // Reset job state trước khi chạy lại
-                // (backend sẽ tự tạo job mới vì status không còn là running)
             }
-        }
-        // Nếu có job kênh khác đang running → chặn
-        if (sd.job && sd.job.status === 'running' && sd.job.url !== f.url) {
-            showToastMsg('⚠️ Đang có job chạy ngầm cho kênh ' + sd.job.name);
-            return;
         }
     } catch(e) {}
 
-    _raCurrentFeedIdx = feedIdx;
+    _raCurrentUrl = f.url;
     _raAbort = false;
     document.getElementById('read-all-modal').classList.add('open');
     document.getElementById('ra-title').textContent = '📚 Đang đọc: ' + f.name;
@@ -2181,82 +2178,84 @@ async function startReadAll(feedIdx) {
     }
 }
 
-// Chạy ngầm — chỉ ngắt SSE stream ở browser, server tự tiếp tục qua bg thread
-// /tg_read_all đã tự detect khi SSE disconnect và chuyển sang bg mode
 async function runReadAllBg() {
-    const f = _raCurrentFeedIdx >= 0 ? feeds[_raCurrentFeedIdx] : null;
-    if (!f) return;
-    _raAbort = true; // ngắt SSE stream ở browser — server sẽ detect và chạy tiếp ngầm
+    if (!_raCurrentUrl) return;
+    _raAbort = true;
     document.getElementById('read-all-modal').classList.remove('open');
-    showToastMsg('⬇ Đang chạy ngầm: ' + f.name);
+    const f = feeds.find(x => x.url === _raCurrentUrl);
+    showToastMsg('⬇ Đang chạy ngầm: ' + (f ? f.name : _raCurrentUrl));
     _startBgPoll();
 }
 
 function stopReadAll() {
     _raAbort = true;
-    const f = _raCurrentFeedIdx >= 0 ? feeds[_raCurrentFeedIdx] : null;
     fetch('/tg_read_all_stop', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({url: f ? f.url : ''})
+        body: JSON.stringify({url: _raCurrentUrl || ''})
     }).catch(()=>{});
     document.getElementById('read-all-modal').classList.remove('open');
     _stopBgPoll();
     _updateBgIndicator(null);
 }
 
-// Poll tiến độ job ngầm mỗi 5 giây
+// Poll indicator: hiện tất cả job đang running
 function _startBgPoll() {
     if (_raBgPollTimer) return;
     _raBgPollTimer = setInterval(async () => {
         try {
-            const r = await fetch('/tg_read_all_status');
+            const r = await fetch('/tg_read_all_status', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
             const d = await r.json();
-            _updateBgIndicator(d.job);
+            const running = Object.values(d.jobs||{}).filter(j=>j.status==='running');
+            _updateBgIndicator(running.length > 0 ? running[0] : null, running.length);
         } catch(e) {}
     }, 5000);
-    // Cập nhật ngay lần đầu
-    fetch('/tg_read_all_status').then(r=>r.json()).then(d=>_updateBgIndicator(d.job)).catch(()=>{});
+    fetch('/tg_read_all_status', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'})
+        .then(r=>r.json()).then(d=>{
+            const running = Object.values(d.jobs||{}).filter(j=>j.status==='running');
+            _updateBgIndicator(running.length > 0 ? running[0] : null, running.length);
+        }).catch(()=>{});
 }
 
 function _stopBgPoll() {
     if (_raBgPollTimer) { clearInterval(_raBgPollTimer); _raBgPollTimer = null; }
 }
 
-function _updateBgIndicator(job) {
+function _updateBgIndicator(job, count) {
     const el  = document.getElementById('ra-bg-indicator');
     const txt = document.getElementById('ra-bg-indicator-text');
-    if (!job || job.status !== 'running') {
+    if (!job) {
         el.style.display = 'none';
         _stopBgPoll();
     } else {
         el.style.display = 'flex';
-        txt.textContent = (job.name||'') + ': ' + job.done + '/' + (job.total||'?') + ' tin';
+        const extra = (count > 1) ? ` (+${count-1} job khác)` : '';
+        txt.textContent = (job.name||'') + ': ' + job.done + '/' + (job.total||'?') + ' tin' + extra;
     }
 }
 
-// Timer live update khi popup đang mở ở chế độ xem job ngầm
 let _raBgLiveTimer = null;
+let _raBgLiveUrl   = null;  // URL của job đang live-track trong popup
 
-function _startBgLive() {
+function _startBgLive(url) {
+    _raBgLiveUrl = url;
     if (_raBgLiveTimer) return;
     _raBgLiveTimer = setInterval(async () => {
-        // Chỉ update nếu popup đang mở
         const modal = document.getElementById('read-all-modal');
-        if (!modal.classList.contains('open')) {
-            _stopBgLive(); return;
-        }
+        if (!modal.classList.contains('open')) { _stopBgLive(); return; }
         try {
-            const r = await fetch('/tg_read_all_status');
+            const r = await fetch('/tg_read_all_status', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({url: _raBgLiveUrl})
+            });
             const d = await r.json();
             if (!d.job) { _stopBgLive(); return; }
             const job = d.job;
             _raUpdateProgress(job.done, job.total, job.current || '');
-            _updateBgIndicator(job);
             if (job.status !== 'running') {
                 _stopBgLive();
                 _raSetBtns('done');
-                document.getElementById('ra-current').textContent = job.current || '';
             }
         } catch(e) {}
     }, 3000);
@@ -2264,20 +2263,28 @@ function _startBgLive() {
 
 function _stopBgLive() {
     if (_raBgLiveTimer) { clearInterval(_raBgLiveTimer); _raBgLiveTimer = null; }
+    _raBgLiveUrl = null;
 }
 
-// Mở popup xem tiến độ job ngầm đang chạy — có live update mỗi 3s
-async function openBgJobPopup() {
+// Mở popup xem job theo URL cụ thể
+async function openBgJobPopup(url) {
+    const reqUrl = url || _raCurrentUrl;
+    if (!reqUrl) return;
     try {
-        const r = await fetch('/tg_read_all_status');
+        const r = await fetch('/tg_read_all_status', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({url: reqUrl})
+        });
         const d = await r.json();
-        if (!d.job) { showToastMsg('Không có job nào đang chạy.'); return; }
+        if (!d.job) { showToastMsg('Không có job nào cho kênh này.'); return; }
         const job = d.job;
+        _raCurrentUrl = reqUrl;
         document.getElementById('ra-title').textContent = '📚 ' + (job.name||job.url);
         _raUpdateProgress(job.done, job.total, job.current || '');
         if (job.status === 'running') {
             _raSetBtns('bg');
-            _startBgLive(); // bắt đầu live update
+            _startBgLive(reqUrl);
         } else {
             _raSetBtns('done');
             document.getElementById('ra-current').textContent = job.current || '';
@@ -2743,9 +2750,11 @@ function showToastMsg(msg){
 (function(){
     renderSidebar();
     // Kiểm tra job ngầm đang chạy khi mở lại trang
-    fetch('/tg_read_all_status').then(r=>r.json()).then(d=>{
-        if(d.job && d.job.status==='running') { _updateBgIndicator(d.job); _startBgPoll(); }
-    }).catch(()=>{});
+    fetch('/tg_read_all_status', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'})
+        .then(r=>r.json()).then(d=>{
+            const running = Object.values(d.jobs||{}).filter(j=>j.status==='running');
+            if(running.length > 0) { _updateBgIndicator(running[0], running.length); _startBgPoll(); }
+        }).catch(()=>{});
     checkTelethonStatus();
     // Khôi phục engine đã chọn từ localStorage
     const sel=document.getElementById('engine-select');
@@ -3137,7 +3146,7 @@ def _run_read_all_bg(url, feed_cfg):
     Chạy "đọc toàn bộ nguồn" trên background thread — không cần browser mở.
     Cập nhật _read_all_job để UI có thể poll tiến độ bất cứ lúc nào.
     """
-    global _read_all_stop, _read_all_job
+    global _read_all_stop
     import random as _random
 
     channel      = normalize_tg_channel(url)
@@ -3148,10 +3157,11 @@ def _run_read_all_bg(url, feed_cfg):
 
     def _upd(**kw):
         with _read_all_job_lock:
-            if _read_all_job:
-                _read_all_job.update(kw)
+            if url in _read_all_jobs:
+                _read_all_jobs[url].update(kw)
 
-    _upd(status="running", done=0, total=0, current="Đang lấy tổng số tin...")
+    with _read_all_job_lock:
+        _read_all_jobs[url] = {'url': url, 'name': feed_name, 'done': 0, 'total': 0, 'status': 'running', 'current': 'Đang lấy tổng số tin...'}
 
     try:
         async def _fetch_all():
@@ -3919,7 +3929,7 @@ class HttpHandler(BaseHTTPRequestHandler):
             self.wfile.write(data)
 
     def do_POST(self):
-        global _read_all_stop, _read_all_job
+        global _read_all_stop
         p = urlparse(self.path)
 
         if p.path == '/sync_feeds':
@@ -4136,14 +4146,25 @@ class HttpHandler(BaseHTTPRequestHandler):
             else:
                 # fallback: dừng tất cả job đang chạy
                 with _read_all_job_lock:
-                    if _read_all_job and _read_all_job.get('url'):
-                        _read_all_stop_urls.add(_read_all_job['url'])
+                    # Dừng tất cả job đang running
+                    for _jurl, _jstate in _read_all_jobs.items():
+                        if _jstate.get('status') == 'running':
+                            _read_all_stop_urls.add(_jurl)
             self._json({'ok': True})
 
         elif p.path == '/tg_read_all_status':
+            body_st = self._read_json()
+            req_url = body_st.get('url', '') if body_st else ''
             with _read_all_job_lock:
-                job = dict(_read_all_job) if _read_all_job else None
-            self._json({'job': job})
+                if req_url and req_url in _read_all_jobs:
+                    job = dict(_read_all_jobs[req_url])
+                elif req_url:
+                    job = None
+                else:
+                    # Không có url → trả về job running đầu tiên (backward compat)
+                    running = [v for v in _read_all_jobs.values() if v.get('status') == 'running']
+                    job = dict(running[0]) if running else (dict(list(_read_all_jobs.values())[-1]) if _read_all_jobs else None)
+            self._json({'job': job, 'jobs': {k: dict(v) for k, v in _read_all_jobs.items()}})
 
         elif p.path == '/tg_read_all_bg':
             body = self._read_json()
@@ -4157,13 +4178,11 @@ class HttpHandler(BaseHTTPRequestHandler):
             if not feed_cfg:
                 self._json({'error': 'Feed không tồn tại'}, 404); return
             with _read_all_job_lock:
-                # Chỉ block nếu bg job đang chạy VÀ chưa bị yêu cầu dừng
-                if (_read_all_job and _read_all_job.get('status') == 'running'
-                        and _read_all_job.get('url') == url
-                        and url not in _read_all_stop_urls):
-                    done_n = _read_all_job['done']; total_n = _read_all_job['total']
+                existing = _read_all_jobs.get(url)
+                if existing and existing.get('status') == 'running' and url not in _read_all_stop_urls:
+                    done_n = existing['done']; total_n = existing['total']
                     self._json({'error': 'blocked', 'msg': f'Đang có job chạy ngầm cho kênh này ({done_n}/{total_n} tin)'}); return
-                _read_all_job = {'url': url, 'name': feed_cfg.get('name', url), 'done': 0, 'total': 0, 'status': 'running', 'current': 'Đang khởi động...'}
+                _read_all_jobs[url] = {'url': url, 'name': feed_cfg.get('name', url), 'done': 0, 'total': 0, 'status': 'running', 'current': 'Đang khởi động...'}
             _read_all_stop_urls.discard(url)  # reset stop flag cho url này
             threading.Thread(target=_run_read_all_bg, args=(url, feed_cfg), daemon=True, name='ReadAllBG').start()
             self._json({'ok': True, 'msg': 'Job chạy ngầm đã bắt đầu'})
@@ -4176,8 +4195,9 @@ class HttpHandler(BaseHTTPRequestHandler):
             if not TELETHON_AVAILABLE or tg_client is None:
                 self._json({'error': 'Telethon chưa kết nối'}, 503); return
             with _read_all_job_lock:
-                if _read_all_job and _read_all_job.get('status') == 'running' and _read_all_job.get('url') == url:
-                    done_n = _read_all_job['done']; total_n = _read_all_job['total']
+                existing = _read_all_jobs.get(url)
+                if existing and existing.get('status') == 'running' and url not in _read_all_stop_urls:
+                    done_n = existing['done']; total_n = existing['total']
                     self._json({'error': 'blocked', 'msg': f'Đang có job chạy ngầm cho kênh này ({done_n}/{total_n} tin)'}); return
             _read_all_stop_urls.discard(url)  # reset stop flag cho url này
 
@@ -4291,14 +4311,13 @@ class HttpHandler(BaseHTTPRequestHandler):
                         if remaining_msgs and url not in _read_all_stop_urls:
                             print(f'[ReadAll] Browser disconnect → chuyển sang bg ({done}/{total} done, còn {len(remaining_msgs)} tin)')
                             with _read_all_job_lock:
-                                _read_all_job = {
+                                _read_all_jobs[url] = {
                                     'url': url, 'name': feed_cfg.get('name', url),
                                     'done': done, 'total': total,
                                     'status': 'running', 'current': title,
                                 }
                             def _continue_bg(msgs_left, d_start):
                                 import random as _r2
-                                global _read_all_job
                                 try:
                                     for _msg in msgs_left:
                                         if url in _read_all_stop_urls:
@@ -4330,21 +4349,21 @@ class HttpHandler(BaseHTTPRequestHandler):
                                             _do_forward([_it], category, url)
                                         d_start += 1
                                         with _read_all_job_lock:
-                                            if _read_all_job:
-                                                _read_all_job.update({'done': d_start, 'current': _ti})
+                                            if url in _read_all_jobs:
+                                                _read_all_jobs[url].update({'done': d_start, 'current': _ti})
                                         _w = 0; _dl = _r2.uniform(5, 20)
                                         while _w < _dl and url not in _read_all_stop_urls:
                                             time.sleep(0.5); _w += 0.5
                                     _final_status = 'stopped' if url in _read_all_stop_urls else 'done'
                                     with _read_all_job_lock:
-                                        if _read_all_job:
-                                            _read_all_job.update({'status': _final_status, 'current': f'✅ Hoàn thành! {d_start} tin.' if _final_status == 'done' else '⏹ Đã dừng.'})
+                                        if url in _read_all_jobs:
+                                            _read_all_jobs[url].update({'status': _final_status, 'current': f'✅ Hoàn thành! {d_start} tin.' if _final_status == 'done' else '⏹ Đã dừng.'})
                                     broadcast({'type': 'read_all_status', 'status': _final_status, 'done': d_start, 'total': total, 'name': feed_cfg.get('name', url)})
                                 except Exception as _e:
                                     print(f'[ReadAllBG-cont] Lỗi: {_e}')
                                     with _read_all_job_lock:
-                                        if _read_all_job:
-                                            _read_all_job.update({'status': 'error', 'current': f'❌ Lỗi: {_e}'})
+                                        if url in _read_all_jobs:
+                                            _read_all_jobs[url].update({'status': 'error', 'current': f'❌ Lỗi: {_e}'})
                             threading.Thread(target=_continue_bg, args=(remaining_msgs, done), daemon=True, name='ReadAllBG').start()
                         browser_disconnected = True
                         break

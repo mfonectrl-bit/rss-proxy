@@ -277,20 +277,26 @@ class EngineDispatcher:
 
     # Rate limit config (requests/phút)
     LIMITS = {
-        'gemini': 12,   # Gemini free: 15/phút, buffer an toàn 12
+        'gemini': 10,   # Gemini free: 15/phút hard limit — dùng 10 để tránh fixed-window burst
         'deepl' : 40,   # DeepL free: ~500k ký tự/tháng, không giới hạn/phút cứng
         'google': 999,  # Google: không giới hạn cứng
     }
+    # Minimum interval giữa 2 request liên tiếp (giây) — trải đều trong phút
+    MIN_INTERVAL = {
+        'gemini': 6.0,  # 10 req/phút = 1 req/6s → trải đều, tránh burst
+        'deepl' : 1.5,
+        'google': 0.0,
+    }
     COOLDOWN_SEC  = 300   # 5 phút cooldown sau khi bị rate limit
-    MAX_FAILS     = 3     # số lần lỗi liên tiếp trước khi cooldown
+    MAX_FAILS     = 2     # số lần lỗi liên tiếp trước khi cooldown
 
     def __init__(self):
         self._lock = threading.Lock()
         # Mỗi engine có state riêng
         self._state = {
-            'gemini': {'req_times': [], 'fails': 0, 'cooldown_until': 0.0},
-            'deepl' : {'req_times': [], 'fails': 0, 'cooldown_until': 0.0},
-            'google': {'req_times': [], 'fails': 0, 'cooldown_until': 0.0},
+            'gemini': {'req_times': [], 'fails': 0, 'cooldown_until': 0.0, 'last_req': 0.0},
+            'deepl' : {'req_times': [], 'fails': 0, 'cooldown_until': 0.0, 'last_req': 0.0},
+            'google': {'req_times': [], 'fails': 0, 'cooldown_until': 0.0, 'last_req': 0.0},
         }
 
     def _is_available(self, engine, now):
@@ -299,7 +305,11 @@ class EngineDispatcher:
         # Đang cooldown?
         if now < st['cooldown_until']:
             return False
-        # Kiểm tra rate limit: đếm req trong 60s gần nhất
+        # Kiểm tra minimum interval giữa 2 request liên tiếp
+        min_iv = self.MIN_INTERVAL.get(engine, 0.0)
+        if min_iv > 0 and (now - st['last_req']) < min_iv:
+            return False
+        # Kiểm tra rate limit: đếm req trong 60s gần nhất (sliding window)
         limit = self.LIMITS[engine]
         cutoff = now - 60.0
         st['req_times'] = [t for t in st['req_times'] if t > cutoff]
@@ -307,6 +317,7 @@ class EngineDispatcher:
 
     def _record_request(self, engine, now):
         self._state[engine]['req_times'].append(now)
+        self._state[engine]['last_req'] = now
 
     def _record_success(self, engine):
         with self._lock:
@@ -536,7 +547,7 @@ if GEMINI_API_KEY: _engines_ready.append('Gemini ✅')
 if DEEPL_API_KEY:  _engines_ready.append('DeepL ✅')
 _engines_ready.append('Google ✅')
 print(f'[i] Engine dịch: {" | ".join(_engines_ready)} — ưu tiên: {_active_engine}')
-print(f'[i] EngineDispatcher: rate limit Gemini=12/min DeepL=40/min Google=unlimited')
+print(f'[i] EngineDispatcher: Gemini=10/min(min 6s/req) | DeepL=40/min | Google=unlimited')
 
 try:
     from telethon import TelegramClient, events

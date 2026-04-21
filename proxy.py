@@ -266,11 +266,142 @@ def _default_engine():
 
 translate_engine = _default_engine()
 
-# Gemini: rate limit + retry state
-_gemini_fail_count  = 0          # số lần lỗi liên tiếp
-_gemini_retry_after = 0.0        # timestamp được phép thử lại
-_gemini_lock        = threading.Lock()
-GEMINI_MAX_FAILS    = 3          # sau 3 lỗi liên tiếp → tạm fallback Google 5 phút
+class EngineDispatcher:
+    """
+    Dispatcher dịch thuật với 3 engine: Gemini > DeepL > Google.
+    - Mỗi engine có rate limit, cooldown, và health tracking riêng
+    - Tự động chọn engine tốt nhất còn available
+    - Google luôn là fallback cuối, không bao giờ bị block
+    - Thread-safe hoàn toàn
+    """
+
+    # Rate limit config (requests/phút)
+    LIMITS = {
+        'gemini': 12,   # Gemini free: 15/phút, buffer an toàn 12
+        'deepl' : 40,   # DeepL free: ~500k ký tự/tháng, không giới hạn/phút cứng
+        'google': 999,  # Google: không giới hạn cứng
+    }
+    COOLDOWN_SEC  = 300   # 5 phút cooldown sau khi bị rate limit
+    MAX_FAILS     = 3     # số lần lỗi liên tiếp trước khi cooldown
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        # Mỗi engine có state riêng
+        self._state = {
+            'gemini': {'req_times': [], 'fails': 0, 'cooldown_until': 0.0},
+            'deepl' : {'req_times': [], 'fails': 0, 'cooldown_until': 0.0},
+            'google': {'req_times': [], 'fails': 0, 'cooldown_until': 0.0},
+        }
+
+    def _is_available(self, engine, now):
+        """Kiểm tra engine có sẵn sàng nhận request không"""
+        st = self._state[engine]
+        # Đang cooldown?
+        if now < st['cooldown_until']:
+            return False
+        # Kiểm tra rate limit: đếm req trong 60s gần nhất
+        limit = self.LIMITS[engine]
+        cutoff = now - 60.0
+        st['req_times'] = [t for t in st['req_times'] if t > cutoff]
+        return len(st['req_times']) < limit
+
+    def _record_request(self, engine, now):
+        self._state[engine]['req_times'].append(now)
+
+    def _record_success(self, engine):
+        with self._lock:
+            self._state[engine]['fails'] = 0
+
+    def _record_failure(self, engine, is_rate_limit=False):
+        with self._lock:
+            st = self._state[engine]
+            st['fails'] += 1
+            if is_rate_limit or st['fails'] >= self.MAX_FAILS:
+                st['cooldown_until'] = time.time() + self.COOLDOWN_SEC
+                st['fails'] = 0
+                print(f'[Dispatcher] {engine} → cooldown {self.COOLDOWN_SEC}s '
+                      f'({"rate limit" if is_rate_limit else f"{self.MAX_FAILS} lỗi liên tiếp"})')
+
+    def pick_engine(self, preferred=None):
+        """
+        Chọn engine tốt nhất available theo thứ tự ưu tiên:
+        preferred (nếu có) → gemini → deepl → google
+        Google luôn được trả về (không bao giờ bị block hoàn toàn).
+        """
+        now = time.time()
+        priority = []
+        if preferred and preferred != 'google':
+            priority.append(preferred)
+        for e in ['gemini', 'deepl', 'google']:
+            if e not in priority:
+                priority.append(e)
+
+        with self._lock:
+            for engine in priority:
+                # Bỏ qua nếu không có key
+                if engine == 'gemini' and not GEMINI_API_KEY:
+                    continue
+                if engine == 'deepl' and not DEEPL_API_KEY:
+                    continue
+                if self._is_available(engine, now):
+                    self._record_request(engine, now)
+                    return engine
+            # Fallback cứng: Google dù rate limit (999/phút hiếm khi đạt)
+            self._record_request('google', now)
+            return 'google'
+
+    def translate(self, text, preferred=None):
+        """
+        Dịch text với engine tốt nhất available.
+        preferred: engine được ưu tiên (từ UI setting), None = tự chọn.
+        """
+        if not text or len(text.strip()) < 4:
+            return text, 'none'
+
+        engine = self.pick_engine(preferred)
+
+        try:
+            if engine == 'gemini':
+                result = _translate_gemini(text)
+            elif engine == 'deepl':
+                result = _translate_deepl(text)
+            else:
+                result = _translate_google(text)
+            self._record_success(engine)
+            return result, engine
+        except Exception as e:
+            err_str = str(e)
+            is_rl = '429' in err_str or 'rate' in err_str.lower() or 'quota' in err_str.lower()
+            self._record_failure(engine, is_rate_limit=is_rl)
+            # Fallback Google ngay lập tức
+            if engine != 'google':
+                try:
+                    result = _translate_google(text)
+                    return result, 'google'
+                except Exception:
+                    pass
+            return text, 'error'
+
+    def status(self):
+        """Trả về status của tất cả engine — dùng cho log/debug"""
+        now = time.time()
+        out = {}
+        with self._lock:
+            for eng, st in self._state.items():
+                cutoff = now - 60.0
+                recent = len([t for t in st['req_times'] if t > cutoff])
+                cooldown_left = max(0, st['cooldown_until'] - now)
+                out[eng] = {
+                    'req_last_min': recent,
+                    'limit': self.LIMITS[eng],
+                    'fails': st['fails'],
+                    'cooldown_left': round(cooldown_left),
+                    'available': self._is_available(eng, now),
+                }
+        return out
+
+# Singleton dispatcher
+_engine_dispatcher = EngineDispatcher()
 
 # ================= AI SERVICE (Multi-AI Rotation) =================
 
@@ -400,12 +531,12 @@ except ImportError as e:
     print(f'[!] Thư viện dịch chưa cài: {e}')
 
 _active_engine = _default_engine()
-if _active_engine == 'gemini':
-    print(f'[i] Engine dịch: Gemini 2.0 Flash ✅ (API key có)')
-elif _active_engine == 'deepl':
-    print(f'[i] Engine dịch: DeepL ✅ (API key có)')
-else:
-    print(f'[i] Engine dịch: Google Translate (fallback — chưa có Gemini/DeepL key)')
+_engines_ready = []
+if GEMINI_API_KEY: _engines_ready.append('Gemini ✅')
+if DEEPL_API_KEY:  _engines_ready.append('DeepL ✅')
+_engines_ready.append('Google ✅')
+print(f'[i] Engine dịch: {" | ".join(_engines_ready)} — ưu tiên: {_active_engine}')
+print(f'[i] EngineDispatcher: rate limit Gemini=12/min DeepL=40/min Google=unlimited')
 
 try:
     from telethon import TelegramClient, events
@@ -434,44 +565,9 @@ tg_phone_code_hash = None   # lưu phone_code_hash khi gửi OTP
 
 # --- HÀM TIỆN ÍCH ---
 def _translate_with_engine(text, engine=None):
-    """Dịch text — Gemini > DeepL > Google theo thứ tự ưu tiên và key có sẵn."""
-    if not text or len(text.strip()) < 4:
-        return text
-    eng = engine or translate_engine
-
-    # Cảnh báo nếu chọn engine nhưng thiếu key → fallback
-    if eng == 'gemini' and not GEMINI_API_KEY:
-        print('[Translate] ⚠️ Gemini được chọn nhưng GEMINI_API_KEY chưa set → fallback Google')
-        eng = 'google'
-    elif eng == 'deepl' and not DEEPL_API_KEY:
-        print('[Translate] ⚠️ DeepL được chọn nhưng DEEPL_API_KEY chưa set → fallback Google')
-        eng = 'google'
-
-    try:
-        if eng == 'gemini':
-            try:
-                return _translate_gemini(text)
-            except RuntimeError as e:
-                # Gemini cooldown hoặc rate limit → fallback Google yên lặng
-                if 'cooldown' in str(e) or 'Rate limit' in str(e) or '429' in str(e):
-                    return _translate_google(text)
-                raise
-        elif eng == 'deepl':
-            return _translate_deepl(text)
-        else:
-            return _translate_google(text)
-    except Exception as e:
-        err_str = str(e)
-        if 'SSL' in err_str or 'Max retries' in err_str or 'EOF' in err_str:
-            try:
-                return _translate_google(text)
-            except Exception:
-                return text
-        print(f'[!] Dịch [{eng}] lỗi: {e}')
-        try:
-            return _translate_google(text)
-        except Exception:
-            return text
+    """Wrapper dùng EngineDispatcher — backward compatible."""
+    result, used = _engine_dispatcher.translate(text, preferred=engine or translate_engine)
+    return result
 
 
 def _translate_deepl(text):
@@ -507,15 +603,9 @@ def _translate_gemini(text):
     Dịch bằng Gemini 2.0 Flash (free tier: 1500 req/ngày, 15 req/phút).
     Tự động fallback Google nếu rate limit hoặc lỗi liên tiếp.
     """
-    global _gemini_fail_count, _gemini_retry_after
-
     if not GEMINI_API_KEY:
         raise ValueError('GEMINI_API_KEY chưa set')
 
-    # Kiểm tra cooldown (sau nhiều lỗi liên tiếp)
-    with _gemini_lock:
-        if time.time() < _gemini_retry_after:
-            raise RuntimeError(f'Gemini đang cooldown')
 
     prompt = (
         'Dịch đoạn văn bản sau sang tiếng Việt tự nhiên, giữ nguyên format xuống dòng, '
@@ -531,18 +621,9 @@ def _translate_gemini(text):
         with urllib.request.urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read())
         result = data['candidates'][0]['content']['parts'][0]['text'].strip()
-        # Reset fail count khi thành công
-        with _gemini_lock:
-            _gemini_fail_count = 0
         return result
     except urllib.error.HTTPError as e:
         body = e.read().decode('utf-8', errors='ignore')
-        with _gemini_lock:
-            _gemini_fail_count += 1
-            if _gemini_fail_count >= GEMINI_MAX_FAILS or e.code == 429:
-                _gemini_retry_after = time.time() + 300  # cooldown 5 phút
-                _gemini_fail_count  = 0
-                print(f'[Gemini] Rate limit / lỗi liên tiếp → cooldown 5 phút (HTTP {e.code})')
         raise RuntimeError(f'Gemini HTTP {e.code}: {body[:200]}')
 
 def strip_html(text):
@@ -645,7 +726,7 @@ def _fast_translate(text):
     NL_TOKEN = ' NLTOKEN '
     masked = masked.replace('\n', NL_TOKEN)
 
-    translated = _translate_with_engine(masked)
+    translated, _used_engine = _engine_dispatcher.translate(masked, preferred=translate_engine)
 
     # Bước 3: Khôi phục newlines
     translated = translated.replace(NL_TOKEN, '\n')
@@ -3411,12 +3492,15 @@ def ws_handler(ws):
 
             elif t == 'translate_engine':
                 translate_engine = msg.get('engine', 'google')
+                st = _engine_dispatcher.status()
+                eng_st = st.get(translate_engine, {})
                 if translate_engine == 'gemini' and not GEMINI_API_KEY:
-                    print(f'[WS] Engine: gemini — ⚠️ GEMINI_API_KEY chưa set, sẽ fallback Google')
+                    print(f'[WS] Engine: gemini — ⚠️ GEMINI_API_KEY chưa set, dispatcher sẽ fallback')
                 elif translate_engine == 'deepl' and not DEEPL_API_KEY:
-                    print(f'[WS] Engine: deepl — ⚠️ DEEPL_API_KEY chưa set, sẽ fallback Google')
+                    print(f'[WS] Engine: deepl — ⚠️ DEEPL_API_KEY chưa set, dispatcher sẽ fallback')
                 else:
-                    print(f'[WS] Engine dịch chuyển sang: {translate_engine} ✅')
+                    print(f'[WS] Engine ưu tiên → {translate_engine} | '
+                          f'dispatcher status: {st}')
 
             elif t == 'auto_fwd':
                 auto_fwd_enabled = msg.get('enabled', False)

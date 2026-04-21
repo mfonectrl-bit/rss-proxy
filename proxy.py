@@ -1953,9 +1953,20 @@ async function forwardSelected(){
 }
 
 // --- Sidebar ---
+// Trả về timestamp (ms) của bài mới nhất trong feed, hoặc 0 nếu chưa có
+function _feedLastTs(url) {
+    let max = 0;
+    for (const it of allItems) {
+        if (it.feedUrl === url && it.ts > max) max = it.ts;
+    }
+    return max;
+}
+
 function renderSidebar(){
     const list=document.getElementById('feed-list');
     const totalNew=Object.values(newBadges).reduce((a,b)=>a+b,0);
+    const now = Date.now();
+    const STALE_MS = 30 * 24 * 60 * 60 * 1000; // 30 ngày
     let html=`<div class="feed-row${filterUrl===null?' active':''}" onclick="setFilter(null)">
         <span style="flex:1">Tất cả nguồn</span>${totalNew>0?`<span style="background:#dbeafe;color:#1d4ed8;padding:1px 5px;border-radius:8px;font-size:10px">+${totalNew}</span>`:''}</div>`;
     feeds.forEach((f,i)=>{
@@ -1963,8 +1974,14 @@ function renderSidebar(){
         const isTg=isTgSource(f.url);
         const badge=`<span class="feed-badge ${isTg?'badge-tg':'badge-rss'}">${isTg?'TG':'RSS'}</span>`;
         const readAllBtn=f.read_all&&isTg?`<span title="Đọc toàn bộ nguồn" onclick="startReadAll(${i})" style="cursor:pointer;color:#f59e0b;font-size:13px;padding:0 2px" class="fedit">▶</span>`:'';
+        // Chấm đỏ nếu không có bài nào trong 30 ngày
+        const lastTs = _feedLastTs(f.url);
+        const isStale = lastTs > 0 && (now - lastTs) > STALE_MS;
+        const staleDot = isStale
+            ? `<span title="Không có bài mới trong 30 ngày" style="color:#ef4444;font-size:10px;margin-right:3px;flex-shrink:0">●</span>`
+            : '';
         html+=`<div class="feed-row${active?' active':''}">
-            <span class="fname" style="flex:1" onclick="setFilter('${f.url}')">${f.name}${badge}</span>
+            ${staleDot}<span class="fname" style="flex:1" onclick="setFilter('${f.url}')">${f.name}${badge}</span>
             ${n>0&&!active?`<span style="background:#dbeafe;color:#1d4ed8;padding:1px 5px;border-radius:8px;font-size:10px">+${n}</span>`:''}
             ${readAllBtn}<span class="fedit" onclick="openEditFeed(${i})">✎</span><span class="fdel" onclick="deleteFeed(${i})">×</span></div>`;
     });
@@ -2563,6 +2580,7 @@ async function fetchAndMerge(url,feedName,category,markNew){
         const MAX_PER_FEED=50;const fc={};
         allItems=allItems.filter(it=>{const u=it.feedUrl||'';fc[u]=(fc[u]||0)+1;return fc[u]<=MAX_PER_FEED;});
         renderStream();
+        renderSidebar(); // cập nhật chấm đỏ sau khi items load
     }catch(e){console.warn('fetch error',url,e);}
 }
 

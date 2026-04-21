@@ -1374,19 +1374,6 @@
       "history_limit": 5
     },
     {
-      "url": "https://www.theblackvault.com/casefiles/feed/",
-      "name": "The Black Vault (UFO)",
-      "show_link": true,
-      "auto_fwd": true,
-      "destinations": [
-        {
-          "ch_idx": 3,
-          "topic_ids": "17588"
-        }
-      ],
-      "history_limit": 5
-    },
-    {
       "url": "https://t.me/wordsofbuddha",
       "name": "Words of the Buddha",
       "show_link": true,

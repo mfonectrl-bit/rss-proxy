@@ -1250,11 +1250,11 @@ header h1{font-size:1rem;font-weight:700;white-space:nowrap;margin-right:4px}
 .layout{display:flex;flex:1;min-height:0;background:#fff}
 aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;display:flex;flex-direction:column;overflow:hidden;min-height:0}
 .feed-list{flex:1;overflow-y:auto;background:#fff;min-height:0;padding-bottom:100px}
-.feed-row{display:flex;align-items:center;padding:7px 10px 7px 14px;cursor:pointer;gap:8px;font-size:12px;background:#fff}
+.feed-row{display:flex;align-items:center;padding:7px 10px 7px 14px;cursor:pointer;gap:8px;font-size:12px;background:#fff;min-width:0}
 .sb-section{padding:.35rem .75rem .15rem;font-size:11px;font-weight:600;color:#bbb;text-transform:uppercase;letter-spacing:.5px;background:#fff}
 .feed-row:hover{background:#f8f8f4}
 .feed-row.active{background:#f0f0e8;font-weight:600}
-.feed-row .fname{font-size:12px}
+.feed-row .fname{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .fdel{color:#ddd;font-size:14px}.fdel:hover{color:#e74c3c}
 .fedit{color:#ddd;font-size:14px}.fedit:hover{color:#2563eb}
 .item{background:#fff;border:1px solid #e8e8e0;border-radius:10px;margin-bottom:.6rem}
@@ -1981,9 +1981,9 @@ function renderSidebar(){
             ? `<span title="Không có bài mới trong 30 ngày" style="color:#ef4444;font-size:10px;margin-right:3px;flex-shrink:0">●</span>`
             : '';
         html+=`<div class="feed-row${active?' active':''}">
-            ${staleDot}<span class="fname" style="flex:1" onclick="setFilter('${f.url}')">${f.name}${badge}</span>
+            ${staleDot}<span class="fname" style="flex:1;min-width:0" onclick="setFilter('${f.url}')">${f.name}${badge}</span>
             ${n>0&&!active?`<span style="background:#dbeafe;color:#1d4ed8;padding:1px 5px;border-radius:8px;font-size:10px">+${n}</span>`:''}
-            ${readAllBtn}<span class="fedit" onclick="openEditFeed(${i})">✎</span><span class="fdel" onclick="deleteFeed(${i})">×</span></div>`;
+            ${readAllBtn}<span class="fedit" style="flex-shrink:0" onclick="openEditFeed(${i})">✎</span><span class="fdel" style="flex-shrink:0" onclick="deleteFeed(${i})">×</span></div>`;
     });
     list.innerHTML=html;
 }

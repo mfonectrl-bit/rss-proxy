@@ -3174,7 +3174,15 @@ def _run_read_all_bg(url, feed_cfg):
         total = len(all_msgs)
         _upd(total=total, current=f"Tìm thấy {total} tin, bắt đầu xử lý...")
 
-        done = 0
+        # Đếm số tin đã forward trước đó (để hiển thị progress đúng)
+        with lock:
+            already_forwarded = set(known_guids.get(url, set()))
+        already_done = sum(1 for msg in all_msgs if msg and
+                           f'tg_@{channel.lstrip("@")}_{msg.id}' in already_forwarded)
+        _upd(done=already_done, total=total,
+             current=f'Tìm thấy {total} tin, đã forward {already_done}, bắt đầu xử lý phần còn lại...')
+
+        done = already_done  # bắt đầu đếm từ số đã có
         for msg in all_msgs:
             if url in _read_all_stop_urls:
                 break
@@ -3192,8 +3200,7 @@ def _run_read_all_bg(url, feed_cfg):
             # Skip nếu đã forward rồi
             with lock:
                 if url in known_guids and guid in known_guids[url]:
-                    done += 1
-                    continue
+                    continue  # không tăng done — đã tính trong already_done
 
             item = {
                 "guid": guid, "title": title, "desc": desc, "link": link,
@@ -4305,66 +4312,16 @@ class HttpHandler(BaseHTTPRequestHandler):
 
                     done += 1
                     if not sse({'type': 'progress', 'done': done, 'total': total, 'title': title}):
-                        # Browser ngắt kết nối (bấm "Chạy ngầm") — chuyển sang bg thread
-                        # Tiếp tục từ tin tiếp theo (all_msgs[done:])
-                        remaining_msgs = all_msgs[done:]
-                        if remaining_msgs and url not in _read_all_stop_urls:
-                            print(f'[ReadAll] Browser disconnect → chuyển sang bg ({done}/{total} done, còn {len(remaining_msgs)} tin)')
-                            with _read_all_job_lock:
-                                _read_all_jobs[url] = {
-                                    'url': url, 'name': feed_cfg.get('name', url),
-                                    'done': done, 'total': total,
-                                    'status': 'running', 'current': title,
-                                }
-                            def _continue_bg(msgs_left, d_start):
-                                import random as _r2
-                                try:
-                                    for _msg in msgs_left:
-                                        if url in _read_all_stop_urls:
-                                            break
-                                        if not _msg:
-                                            continue
-                                        _mt = _msg.message or ''
-                                        _cu = channel.lstrip('@')
-                                        _gi = f'tg_@{_cu}_{_msg.id}'
-                                        _li = f'https://t.me/{_cu}/{_msg.id}'
-                                        _de = _mt.replace('\n', '<br>')
-                                        _ti = (_mt[:80] + '...') if len(_mt) > 80 else (_mt or f'[Media] @{_cu}')
-                                        _it = {
-                                            'guid': _gi, 'title': _ti, 'desc': _de, 'link': _li,
-                                            'pubDate': _msg.date.isoformat() if _msg.date else '',
-                                            'translated': False, 'category': category,
-                                            'show_link': show_link, 'feed_url': url,
-                                            '_tg_has_media': bool(_msg.media),
-                                            '_tg_msg_id': _msg.id, '_tg_chat': _cu,
-                                            '_tg_grouped_id': getattr(_msg, 'grouped_id', None),
-                                            '_source': 'telethon', 'do_translate': do_translate,
-                                        }
-                                        if do_translate and _mt:
-                                            _tr = _fast_translate(_mt)
-                                            _it['desc'] = _tr.replace('\n', '<br>')
-                                            _it['title'] = (_tr[:80] + '...') if len(_tr) > 80 else _tr
-                                            _it['translated'] = True
-                                        if auto_fwd_enabled and tg_channels:
-                                            _do_forward([_it], category, url)
-                                        d_start += 1
-                                        with _read_all_job_lock:
-                                            if url in _read_all_jobs:
-                                                _read_all_jobs[url].update({'done': d_start, 'current': _ti})
-                                        _w = 0; _dl = _r2.uniform(5, 20)
-                                        while _w < _dl and url not in _read_all_stop_urls:
-                                            time.sleep(0.5); _w += 0.5
-                                    _final_status = 'stopped' if url in _read_all_stop_urls else 'done'
-                                    with _read_all_job_lock:
-                                        if url in _read_all_jobs:
-                                            _read_all_jobs[url].update({'status': _final_status, 'current': f'✅ Hoàn thành! {d_start} tin.' if _final_status == 'done' else '⏹ Đã dừng.'})
-                                    broadcast({'type': 'read_all_status', 'status': _final_status, 'done': d_start, 'total': total, 'name': feed_cfg.get('name', url)})
-                                except Exception as _e:
-                                    print(f'[ReadAllBG-cont] Lỗi: {_e}')
-                                    with _read_all_job_lock:
-                                        if url in _read_all_jobs:
-                                            _read_all_jobs[url].update({'status': 'error', 'current': f'❌ Lỗi: {_e}'})
-                            threading.Thread(target=_continue_bg, args=(remaining_msgs, done), daemon=True, name='ReadAllBG').start()
+                        # Browser ngắt kết nối (bấm "Chạy ngầm")
+                        # Dùng _run_read_all_bg để tiếp tục — nó đã có dedup + đếm đúng
+                        # known_guids đã có các guid đã forward → bg job sẽ tự skip phần đã xong
+                        if url not in _read_all_stop_urls:
+                            print(f'[ReadAll] Browser disconnect → chuyển sang _run_read_all_bg ({done}/{total} done)')
+                            threading.Thread(
+                                target=_run_read_all_bg,
+                                args=(url, feed_cfg),
+                                daemon=True, name='ReadAllBG'
+                            ).start()
                         browser_disconnected = True
                         break
 

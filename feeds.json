@@ -1949,5 +1949,5 @@
       "is_group": true
     }
   ],
-  "translate_engine": "deepl"
+  "translate_engine": "gemini"
 }

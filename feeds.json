@@ -1900,6 +1900,14 @@
         }
       ],
       "history_limit": 5
+    },
+    {
+      "url": "https://t.me/relaxmusiclist",
+      "name": "🎵Música Instrumental Relajante",
+      "show_link": true,
+      "auto_fwd": true,
+      "destinations": [],
+      "history_limit": 5
     }
   ],
   "auto_fwd": true,

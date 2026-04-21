@@ -235,7 +235,6 @@ _deduplicator = None
 # --- State "đọc toàn bộ nguồn" ---
 # Set chứa URL của các job cần dừng (thay vì 1 flag global duy nhất)
 _read_all_stop_urls = set()
-_read_all_stop = False  # giữ lại để tương thích, không dùng logic nữa
 # Job chạy ngầm: None hoặc dict {url, name, done, total, status, error}
 # status: 'running' | 'done' | 'error' | 'stopped'
 _read_all_jobs = {}  # {url: {status, done, total, name, current}} — multi-job support
@@ -2069,7 +2068,6 @@ function applyFilter(){searchQ=document.getElementById('search').value.trim().to
 
 // --- Đọc toàn bộ nguồn ---
 
-let _raBgPollTimer = null;
 // ===================== READ ALL - ĐỌC TOÀN BỘ NGUỒN =====================
 // Flow đơn giản: ▶ → start bg job → poll status → hiện popup
 // Không dùng SSE, không race condition, nhiều job song song OK
@@ -2092,10 +2090,6 @@ function _raSetBtns(mode) {
     }
 }
 
-function closeReadAllModal() {
-    document.getElementById('read-all-modal').classList.remove('open');
-    _stopRaPoll();
-}
 
 function _raUpdateProgress(done, total, current) {
     const pct = total > 0 ? Math.round(done / total * 100) : 0;
@@ -2121,6 +2115,8 @@ async function _raPollOnce(url) {
     if (!document.getElementById('read-all-modal').classList.contains('open')) {
         _stopRaPoll(); return;
     }
+    // Guard: nếu popup đã chuyển sang job khác thì bỏ qua kết quả của URL này
+    if (url !== _raCurrentUrl) { _stopRaPoll(); return; }
     try {
         const r = await fetch('/tg_read_all_status', {
             method: 'POST',
@@ -2130,6 +2126,8 @@ async function _raPollOnce(url) {
         const d = await r.json();
         const job = d.job;
         if (!job) return;
+        // Double-check sau khi await — tránh race condition async
+        if (url !== _raCurrentUrl) return;
         _raUpdateProgress(job.done, job.total, job.current);
         if (job.status !== 'running') {
             _stopRaPoll();
@@ -2173,7 +2171,8 @@ async function startReadAll(feedIdx) {
     _openRaPopup(url, {done: 0, total: 0, status: 'running', current: 'Đang khởi động...'});
 
     try {
-        const resp = await fetch('/tg_read_all', {
+        // Dùng /tg_read_all_bg — endpoint này không reset job đang chạy
+        const resp = await fetch('/tg_read_all_bg', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({url})
@@ -2580,7 +2579,6 @@ async function manualRefreshAll(){
 
 // --- Poll timer ---
 // pollNextIn được server reset khi có i-c-a feeds, đếm ngược mỗi giây
-let timerRunning = false;
 function updatePollTimer(){
     const el = document.getElementById('poll-timer');
     const hasIca = feeds.some(f => f.url.includes('tg.i-c-a.su'));
@@ -2712,10 +2710,9 @@ function connectWS(){
         if(msg.type==='poll_status'){pollInterval=msg.interval;pollNextIn=msg.next_in;}
         if(msg.type==='auto_fwd_sent'){showToastMsg(`Auto-forward: đã gửi ${msg.count} tin mới lên Telegram`);}
         if(msg.type==='read_all_status'){
-            _updateBgIndicator(msg.status==='running'?msg:null);
+            _updateBgIndicator(); // luôn fetch lại toàn bộ jobs từ server
             if(msg.status==='done') showToastMsg('✅ Đọc xong ' + (msg.done||0) + ' tin từ ' + (msg.name||''));
             if(msg.status==='error') showToastMsg('❌ Lỗi job ' + (msg.name||'') + ': ' + (msg.error||''));
-            if(msg.status==='stopped') _updateBgIndicator(null);
         }
     };
     ws.onclose=()=>{
@@ -3139,7 +3136,6 @@ def _run_read_all_bg(url, feed_cfg):
     Chạy "đọc toàn bộ nguồn" trên background thread — không cần browser mở.
     Cập nhật _read_all_job để UI có thể poll tiến độ bất cứ lúc nào.
     """
-    global _read_all_stop
     import random as _random
 
     channel      = normalize_tg_channel(url)
@@ -3153,8 +3149,9 @@ def _run_read_all_bg(url, feed_cfg):
             if url in _read_all_jobs:
                 _read_all_jobs[url].update(kw)
 
-    with _read_all_job_lock:
-        _read_all_jobs[url] = {'url': url, 'name': feed_name, 'done': 0, 'total': 0, 'status': 'running', 'current': 'Đang lấy tổng số tin...'}
+    # KHÔNG reset lại job ở đây — server handler đã khởi tạo job rồi.
+    # Reset ở đây sẽ làm mất trạng thái và gây đếm sai.
+    _upd(current='Đang lấy danh sách tin từ kênh...')
 
     try:
         async def _fetch_all():
@@ -3165,17 +3162,21 @@ def _run_read_all_bg(url, feed_cfg):
 
         all_msgs = tg_run_long(_fetch_all(), timeout=300)
         total = len(all_msgs)
-        _upd(total=total, current=f"Tìm thấy {total} tin, bắt đầu xử lý...")
 
-        # Đếm số tin đã forward trước đó (để hiển thị progress đúng)
+        # Snapshot known_guids tại thời điểm bắt đầu để xác định tin nào đã được xử lý
         with lock:
-            already_forwarded = set(known_guids.get(url, set()))
+            already_forwarded = frozenset(known_guids.get(url, set()))
+
+        # Đếm chính xác: số tin đã có trong known_guids TRƯỚC khi job này bắt đầu
         already_done = sum(1 for msg in all_msgs if msg and
                            f'tg_@{channel.lstrip("@")}_{msg.id}' in already_forwarded)
-        _upd(done=already_done, total=total,
-             current=f'Tìm thấy {total} tin, đã forward {already_done}, bắt đầu xử lý phần còn lại...')
 
-        done = already_done  # bắt đầu đếm từ số đã có
+        # Tổng bản tin cần xử lý = tổng - đã xử lý trước
+        remaining = total - already_done
+        _upd(done=already_done, total=total,
+             current=f'Tìm thấy {total} tin — đã forward {already_done}, còn {remaining} tin cần xử lý...')
+
+        done = already_done  # counter bắt đầu từ số đã forward thực sự
         for msg in all_msgs:
             if url in _read_all_stop_urls:
                 break
@@ -3316,10 +3317,6 @@ def _memory_cleanup():
     except ImportError:
         pass
 
-def _is_numeric_tg_id(url):
-    """Kiểm tra URL có phải là numeric Telegram channel ID không"""
-    s = str(url).strip().lstrip('-')
-    return s.isdigit() and len(s) >= 5
 
 def _poll_one(url_obj):
     """
@@ -3929,7 +3926,6 @@ class HttpHandler(BaseHTTPRequestHandler):
             self.wfile.write(data)
 
     def do_POST(self):
-        global _read_all_stop
         p = urlparse(self.path)
 
         if p.path == '/sync_feeds':
@@ -4182,32 +4178,16 @@ class HttpHandler(BaseHTTPRequestHandler):
                 if existing and existing.get('status') == 'running' and url not in _read_all_stop_urls:
                     done_n = existing['done']; total_n = existing['total']
                     self._json({'error': 'blocked', 'msg': f'Đang có job chạy ngầm cho kênh này ({done_n}/{total_n} tin)'}); return
+                # Job mới (hoặc restart sau khi done/error/stopped):
+                # Reset known_guids[url] để job chạy lại từ đầu và đếm đúng
+                if existing and existing.get('status') in ('done', 'error', 'stopped'):
+                    with lock:
+                        known_guids.pop(url, None)
                 _read_all_jobs[url] = {'url': url, 'name': feed_cfg.get('name', url), 'done': 0, 'total': 0, 'status': 'running', 'current': 'Đang khởi động...'}
             _read_all_stop_urls.discard(url)  # reset stop flag cho url này
             threading.Thread(target=_run_read_all_bg, args=(url, feed_cfg), daemon=True, name='ReadAllBG').start()
             self._json({'ok': True, 'msg': 'Job chạy ngầm đã bắt đầu'})
 
-        elif p.path == '/tg_read_all':
-            # Redirect về /tg_read_all_bg — không dùng SSE nữa
-            body = self._read_json()
-            url = body.get('url', '')
-            if not url or not is_tg_source(url):
-                self._json({'error': 'URL không hợp lệ'}, 400); return
-            if not TELETHON_AVAILABLE or tg_client is None:
-                self._json({'error': 'Telethon chưa kết nối'}, 503); return
-            with lock:
-                feed_cfg = next((u for u in watched_urls if u['url'] == url), None)
-            if not feed_cfg:
-                self._json({'error': 'Feed không tồn tại'}, 404); return
-            with _read_all_job_lock:
-                existing = _read_all_jobs.get(url)
-                if existing and existing.get('status') == 'running' and url not in _read_all_stop_urls:
-                    done_n = existing['done']; total_n = existing['total']
-                    self._json({'error': 'blocked', 'msg': f'Đang có job chạy ngầm cho kênh này ({done_n}/{total_n} tin)'}); return
-                _read_all_jobs[url] = {'url': url, 'name': feed_cfg.get('name', url), 'done': 0, 'total': 0, 'status': 'running', 'current': 'Đang khởi động...'}
-            _read_all_stop_urls.discard(url)
-            threading.Thread(target=_run_read_all_bg, args=(url, feed_cfg), daemon=True, name='ReadAllBG').start()
-            self._json({'ok': True, 'msg': 'Job đã bắt đầu chạy ngầm'})
 
         else:
             self.send_error(404)

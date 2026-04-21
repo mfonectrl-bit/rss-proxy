@@ -1085,6 +1085,9 @@ auto_fwd_enabled = False
 tg_channels = []
 poll_next_time = time.time() + POLL_INTERVAL
 
+# Dict track trạng thái cleanup topic
+_cleanup_status = {}  # key: channel_str → {status, deleted, total, error}
+
 # Set chứa các feed URL đã init xong known_guids — chỉ feed nào có trong set mới được forward
 _forward_ready_feeds = set()
 _watchdog_running = False  # Tránh watchdog chạy trùng
@@ -2358,23 +2361,25 @@ function cuDeleteTopic(idx) {
     cuRenderSavedList();
 }
 
+let _cuPollTimer = null;
+
 async function runCleanup() {
     if (_cuRunning) return;
-    const channel = document.getElementById('cu-channel').value.trim();
-    const topic   = document.getElementById('cu-topic').value.trim();
+    const channel  = document.getElementById('cu-channel').value.trim();
+    const topic    = document.getElementById('cu-topic').value.trim();
     const countRaw = document.getElementById('cu-count').value.trim() || '100';
     if (!channel) { showToastMsg('⚠️ Nhập kênh/group đích'); return; }
     if (!topic)   { showToastMsg('⚠️ Nhập Topic ID'); return; }
 
-    const isAll = countRaw.toLowerCase() === 'all';
-    const count = isAll ? 999999 : parseInt(countRaw);
+    const isAll  = countRaw.toLowerCase() === 'all';
+    const count  = isAll ? 999999 : parseInt(countRaw);
     if (!isAll && isNaN(count)) { showToastMsg('⚠️ Số bài không hợp lệ'); return; }
 
     if (!confirm(`Xóa ${isAll ? 'TẤT CẢ' : count + ' bài'} trong topic ${topic} của ${channel}?\nHành động này không thể hoàn tác!`)) return;
 
     _cuRunning = true;
     document.getElementById('cu-run-btn').disabled = true;
-    document.getElementById('cu-status').textContent = 'Đang xóa...';
+    document.getElementById('cu-status').textContent = '⏳ Đang khởi động...';
     document.getElementById('cu-bar-wrap').style.display = '';
     document.getElementById('cu-bar').style.width = '0%';
 
@@ -2385,18 +2390,48 @@ async function runCleanup() {
             body: JSON.stringify({ channel, topic_id: parseInt(topic), count })
         });
         const d = await resp.json();
-        if (d.ok) {
-            document.getElementById('cu-status').textContent = `✅ Đã xóa ${d.deleted} tin trong topic ${topic}`;
-            document.getElementById('cu-bar').style.width = '100%';
-            showToastMsg(`✅ Đã dọn ${d.deleted} tin`);
-        } else {
-            document.getElementById('cu-status').textContent = '❌ Lỗi: ' + (d.error || 'Unknown');
+        if (!d.ok && d.error) {
+            document.getElementById('cu-status').textContent = '❌ ' + d.error;
+            _cuRunning = false;
+            document.getElementById('cu-run-btn').disabled = false;
+            return;
         }
+        // Poll status mỗi 2s
+        if (_cuPollTimer) clearInterval(_cuPollTimer);
+        _cuPollTimer = setInterval(async () => {
+            try {
+                const r2 = await fetch('/tg_cleanup_status', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ channel })
+                });
+                const st = await r2.json();
+                const pct = st.total > 0 ? Math.round(st.deleted / st.total * 100) : 0;
+                document.getElementById('cu-bar').style.width = pct + '%';
+                if (st.status === 'running') {
+                    document.getElementById('cu-status').textContent =
+                        `⏳ Đang xóa... ${st.deleted}/${st.total || '?'} tin`;
+                } else if (st.status === 'done') {
+                    clearInterval(_cuPollTimer); _cuPollTimer = null;
+                    document.getElementById('cu-status').textContent =
+                        `✅ Đã xóa ${st.deleted} tin trong topic ${topic}`;
+                    document.getElementById('cu-bar').style.width = '100%';
+                    showToastMsg(`✅ Đã dọn ${st.deleted} tin`);
+                    _cuRunning = false;
+                    document.getElementById('cu-run-btn').disabled = false;
+                } else if (st.status === 'error') {
+                    clearInterval(_cuPollTimer); _cuPollTimer = null;
+                    document.getElementById('cu-status').textContent = '❌ Lỗi: ' + st.error;
+                    _cuRunning = false;
+                    document.getElementById('cu-run-btn').disabled = false;
+                }
+            } catch(e) {}
+        }, 2000);
     } catch(e) {
         document.getElementById('cu-status').textContent = '❌ Lỗi kết nối: ' + e.message;
+        _cuRunning = false;
+        document.getElementById('cu-run-btn').disabled = false;
     }
-    _cuRunning = false;
-    document.getElementById('cu-run-btn').disabled = false;
 }
 // ===================== END CLEANUP TOPIC =====================
 
@@ -4039,41 +4074,59 @@ class HttpHandler(BaseHTTPRequestHandler):
             if not channel_str or not topic_id:
                 self._json({'error': 'Thiếu channel hoặc topic_id'}, 400); return
 
-            async def _do_cleanup():
+            # Chạy trên background thread — không block HTTP, tránh timeout
+            _cleanup_status[channel_str] = {'status': 'running', 'deleted': 0, 'total': 0, 'error': ''}
+
+            def _run_cleanup_bg(ch_str, tid, cnt):
+                async def _do():
+                    try:
+                        from telethon.tl.functions.channels import DeleteMessagesRequest as ChDeleteMsg
+                        from telethon.tl.functions.messages import DeleteMessagesRequest as MsgDeleteMsg
+                        dest   = await _resolve_dest(ch_str)
+                        entity = await tg_client.get_entity(dest)
+                        is_channel = hasattr(entity, 'broadcast') or hasattr(entity, 'megagroup')
+
+                        # Thu thập msg_ids trong topic
+                        msg_ids = []
+                        async for msg in tg_client.iter_messages(
+                            entity, reply_to=int(tid), limit=min(cnt, 200000)
+                        ):
+                            if msg and msg.id != int(tid):
+                                msg_ids.append(msg.id)
+
+                        _cleanup_status[ch_str]['total'] = len(msg_ids)
+
+                        # Xóa theo batch 100
+                        deleted = 0
+                        for i in range(0, len(msg_ids), 100):
+                            batch = msg_ids[i:i+100]
+                            if is_channel:
+                                await tg_client(ChDeleteMsg(channel=entity, id=batch))
+                            else:
+                                await tg_client(MsgDeleteMsg(id=batch, revoke=True))
+                            deleted += len(batch)
+                            _cleanup_status[ch_str]['deleted'] = deleted
+                            await asyncio.sleep(0.3)
+
+                        _cleanup_status[ch_str].update({'status': 'done', 'deleted': deleted})
+                        print(f'[Cleanup] ✅ {ch_str} topic={tid}: xóa {deleted} tin')
+                    except Exception as e:
+                        _cleanup_status[ch_str].update({'status': 'error', 'error': str(e)})
+                        print(f'[Cleanup] ❌ {ch_str} topic={tid}: {e}')
+
                 try:
-                    from telethon.tl.functions.messages import DeleteMessagesRequest
-                    # Resolve entity
-                    dest = await _resolve_dest(channel_str)
-                    entity = await tg_client.get_entity(dest)
-                    # Lấy tin trong topic (reply_to = topic_id)
-                    msg_ids = []
-                    async for msg in tg_client.iter_messages(
-                        entity,
-                        reply_to=int(topic_id),
-                        limit=min(count, 100000)
-                    ):
-                        if msg and msg.id != int(topic_id):
-                            msg_ids.append(msg.id)
-
-                    # Xóa theo batch 100
-                    deleted = 0
-                    for i in range(0, len(msg_ids), 100):
-                        batch = msg_ids[i:i+100]
-                        await tg_client(DeleteMessagesRequest(
-                            id=batch,
-                            revoke=True
-                        ))
-                        deleted += len(batch)
-                        await asyncio.sleep(0.5)
-                    return {'ok': True, 'deleted': deleted}
+                    tg_run_long(_do(), timeout=600)
                 except Exception as e:
-                    return {'ok': False, 'error': str(e)}
+                    _cleanup_status[ch_str].update({'status': 'error', 'error': str(e)})
 
-            try:
-                result = tg_run(_do_cleanup())
-                self._json(result)
-            except Exception as e:
-                self._json({'ok': False, 'error': str(e)})
+            threading.Thread(target=_run_cleanup_bg, args=(channel_str, topic_id, count),
+                             daemon=True, name='CleanupBG').start()
+            self._json({'ok': True, 'msg': 'Đang xóa...', 'channel': channel_str})
+
+        elif p.path == '/tg_cleanup_status':
+            body = self._read_json()
+            ch   = body.get('channel', '').strip()
+            self._json(_cleanup_status.get(ch, {'status': 'unknown'}))
 
         elif p.path == '/tg_read_all_stop':
             body_stop = self._read_json()

@@ -1893,7 +1893,12 @@
       "name": "🕊Relaxing Music",
       "show_link": true,
       "auto_fwd": true,
-      "destinations": [],
+      "destinations": [
+        {
+          "ch_idx": 3,
+          "topic_ids": "33142"
+        }
+      ],
       "history_limit": 5
     }
   ],

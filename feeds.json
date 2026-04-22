@@ -1899,7 +1899,81 @@
     {
       "username": "-1003997185142",
       "name": "𝔊𝔩𝔬𝔟𝔞𝔩 ⁿᵉʷˢ ʰᵘᵇˢ",
-      "is_group": true
+      "is_group": true,
+      "topics": [
+        {
+          "id": "24987",
+          "name": "Tài Chính"
+        },
+        {
+          "id": "5663",
+          "name": "Thế Giới"
+        },
+        {
+          "id": "7",
+          "name": "Công Nghệ"
+        },
+        {
+          "id": "3",
+          "name": "Sức Khỏe"
+        },
+        {
+          "id": "32692",
+          "name": "Trong Nước"
+        },
+        {
+          "id": "33014",
+          "name": "PTKT"
+        },
+        {
+          "id": "6",
+          "name": "Xã Hội"
+        },
+        {
+          "id": "8",
+          "name": "Thiên Nhiên"
+        },
+        {
+          "id": "41248",
+          "name": "Ẩm Thực"
+        },
+        {
+          "id": "13032",
+          "name": "Điện Ảnh"
+        },
+        {
+          "id": "19266",
+          "name": "Cỗ Máy Thời Gian"
+        },
+        {
+          "id": "33142",
+          "name": "Âm Nhạc"
+        },
+        {
+          "id": "33153",
+          "name": "Giải Trí"
+        },
+        {
+          "id": "19111",
+          "name": "Phật Giáo"
+        },
+        {
+          "id": "43910",
+          "name": "Mẹo Vặt"
+        },
+        {
+          "id": "33200",
+          "name": "Nghệ thuật - Thiết kế"
+        },
+        {
+          "id": "17588",
+          "name": "UFO"
+        },
+        {
+          "id": "26",
+          "name": "Tài Liệu"
+        }
+      ]
     }
   ],
   "translate_engine": "gemini"

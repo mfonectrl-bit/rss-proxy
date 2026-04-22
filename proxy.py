@@ -309,18 +309,21 @@ def _notify_recover(feed_url: str, feed_name: str):
     _tg_notify_send(f'✅ Feed hoạt động trở lại: {feed_name}')
 
 def _tg_notify_send(text: str):
-    """Gửi text tới ERROR_NOTIFY_CHAT qua Telethon (non-blocking)."""
+    """Gửi text tới ERROR_NOTIFY_CHAT — chạy trên thread riêng, không block poller."""
     if not ERROR_NOTIFY_CHAT or not TELETHON_AVAILABLE or tg_client is None:
         return
-    async def _send():
+    def _do():
+        async def _send():
+            try:
+                await tg_client.send_message(int(ERROR_NOTIFY_CHAT), text)
+                print(f'[Notify] ✅ Đã gửi thông báo tới {ERROR_NOTIFY_CHAT}')
+            except Exception as e:
+                print(f'[Notify] Gửi thất bại: {e}')
         try:
-            await tg_client.send_message(int(ERROR_NOTIFY_CHAT), text)
+            tg_run(_send())
         except Exception as e:
-            print(f'[Notify] Gửi thông báo lỗi thất bại: {e}')
-    try:
-        tg_run(_send())
-    except Exception as e:
-        print(f'[Notify] tg_run lỗi: {e}')
+            print(f'[Notify] tg_run lỗi: {e}')
+    _thread_pool.submit(_do)
 
 def _auth_enabled():
     return bool(APP_USERNAME and APP_PASSWORD)
@@ -3852,6 +3855,8 @@ def _poll_one(url_obj):
 
                 _pipeline.put(it)
 
+        # Feed poll thành công → báo recover nếu trước đó đã có lỗi
+        _notify_recover(url, url_obj.get('name', url))
         return True
 
     except Exception as ex:

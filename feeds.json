@@ -1439,19 +1439,6 @@
       "history_limit": 5
     },
     {
-      "url": "https://t.me/Old_History_Photos",
-      "name": "Old & History Photos",
-      "show_link": true,
-      "auto_fwd": true,
-      "destinations": [
-        {
-          "ch_idx": 3,
-          "topic_ids": "19266"
-        }
-      ],
-      "history_limit": 5
-    },
-    {
       "url": "https://t.me/HistoryInArtAndPhotos",
       "name": "History In Art & Photos",
       "show_link": true,

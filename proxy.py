@@ -1620,7 +1620,7 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
 
 <!-- Modal quản lý kênh Telegram -->
 <div class="modal-bg" id="channel-modal">
-<div class="modal">
+<div class="modal" style="max-height:90vh;overflow-y:auto;display:flex;flex-direction:column">
 <h2>Quản lý Kênh / Group Telegram</h2>
 <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:12px;color:#1e40af">
   ⚡ Dùng <b>Telethon</b> để gửi — nhập <b>@username</b> hoặc <b>-100xxx</b>. Topic IDs được cấu hình trong từng feed.
@@ -2024,6 +2024,17 @@ function renderFeedDestList(savedDests){
     }).join('');
 }
 
+function fwdAddTopicFromDd(chIdx){
+    const dd=document.querySelector('.fwd-topic-dd[data-idx="'+chIdx+'"]');
+    const input=document.querySelector('.fwd-topic-inp[data-idx="'+chIdx+'"]');
+    if(!dd||!input||!dd.value) return;
+    const cur=input.value.trim();
+    const parts=cur?cur.split(',').map(s=>s.trim()).filter(Boolean):[];
+    if(!parts.includes(dd.value)){parts.push(dd.value);}
+    input.value=parts.join(', ');
+    dd.value='';
+}
+
 function feedAddTopicFromDd(chIdx){
     const dd=document.querySelector('.feed-dest-dd[data-idx="'+chIdx+'"]');
     const input=document.querySelector('.feed-dest-topics[data-idx="'+chIdx+'"]');
@@ -2179,23 +2190,45 @@ function openForwardModal(){
         }
     });
     const list=document.getElementById('fwd-ch-list');
-    list.innerHTML=tgChannels.map((ch,idx)=>{
-        const pre=preDestMap[idx]||{checked:false,topic_ids:''};
-        return `<div style="padding:7px 10px;border-bottom:1px solid #f0f0e8">
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
-                <input type="checkbox" class="fwd-ch-cb" data-idx="${idx}" ${pre.checked?'checked':''} style="width:15px;height:15px">
-                <span style="font-weight:500">${ch.name}</span>
-                <span style="color:#aaa;font-size:11px">${ch.is_group?'Group':'Channel'} · ${ch.username}</span>
-            </label>
-            ${ch.is_group?`<div style="margin-top:5px;padding-left:23px;display:flex;align-items:center;gap:6px">
-                <span style="font-size:11px;color:#555;white-space:nowrap">Topic IDs:</span>
-                <input type="text" class="fwd-topic-inp" data-idx="${idx}" value="${pre.topic_ids||''}"
-                    placeholder="VD: 123, 456 — để trống = không topic"
-                    style="flex:1;padding:4px 7px;border:1px solid #d0d0c8;border-radius:6px;font-size:12px">
-            </div>`:''}
-        </div>`;
+    list.innerHTML=tgChannels.map((ch,i)=>{
+        const pre=preDestMap[i]||{checked:false,topic_ids:''};
+        const topics=ch.topics||[];
+        const hasTopics=topics.length>0;
+        const topicOpts=topics.map(t=>'<option value="'+t.id+'">'+t.name+' ('+t.id+')</option>').join('');
+        let topicSection='';
+        if(ch.is_group){
+            topicSection='<div style="margin-top:6px;padding-left:23px">'
+                +'<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">'
+                +'<span style="font-size:11px;color:#555;white-space:nowrap;flex-shrink:0">Topics đã chọn:</span>'
+                +'<input type="text" class="fwd-topic-inp" data-idx="'+i+'" value="'+(pre.topic_ids||'')+'"'
+                +' placeholder="Để trống = không topic"'
+                +' style="flex:1;padding:4px 7px;border:1px solid #d0d0c8;border-radius:6px;font-size:12px">'
+                +'</div>';
+            if(hasTopics){
+                topicSection+='<div style="display:flex;align-items:center;gap:6px">'
+                    +'<select class="fwd-topic-dd" data-idx="'+i+'"'
+                    +' style="flex:1;padding:4px 7px;border:1px solid #d0d0c8;border-radius:6px;font-size:12px;color:#555">'
+                    +'<option value="">— Chọn topic để thêm —</option>'+topicOpts
+                    +'</select>'
+                    +'<button type="button" onclick="fwdAddTopicFromDd('+i+')"'
+                    +' style="padding:4px 12px;border:1px solid #2563eb;border-radius:6px;background:#eff6ff;color:#2563eb;font-size:15px;font-weight:700;cursor:pointer;flex-shrink:0"'
+                    +' title="Thêm vào danh sách">+</button>'
+                    +'</div>';
+            } else {
+                topicSection+='<span style="font-size:11px;color:#aaa">Chưa có topic — vào Quản lý Kênh để thêm</span>';
+            }
+            topicSection+='</div>';
+        }
+        return '<div style="padding:7px 10px;border-bottom:1px solid #f0f0e8">'
+            +'<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">'
+            +'<input type="checkbox" class="fwd-ch-cb" data-idx="'+i+'" '+(pre.checked?'checked':'')+' style="width:15px;height:15px">'
+            +'<span style="font-weight:500">'+ch.name+'</span>'
+            +'<span style="color:#aaa;font-size:11px">'+(ch.is_group?'Group':'Channel')+' · '+ch.username+'</span>'
+            +'</label>'
+            +topicSection
+            +'</div>';
     }).join('');
-    document.getElementById('fwd-modal').classList.add('open');
+        document.getElementById('fwd-modal').classList.add('open');
 }
 
 async function forwardSelected(){

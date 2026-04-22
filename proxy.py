@@ -1524,6 +1524,9 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
     <option value="deepl">DeepL</option>
     <option value="google">Google Translate</option>
   </select>
+  <span id="notify-bell-btn" title="Test gửi thông báo lỗi tới Telegram" onclick="testNotify()"
+    style="cursor:pointer;font-size:17px;line-height:1;padding:3px 5px;border-radius:6px;transition:background .15s;user-select:none"
+    onmouseover="this.style.background='#fef3c7'" onmouseout="this.style.background='transparent'">🔔</span>
 </span>
 </div>
 </div>
@@ -3184,9 +3187,21 @@ function deleteErrFeed() {
 }
 
 async function testNotify() {
-    const r = await fetch('/test_notify', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
-    const d = await r.json();
-    showToastMsg(d.ok ? '✅ Đã gửi test notification' : '❌ ' + (d.error||'Lỗi'));
+    const bell = document.getElementById('notify-bell-btn');
+    if (bell) bell.textContent = '⏳';
+    try {
+        const r = await fetch('/test_notify', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+        const d = await r.json();
+        if (bell) bell.textContent = '🔔';
+        if (d.ok) {
+            showToastMsg('✅ Đã gửi thông báo test tới Telegram thành công!');
+        } else {
+            showToastMsg('❌ Gửi thất bại: ' + (d.error || 'Lỗi không xác định'));
+        }
+    } catch(e) {
+        if (bell) bell.textContent = '🔔';
+        showToastMsg('❌ Lỗi kết nối: ' + e.message);
+    }
 }
 
 async function doLogout(){

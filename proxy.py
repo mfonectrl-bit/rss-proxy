@@ -240,12 +240,123 @@ _read_all_stop_urls = set()
 _read_all_jobs = {}  # {url: {status, done, total, name, current}} — multi-job support
 _read_all_job_lock = threading.Lock()
 
+# Forward count per feed (in-memory, reset khi restart)
+_fwd_counts    = {}   # {url: int}
+_fwd_count_lock = threading.Lock()
+
 # --- CẤU HÌNH ---
 POLL_INTERVAL    = 90
 HTTP_PORT = int(os.environ.get("PORT", 8765))
 TRANSLATE_ENABLE = True
 SESSION_FILE     = 'tg_session'
 TG_CONFIG_FILE   = 'tg_config.json'
+
+# --- BẢO MẬT ---
+# Đặt APP_USERNAME, APP_PASSWORD, APP_API_KEY trong Render Environment Variables
+# Nếu không đặt → app chạy không cần login (chỉ dùng local)
+APP_USERNAME = os.environ.get('APP_USERNAME', '').strip()
+APP_PASSWORD = os.environ.get('APP_PASSWORD', '').strip()
+APP_API_KEY  = os.environ.get('APP_API_KEY', '').strip()   # dùng cho API calls / UptimeRobot
+
+# Chat ID nhận thông báo lỗi (mày, không phải kênh đích)
+# Đặt ERROR_NOTIFY_CHAT trong Render env — ví dụ: '123456789' (user ID của mày)
+ERROR_NOTIFY_CHAT = os.environ.get('ERROR_NOTIFY_CHAT', '').strip()
+
+# Tracking lỗi feed — tránh spam notification
+_feed_errors      = {}   # {url: {'count': int, 'last_notify': float}}
+_feed_error_lock  = threading.Lock()
+_ERROR_THRESHOLD  = 3    # Báo sau 3 lần lỗi liên tiếp
+_NOTIFY_COOLDOWN  = 3600 # Không spam — tối thiểu 1 tiếng/lần
+
+def _notify_error(msg: str, feed_url: str = '', is_test: bool = False):
+    """
+    Gửi thông báo lỗi qua 2 kênh:
+    1. Broadcast WS → UI banner
+    2. Telegram message → ERROR_NOTIFY_CHAT (nếu đã cấu hình)
+    """
+    # 1. UI banner — luôn broadcast
+    broadcast({'type': 'error_alert', 'msg': msg, 'url': feed_url, 'ts': time.time()})
+
+    # 2. Telegram — chỉ nếu có chat ID và Telethon đã kết nối
+    if not ERROR_NOTIFY_CHAT or not TELETHON_AVAILABLE or tg_client is None:
+        return
+    if is_test:
+        _tg_notify_send(f'🔔 Test thông báo\n{msg}')
+        return
+
+    now = time.time()
+    with _feed_error_lock:
+        rec = _feed_errors.get(feed_url, {'count': 0, 'last_notify': 0})
+        rec['count'] += 1
+        _feed_errors[feed_url] = rec
+        if rec['count'] < _ERROR_THRESHOLD:
+            return   # chưa đủ ngưỡng
+        if now - rec['last_notify'] < _NOTIFY_COOLDOWN:
+            return   # cooldown chưa hết
+        rec['last_notify'] = now
+        rec['count'] = 0
+
+    _tg_notify_send(msg)
+
+def _notify_recover(feed_url: str, feed_name: str):
+    """Báo khi feed hoạt động trở lại sau khi đã có lỗi."""
+    with _feed_error_lock:
+        rec = _feed_errors.get(feed_url, {})
+        if rec.get('last_notify', 0) == 0:
+            return  # chưa bao giờ báo lỗi → không cần báo recover
+        _feed_errors[feed_url] = {'count': 0, 'last_notify': 0}
+    broadcast({'type': 'error_recover', 'url': feed_url})
+    _tg_notify_send(f'✅ Feed hoạt động trở lại: {feed_name}')
+
+def _tg_notify_send(text: str):
+    """Gửi text tới ERROR_NOTIFY_CHAT qua Telethon (non-blocking)."""
+    if not ERROR_NOTIFY_CHAT or not TELETHON_AVAILABLE or tg_client is None:
+        return
+    async def _send():
+        try:
+            await tg_client.send_message(int(ERROR_NOTIFY_CHAT), text)
+        except Exception as e:
+            print(f'[Notify] Gửi thông báo lỗi thất bại: {e}')
+    try:
+        tg_run(_send())
+    except Exception as e:
+        print(f'[Notify] tg_run lỗi: {e}')
+
+def _auth_enabled():
+    return bool(APP_USERNAME and APP_PASSWORD)
+
+def _make_session_token():
+    """Tạo session token ngẫu nhiên."""
+    return hashlib.sha256(os.urandom(32)).hexdigest()
+
+def _check_session(cookie_header):
+    """Kiểm tra session cookie hợp lệ."""
+    if not cookie_header:
+        return False
+    for part in cookie_header.split(';'):
+        part = part.strip()
+        if part.startswith('session='):
+            token = part[8:]
+            with _session_lock:
+                return token in _active_sessions
+    return False
+
+def _check_api_key(headers):
+    """Kiểm tra X-API-Key header."""
+    if not APP_API_KEY:
+        return False
+    return headers.get('X-API-Key', '') == APP_API_KEY
+
+def _is_authed(handler):
+    """True nếu request đã xác thực (session cookie hoặc API key)."""
+    if not _auth_enabled():
+        return True   # chưa cấu hình → luôn cho qua (local dev)
+    if _check_api_key(handler.headers):
+        return True
+    return _check_session(handler.headers.get('Cookie', ''))
+
+_session_lock   = threading.Lock()
+_active_sessions = set()   # set các token hợp lệ
 
 # Pool cho poll/fetch/setup — giới hạn 40 threads
 _thread_pool = ThreadPoolExecutor(max_workers=20)
@@ -1219,6 +1330,77 @@ def _ws_handshake(request_handler):
         return None
 
 
+
+# --- LOGIN PAGE ---
+_LOGIN_HTML = """<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Đăng nhập — RSS Reader</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f5f0;min-height:100vh;display:flex;align-items:center;justify-content:center}
+.card{background:#fff;border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,.10);padding:40px 36px;width:100%;max-width:360px}
+h2{font-size:20px;font-weight:700;color:#1a1a1a;margin-bottom:6px;text-align:center}
+.sub{font-size:13px;color:#888;text-align:center;margin-bottom:28px}
+label{display:block;font-size:12px;font-weight:600;color:#555;margin-bottom:5px}
+input{width:100%;padding:10px 12px;border:1.5px solid #e0e0d8;border-radius:7px;font-size:14px;outline:none;transition:border .15s}
+input:focus{border-color:#2563eb}
+.field{margin-bottom:16px}
+.btn{width:100%;padding:11px;background:#2563eb;color:#fff;border:none;border-radius:7px;font-size:15px;font-weight:600;cursor:pointer;margin-top:8px;transition:background .15s}
+.btn:hover{background:#1d4ed8}
+.btn:disabled{background:#93c5fd;cursor:not-allowed}
+.err{color:#dc2626;font-size:13px;margin-top:12px;text-align:center;min-height:20px}
+.logo{text-align:center;font-size:32px;margin-bottom:12px}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">📡</div>
+  <h2>RSS Reader</h2>
+  <p class="sub">Vui lòng đăng nhập để tiếp tục</p>
+  <div class="field">
+    <label>Tên đăng nhập</label>
+    <input type="text" id="usr" autocomplete="username" placeholder="Username" onkeydown="if(event.key==='Enter')doLogin()">
+  </div>
+  <div class="field">
+    <label>Mật khẩu</label>
+    <input type="password" id="pwd" autocomplete="current-password" placeholder="Password" onkeydown="if(event.key==='Enter')doLogin()">
+  </div>
+  <button class="btn" id="btn" onclick="doLogin()">Đăng nhập</button>
+  <div class="err" id="err"></div>
+</div>
+<script>
+async function doLogin(){
+  const btn=document.getElementById('btn');
+  const err=document.getElementById('err');
+  const usr=document.getElementById('usr').value.trim();
+  const pwd=document.getElementById('pwd').value;
+  if(!usr||!pwd){err.textContent='Vui lòng nhập đầy đủ';return;}
+  btn.disabled=true; btn.textContent='Đang đăng nhập...'; err.textContent='';
+  try{
+    const r=await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:usr,password:pwd})});
+    const d=await r.json();
+    if(d.ok){window.location.reload();}
+    else{err.textContent=d.error||'Sai thông tin đăng nhập';btn.disabled=false;btn.textContent='Đăng nhập';}
+  }catch(e){err.textContent='Lỗi kết nối';btn.disabled=false;btn.textContent='Đăng nhập';}
+}
+document.getElementById('usr').focus();
+</script>
+<!-- Error notification banner -->
+<div class="err-banner" id="err-banner">
+  <span class="eb-close" onclick="closeErrBanner()">×</span>
+  <div class="eb-title"><span>⚠️</span><span id="eb-title-text">Lỗi hệ thống</span></div>
+  <div class="eb-msg" id="eb-msg"></div>
+  <div class="eb-actions">
+    <button class="eb-btn" onclick="closeErrBanner()">Đóng</button>
+    <button class="eb-btn" id="eb-del-btn" style="display:none" onclick="deleteErrFeed()">Xóa feed này</button>
+  </div>
+</div>
+</body>
+</html>"""
+
 HTML = r"""<!DOCTYPE html>
 <html lang="vi">
 <head>
@@ -1255,6 +1437,14 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
 .feed-row:hover{background:#f8f8f4}
 .feed-row.active{background:#f0f0e8;font-weight:600}
 .feed-row .fname{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.err-banner{position:fixed;bottom:16px;right:16px;max-width:340px;background:#fef2f2;border:1.5px solid #fca5a5;border-radius:10px;padding:12px 14px;box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:9999;font-size:13px;color:#991b1b;display:none;animation:slideUp .25s ease}
+.err-banner .eb-title{font-weight:700;margin-bottom:4px;display:flex;align-items:center;gap:6px}
+.err-banner .eb-msg{color:#7f1d1d;font-size:12px;word-break:break-word}
+.err-banner .eb-close{position:absolute;top:8px;right:10px;cursor:pointer;color:#aaa;font-size:16px;line-height:1}
+.err-banner .eb-actions{margin-top:8px;display:flex;gap:8px}
+.err-banner .eb-btn{font-size:11px;padding:3px 10px;border-radius:5px;border:1px solid #fca5a5;background:#fff;cursor:pointer;color:#991b1b}
+.err-banner .eb-btn:hover{background:#fef2f2}
+@keyframes slideUp{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
 .fdel{color:#ddd;font-size:14px}.fdel:hover{color:#e74c3c}
 .fedit{color:#ddd;font-size:14px}.fedit:hover{color:#2563eb}
 .item{background:#fff;border:1px solid #e8e8e0;border-radius:10px;margin-bottom:.6rem}
@@ -1315,6 +1505,7 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
 <div class="adot" id="afwd-dot"></div><span>Auto-forward</span>
 </div>
 <div class="ws-status"><div class="ws-dot wait" id="ws-dot"></div><span id="ws-lbl">Đang kết nối...</span><span id="poll-timer"></span></div>
+<button id="logout-btn" onclick="doLogout()" title="Đăng xuất" style="display:none;background:none;border:1px solid #ddd;border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer;color:#666;margin-left:8px">⏻ Đăng xuất</button>
 </header>
 <div class="tg-bar">
 <label>Telegram</label>
@@ -1339,7 +1530,17 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
 <button onclick="openModal()" style="width:100%;padding:7px;background:#1a1a1a;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:13px">+ Thêm feed</button>
 <input type="text" id="search" placeholder="Tìm kiếm..." oninput="applyFilter()" style="width:100%;padding:6px;margin-top:6px;border:1px solid #e0e0d8;border-radius:8px;font-size:13px">
 </div>
-<div style="padding:.35rem .75rem;font-size:11px;color:#bbb;background:#fff">Nguồn</div>
+<div style="padding:.35rem .75rem .2rem;background:#fff;border-bottom:1px solid #f0f0e8;display:flex;align-items:center;gap:6px">
+  <span style="font-size:11px;color:#bbb;flex:1">Nguồn</span>
+  <select id="feed-sort" onchange="renderSidebar()" title="Sắp xếp" style="font-size:11px;border:1px solid #e0e0d8;border-radius:5px;padding:2px 4px;color:#666;background:#fff;cursor:pointer">
+    <option value="default">Mặc định</option>
+    <option value="activity">Hoạt động</option>
+    <option value="name">Tên A-Z</option>
+    <option value="stale">Feed chết trước</option>
+  </select>
+</div>
+<input type="text" id="feed-search" placeholder="🔍 Tìm nguồn..." oninput="renderSidebar()"
+  style="width:calc(100% - 16px);margin:6px 8px 4px;padding:5px 8px;border:1px solid #e0e0d8;border-radius:7px;font-size:12px;outline:none;box-sizing:border-box">
 <div id="feed-list" class="feed-list"></div>
 </aside>
 <main style="flex:1;min-width:0;display:flex;flex-direction:column">
@@ -1962,29 +2163,88 @@ function _feedLastTs(url) {
     return max;
 }
 
+// Forward counts từ server (load 1 lần lúc init, cập nhật qua WS)
+let _fwdCounts = {};
+fetch('/fwd_counts')
+    .then(r=>r.json()).then(d=>{ _fwdCounts=d; renderSidebar(); }).catch(()=>{});
+
 function renderSidebar(){
-    const list=document.getElementById('feed-list');
-    const totalNew=Object.values(newBadges).reduce((a,b)=>a+b,0);
-    const now = Date.now();
-    const STALE_MS = 30 * 24 * 60 * 60 * 1000; // 30 ngày
-    let html=`<div class="feed-row${filterUrl===null?' active':''}" onclick="setFilter(null)">
-        <span style="flex:1">Tất cả nguồn</span>${totalNew>0?`<span style="background:#dbeafe;color:#1d4ed8;padding:1px 5px;border-radius:8px;font-size:10px">+${totalNew}</span>`:''}</div>`;
-    feeds.forEach((f,i)=>{
-        const n=newBadges[f.url]||0,active=filterUrl===f.url;
-        const isTg=isTgSource(f.url);
-        const badge=`<span class="feed-badge ${isTg?'badge-tg':'badge-rss'}">${isTg?'TG':'RSS'}</span>`;
-        const readAllBtn=f.read_all&&isTg?`<span title="Đọc toàn bộ nguồn" onclick="startReadAll(${i})" style="cursor:pointer;color:#f59e0b;font-size:13px;padding:0 2px" class="fedit">▶</span>`:'';
-        // Chấm đỏ nếu không có bài nào trong 30 ngày
-        const lastTs = _feedLastTs(f.url);
-        const isStale = lastTs > 0 && (now - lastTs) > STALE_MS;
-        const staleDot = isStale
-            ? `<span title="Không có bài mới trong 30 ngày" style="color:#ef4444;font-size:10px;margin-right:3px;flex-shrink:0">●</span>`
-            : '';
-        html+=`<div class="feed-row${active?' active':''}">
-            ${staleDot}<span class="fname" style="flex:1;min-width:0" onclick="setFilter('${f.url}')">${f.name}${badge}</span>
-            ${n>0&&!active?`<span style="background:#dbeafe;color:#1d4ed8;padding:1px 5px;border-radius:8px;font-size:10px">+${n}</span>`:''}
-            ${readAllBtn}<span class="fedit" style="flex-shrink:0" onclick="openEditFeed(${i})">✎</span><span class="fdel" style="flex-shrink:0" onclick="deleteFeed(${i})">×</span></div>`;
+    const list   = document.getElementById('feed-list');
+    const totalNew = Object.values(newBadges).reduce((a,b)=>a+b,0);
+    const now    = Date.now();
+    const STALE_MS = 30 * 24 * 60 * 60 * 1000;
+    const sortBy = (document.getElementById('feed-sort')||{}).value || 'default';
+    const searchQ = ((document.getElementById('feed-search')||{}).value||'').trim().toLowerCase();
+
+    // Lọc theo search
+    let visible = feeds.filter((f,i) => {
+        f._idx = i; // giữ index gốc
+        return !searchQ || f.name.toLowerCase().includes(searchQ) || f.url.toLowerCase().includes(searchQ);
     });
+
+    // Sort
+    if (sortBy === 'activity') {
+        visible.sort((a,b) => _feedLastTs(b.url) - _feedLastTs(a.url));
+    } else if (sortBy === 'name') {
+        visible.sort((a,b) => a.name.localeCompare(b.name, 'vi'));
+    } else if (sortBy === 'stale') {
+        visible.sort((a,b) => {
+            const sa = _feedLastTs(a.url), sb = _feedLastTs(b.url);
+            const aStale = sa > 0 && (now-sa) > STALE_MS;
+            const bStale = sb > 0 && (now-sb) > STALE_MS;
+            if (aStale !== bStale) return aStale ? -1 : 1;
+            return sa - sb;
+        });
+    }
+
+    // Group by category
+    const groups = {};
+    for (const f of visible) {
+        const cat = f.category || 'Chưa phân loại';
+        if (!groups[cat]) groups[cat] = [];
+        groups[cat].push(f);
+    }
+    const catOrder = Object.keys(groups).sort((a,b) => {
+        if (a === 'Chưa phân loại') return 1;
+        if (b === 'Chưa phân loại') return -1;
+        return a.localeCompare(b, 'vi');
+    });
+
+    let html = `<div class="feed-row${filterUrl===null?' active':''}" onclick="setFilter(null)">
+        <span style="flex:1;min-width:0" class="fname">Tất cả nguồn</span>
+        ${totalNew>0?`<span style="background:#dbeafe;color:#1d4ed8;padding:1px 5px;border-radius:8px;font-size:10px">+${totalNew}</span>`:''}</div>`;
+
+    const multiCat = catOrder.length > 1;
+
+    for (const cat of catOrder) {
+        if (multiCat) {
+            html += `<div style="padding:4px 10px 2px;font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;background:#f8f8f4;border-top:1px solid #f0f0e8">${cat}</div>`;
+        }
+        for (const f of groups[cat]) {
+            const i   = f._idx;
+            const n   = newBadges[f.url]||0;
+            const active = filterUrl===f.url;
+            const isTg   = isTgSource(f.url);
+            const badge  = `<span class="feed-badge ${isTg?'badge-tg':'badge-rss'}">${isTg?'TG':'RSS'}</span>`;
+            const readAllBtn = f.read_all&&isTg
+                ? `<span title="Đọc toàn bộ nguồn" onclick="startReadAll(${i})" style="cursor:pointer;color:#f59e0b;font-size:13px;padding:0 2px" class="fedit">▶</span>`
+                : '';
+            const lastTs = _feedLastTs(f.url);
+            const isStale = lastTs > 0 && (now - lastTs) > STALE_MS;
+            const staleDot = isStale
+                ? `<span title="Không có bài mới trong 30 ngày" style="color:#ef4444;font-size:10px;margin-right:3px;flex-shrink:0">●</span>`
+                : '';
+            const fwdN = _fwdCounts[f.url] || 0;
+            const fwdBadge = fwdN > 0
+                ? `<span title="Đã forward ${fwdN} bài" style="color:#10b981;font-size:10px;flex-shrink:0;margin-right:2px">↗${fwdN}</span>`
+                : '';
+            html += `<div class="feed-row${active?' active':''}">
+                ${staleDot}<span class="fname" style="flex:1;min-width:0" onclick="setFilter('${f.url}')">${f.name}${badge}</span>
+                ${fwdBadge}
+                ${n>0&&!active?`<span style="background:#dbeafe;color:#1d4ed8;padding:1px 5px;border-radius:8px;font-size:10px">+${n}</span>`:''}
+                ${readAllBtn}<span class="fedit" style="flex-shrink:0" onclick="openEditFeed(${i})">✎</span><span class="fdel" style="flex-shrink:0" onclick="deleteFeed(${i})">×</span></div>`;
+        }
+    }
     list.innerHTML=html;
 }
 
@@ -2726,7 +2986,21 @@ function connectWS(){
             renderSidebar();renderStream();
         }
         if(msg.type==='poll_status'){pollInterval=msg.interval;pollNextIn=msg.next_in;}
-        if(msg.type==='auto_fwd_sent'){showToastMsg(`Auto-forward: đã gửi ${msg.count} tin mới lên Telegram`);}
+        if(msg.type==='auto_fwd_sent'){
+            showToastMsg(`Auto-forward: đã gửi ${msg.count} tin mới lên Telegram`);
+            if(msg.url && msg.total_fwd!=null) {
+                _fwdCounts[msg.url] = msg.total_fwd;
+                renderSidebar(); // cập nhật badge forward count
+            }
+        }
+        if(msg.type==='error_alert'){
+            showErrBanner(msg.msg, msg.url||'');
+        }
+        if(msg.type==='error_recover'){
+            // Feed hoạt động trở lại — tự đóng banner nếu đang hiện lỗi feed đó
+            const banner=document.getElementById('err-banner');
+            if(banner._errUrl===msg.url) closeErrBanner();
+        }
         if(msg.type==='read_all_status'){
             _updateBgIndicator(); // luôn fetch lại toàn bộ jobs từ server
             if(msg.status==='done') showToastMsg('✅ Đọc xong ' + (msg.done||0) + ' tin từ ' + (msg.name||''));
@@ -2773,7 +3047,68 @@ function showToastMsg(msg){
     // TG feed history sẽ đến qua WS broadcast từ _init_tg_feed
     const rssFeeds=feeds.filter(f=>!isTgSource(f.url));
     rssFeeds.forEach(f=>fetchAndMerge(f.url,f.name,f.category,false));
+    // Hiện nút logout nếu server có bật auth
+    fetch('/auth_status').then(r=>r.json()).then(d=>{
+        if(d.auth_enabled) document.getElementById('logout-btn').style.display='';
+    }).catch(()=>{});
 })();
+
+// ===================== ERROR BANNER =====================
+let _errBannerTimer = null;
+let _errBannerUrl   = '';
+
+function showErrBanner(msg, feedUrl) {
+    const banner = document.getElementById('err-banner');
+    const msgEl  = document.getElementById('eb-msg');
+    const delBtn = document.getElementById('eb-del-btn');
+    const title  = document.getElementById('eb-title-text');
+    if (!banner) return;
+    // Nếu đang hiện lỗi khác → stack (ghi đè)
+    banner._errUrl = feedUrl;
+    _errBannerUrl  = feedUrl;
+    title.textContent = feedUrl
+        ? (feeds.find(f=>f.url===feedUrl)?.name || feedUrl)
+        : 'Lỗi hệ thống';
+    msgEl.textContent = msg;
+    delBtn.style.display = feedUrl ? '' : 'none';
+    banner.style.display = 'block';
+    // Tự đóng sau 30 giây
+    if (_errBannerTimer) clearTimeout(_errBannerTimer);
+    _errBannerTimer = setTimeout(closeErrBanner, 30000);
+}
+
+function closeErrBanner() {
+    const banner = document.getElementById('err-banner');
+    if (banner) banner.style.display = 'none';
+    if (_errBannerTimer) { clearTimeout(_errBannerTimer); _errBannerTimer = null; }
+}
+
+function deleteErrFeed() {
+    const url = _errBannerUrl;
+    if (!url) return;
+    const idx = feeds.findIndex(f => f.url === url);
+    if (idx < 0) return;
+    if (!confirm(`Xóa feed "${feeds[idx].name}"?`)) return;
+    feeds.splice(idx, 1);
+    allItems = allItems.filter(it => it.feedUrl !== url);
+    if (filterUrl === url) filterUrl = null;
+    saveFeeds(); syncFeedsHttp();
+    renderSidebar(); renderStream();
+    closeErrBanner();
+    showToastMsg('🗑 Đã xóa feed lỗi');
+}
+
+async function testNotify() {
+    const r = await fetch('/test_notify', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+    const d = await r.json();
+    showToastMsg(d.ok ? '✅ Đã gửi test notification' : '❌ ' + (d.error||'Lỗi'));
+}
+
+async function doLogout(){
+    if(!confirm('Đăng xuất?')) return;
+    await fetch('/logout',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    window.location.reload();
+}
 </script>
 </body>
 </html>"""
@@ -3139,6 +3474,7 @@ def _do_forward(processed, category, url):
                 except Exception as e:
                     print(f'[Forward] tg_run lỗi: {e}')
                     ok = False
+                    _notify_error(f'❌ Forward thất bại → {channel_name}\n{e}', feed_url=url)
                 finally:
                     _send_semaphore.release()
                 if ok:
@@ -3146,7 +3482,11 @@ def _do_forward(processed, category, url):
                 time.sleep(0.3)
 
     if total_sent > 0:
-        broadcast({'type': 'auto_fwd_sent', 'count': total_sent, 'url': url})
+        # Cập nhật forward count
+        with _fwd_count_lock:
+            _fwd_counts[url] = _fwd_counts.get(url, 0) + total_sent
+        broadcast({'type': 'auto_fwd_sent', 'count': total_sent, 'url': url,
+                   'total_fwd': _fwd_counts.get(url, 0)})
 
 
 def _run_read_all_bg(url, feed_cfg):
@@ -3436,6 +3776,8 @@ def _poll_one(url_obj):
         print(f'[!] Poll lỗi {url}: {ex}')
         import traceback
         traceback.print_exc()
+        feed_name = url_obj.get('name', url)
+        _notify_error(f'⚠️ Feed lỗi: {feed_name}\n{ex}', feed_url=url)
         return False
 
 def _is_ica_source(url):
@@ -3823,8 +4165,26 @@ class HttpHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         p = urlparse(self.path)
 
+        # --- Các path public không cần auth ---
+        _public_paths = {'/healthz', '/login', '/auth_status', '/logout'}
+        if p.path not in _public_paths and p.path != '/ws':
+            if not _is_authed(self):
+                # Nếu là browser request → redirect về trang login
+                if 'text/html' in self.headers.get('Accept', ''):
+                    data = _LOGIN_HTML.encode('utf-8')
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'text/html; charset=utf-8')
+                    self.send_header('Content-Length', str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                else:
+                    self._json({'error': 'Unauthorized'}, 401)
+                return
+
         # --- WebSocket upgrade ---
         if p.path == '/ws' and self.headers.get('Upgrade', '').lower() == 'websocket':
+            if not _is_authed(self):
+                self.send_error(401); return
             print(f'[WS] Upgrade request nhận được, key={self.headers.get("Sec-WebSocket-Key","?")}')
             ws = _ws_handshake(self)
             if ws:
@@ -3836,6 +4196,15 @@ class HttpHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'text/plain')
             self.end_headers()
             self.wfile.write(b'OK')
+            return
+
+        if p.path == '/auth_status':
+            self._json({'auth_enabled': _auth_enabled(), 'logged_in': _is_authed(self)})
+            return
+
+        if p.path == '/fwd_counts':
+            with _fwd_count_lock:
+                self._json(dict(_fwd_counts))
             return
 
         if p.path == '/fetch':
@@ -3945,6 +4314,57 @@ class HttpHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         p = urlparse(self.path)
+
+        # --- Login / Logout (không cần auth) ---
+        if p.path == '/login':
+            body = self._read_json()
+            username = body.get('username', '').strip()
+            password = body.get('password', '').strip()
+            if not _auth_enabled():
+                self._json({'ok': True, 'msg': 'Auth không bật'}); return
+            if username == APP_USERNAME and password == APP_PASSWORD:
+                token = _make_session_token()
+                with _session_lock:
+                    _active_sessions.add(token)
+                resp_data = json.dumps({'ok': True}).encode('utf-8')
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json; charset=utf-8')
+                self.send_header('Set-Cookie', f'session={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000')
+                self.send_header('Content-Length', str(len(resp_data)))
+                self.end_headers()
+                self.wfile.write(resp_data)
+                print(f'[Auth] Login thành công: {username}')
+            else:
+                self._json({'ok': False, 'error': 'Sai tên đăng nhập hoặc mật khẩu'}, 401)
+                print(f'[Auth] Login thất bại: {username}')
+            return
+
+        if p.path == '/logout':
+            cookie = self.headers.get('Cookie', '')
+            for part in cookie.split(';'):
+                part = part.strip()
+                if part.startswith('session='):
+                    token = part[8:]
+                    with _session_lock:
+                        _active_sessions.discard(token)
+            resp_data = json.dumps({'ok': True}).encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Set-Cookie', 'session=; Path=/; HttpOnly; Max-Age=0')
+            self.send_header('Content-Length', str(len(resp_data)))
+            self.end_headers()
+            self.wfile.write(resp_data)
+            return
+
+        # --- Auth check cho tất cả endpoint còn lại ---
+        if not _is_authed(self):
+            self._json({'error': 'Unauthorized'}, 401); return
+
+        if p.path == '/test_notify':
+            _notify_error('🔔 Test thông báo lỗi từ RSS Reader — mọi thứ hoạt động bình thường!',
+                          is_test=True)
+            self._json({'ok': True, 'msg': 'Đã gửi test notification'})
+            return
 
         if p.path == '/sync_feeds':
             body = self._read_json()

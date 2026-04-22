@@ -1629,9 +1629,19 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
 <input type="text" id="ch-username" placeholder="@kênh_đích hoặc -100xxxxxxxxx (Group ID)">
 <input type="text" id="ch-name" placeholder="Tên hiển thị">
 <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-bottom:10px">
-  <input type="checkbox" id="ch-is-group" style="width:15px;height:15px;cursor:pointer">
+  <input type="checkbox" id="ch-is-group" style="width:15px;height:15px;cursor:pointer" onchange="toggleTopicSection()">
   Là Group/Supergroup (có Topic IDs)
 </label>
+
+<!-- Quản lý Topic IDs — chỉ hiện khi là Group -->
+<div id="ch-topic-section" style="display:none;border:1px solid #e0e0d8;border-radius:8px;padding:10px;margin-bottom:12px;background:#f8f8f4">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+    <span style="font-size:12px;font-weight:600;color:#555">📋 Danh sách Topics</span>
+    <button type="button" onclick="chAddTopicRow()" style="font-size:12px;padding:3px 10px;border:1px solid #2563eb;border-radius:6px;background:#eff6ff;color:#2563eb;cursor:pointer">+ Thêm topic</button>
+  </div>
+  <div id="ch-topic-list" style="display:flex;flex-direction:column;gap:6px"></div>
+</div>
+
 <div class="modal-btns">
 <button id="btn-ch-del" onclick="deleteChannel()" style="display:none">Xóa</button>
 <button class="btn-ok" onclick="saveTgSettings()">Lưu</button>
@@ -1722,31 +1732,27 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
   <h2 style="margin-bottom:1rem">🗑️ Dọn bài trong topic</h2>
 
   <div style="margin-bottom:.75rem">
-    <label style="font-size:12px;color:#666;display:block;margin-bottom:4px">Kênh/Group đích (username hoặc ID)</label>
-    <input id="cu-channel" type="text" placeholder="@mygroup hoặc -1001234567890"
-      style="width:100%;padding:8px;border:1px solid #d0d0c8;border-radius:8px;font-size:13px">
+    <label style="font-size:12px;color:#666;display:block;margin-bottom:4px">Kênh/Group đích</label>
+    <select id="cu-channel"
+      style="width:100%;padding:8px;border:1px solid #d0d0c8;border-radius:8px;font-size:13px;background:#fff"
+      onchange="cuUpdateTopicDd()">
+      <option value="">— Chọn kênh/group —</option>
+    </select>
   </div>
 
   <div style="display:flex;gap:8px;margin-bottom:.75rem">
     <div style="flex:1">
-      <label style="font-size:12px;color:#666;display:block;margin-bottom:4px">Topic ID</label>
-      <input id="cu-topic" type="text" placeholder="123456"
-        style="width:100%;padding:8px;border:1px solid #d0d0c8;border-radius:8px;font-size:13px">
+      <label style="font-size:12px;color:#666;display:block;margin-bottom:4px">Topic</label>
+      <select id="cu-topic"
+        style="width:100%;padding:8px;border:1px solid #d0d0c8;border-radius:8px;font-size:13px;background:#fff">
+        <option value="">— Chọn topic —</option>
+      </select>
     </div>
     <div style="width:130px">
       <label style="font-size:12px;color:#666;display:block;margin-bottom:4px">Số bài xóa</label>
       <input id="cu-count" type="text" placeholder="100 hoặc All"
         style="width:100%;padding:8px;border:1px solid #d0d0c8;border-radius:8px;font-size:13px">
     </div>
-  </div>
-
-  <!-- Danh sách topic đã lưu -->
-  <div style="margin-bottom:.75rem">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-      <label style="font-size:12px;color:#666;font-weight:600">📌 Topic đã lưu</label>
-      <button onclick="cuSaveCurrentTopic()" style="font-size:11px;padding:3px 10px;border:1px solid #d0d0c8;border-radius:6px;background:#fff;cursor:pointer">+ Lưu topic hiện tại</button>
-    </div>
-    <div id="cu-saved-list" style="max-height:160px;overflow-y:auto;border:1px solid #e0e0d8;border-radius:8px;padding:4px"></div>
   </div>
 
   <div id="cu-status" style="font-size:13px;color:#555;min-height:20px;margin-bottom:.5rem"></div>
@@ -1760,7 +1766,6 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
   </div>
 </div>
 </div>
-
 <div class="modal-bg" id="read-all-modal" style="z-index:300">
 <div class="modal" style="width:460px;text-align:center">
   <h2 id="ra-title" style="margin-bottom:12px">📚 Đang đọc toàn bộ nguồn...</h2>
@@ -1971,7 +1976,6 @@ function renderFeedDestList(savedDests){
     const list=document.getElementById('feed-dest-list');
     if(!tgChannels.length){wrap.style.display='none';return;}
     wrap.style.display='block';
-    // savedDests là array {ch_idx, topic_ids} hoặc legacy array of numbers
     const destMap={};
     if(savedDests){
         savedDests.forEach(d=>{
@@ -1979,25 +1983,57 @@ function renderFeedDestList(savedDests){
             else destMap[d.ch_idx]={checked:true,topic_ids:(d.topic_ids||'')};
         });
     }
-    list.innerHTML=tgChannels.map((ch,idx)=>{
-        const d=destMap[idx]||{checked:false,topic_ids:''};
+    list.innerHTML=tgChannels.map((ch,i)=>{
+        const d=destMap[i]||{checked:false,topic_ids:''};
         const isGroup=ch.is_group;
-        return `<div style="padding:7px 10px;border-bottom:1px solid #f0f0e8">
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
-                <input type="checkbox" class="feed-dest-cb" data-idx="${idx}" ${d.checked?'checked':''} style="width:15px;height:15px">
-                <span style="font-weight:500">${ch.name}</span>
-                <span style="color:#aaa;font-size:11px">${isGroup?'Group':'Channel'} · ${ch.username}</span>
-            </label>
-            ${isGroup?`<div style="margin-top:5px;padding-left:23px;display:flex;align-items:center;gap:6px">
-                <span style="font-size:11px;color:#555;white-space:nowrap">Topic IDs:</span>
-                <input type="text" class="feed-dest-topics" data-idx="${idx}" value="${d.topic_ids||''}"
-                    placeholder="VD: 123, 456 — để trống = gửi vào group (không topic)"
-                    style="flex:1;padding:4px 7px;border:1px solid #d0d0c8;border-radius:6px;font-size:12px">
-            </div>`:''}
-        </div>`;
+        const topics=ch.topics||[];
+        const hasTopics=topics.length>0;
+        const topicOpts=topics.map(t=>'<option value="'+t.id+'">'+t.name+' ('+t.id+')</option>').join('');
+        let topicSection='';
+        if(isGroup){
+            topicSection='<div style="margin-top:6px;padding-left:23px">'
+                +'<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">'
+                +'<span style="font-size:11px;color:#555;white-space:nowrap;flex-shrink:0">Topics đã chọn:</span>'
+                +'<input type="text" class="feed-dest-topics" data-idx="'+i+'" value="'+(d.topic_ids||'')+'"'
+                +' placeholder="Để trống = gửi vào group (không topic)"'
+                +' style="flex:1;padding:4px 7px;border:1px solid #d0d0c8;border-radius:6px;font-size:12px">'
+                +'</div>';
+            if(hasTopics){
+                topicSection+='<div style="display:flex;align-items:center;gap:6px">'
+                    +'<select class="feed-dest-dd" data-idx="'+i+'"'
+                    +' style="flex:1;padding:4px 7px;border:1px solid #d0d0c8;border-radius:6px;font-size:12px;color:#555">'
+                    +'<option value="">— Chọn topic để thêm —</option>'+topicOpts
+                    +'</select>'
+                    +'<button type="button" onclick="feedAddTopicFromDd('+i+')"'
+                    +' style="padding:4px 12px;border:1px solid #2563eb;border-radius:6px;background:#eff6ff;color:#2563eb;font-size:15px;font-weight:700;cursor:pointer;flex-shrink:0"'
+                    +' title="Thêm vào danh sách">+</button>'
+                    +'</div>';
+            } else {
+                topicSection+='<span style="font-size:11px;color:#aaa">Chưa có topic — vào Quản lý Kênh để thêm</span>';
+            }
+            topicSection+='</div>';
+        }
+        return '<div style="padding:7px 10px;border-bottom:1px solid #f0f0e8">'
+            +'<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">'
+            +'<input type="checkbox" class="feed-dest-cb" data-idx="'+i+'" '+(d.checked?'checked':'')+' style="width:15px;height:15px">'
+            +'<span style="font-weight:500">'+ch.name+'</span>'
+            +'<span style="color:#aaa;font-size:11px">'+(isGroup?'Group':'Channel')+' · '+ch.username+'</span>'
+            +'</label>'
+            +topicSection
+            +'</div>';
     }).join('');
 }
 
+function feedAddTopicFromDd(chIdx){
+    const dd=document.querySelector('.feed-dest-dd[data-idx="'+chIdx+'"]');
+    const input=document.querySelector('.feed-dest-topics[data-idx="'+chIdx+'"]');
+    if(!dd||!input||!dd.value) return;
+    const cur=input.value.trim();
+    const parts=cur?cur.split(',').map(s=>s.trim()).filter(Boolean):[];
+    if(!parts.includes(dd.value)){parts.push(dd.value);}
+    input.value=parts.join(', ');
+    dd.value='';
+}
 function getFeedDests(){
     const results=[];
     document.querySelectorAll('.feed-dest-cb:checked').forEach(cb=>{
@@ -2022,6 +2058,43 @@ function renderChannelManager(){
     else loadChannelToForm(-1);
 }
 
+function toggleTopicSection(){
+    const isGroup=document.getElementById('ch-is-group').checked;
+    document.getElementById('ch-topic-section').style.display=isGroup?'':'none';
+}
+
+function chAddTopicRow(topicId='', topicName=''){
+    const list=document.getElementById('ch-topic-list');
+    const row=document.createElement('div');
+    row.className='ch-topic-row';
+    row.style.cssText='display:flex;align-items:center;gap:6px';
+    row.innerHTML=`
+        <input type="text" placeholder="Topic ID" value="${topicId}"
+            style="width:90px;padding:5px 7px;border:1px solid #d0d0c8;border-radius:6px;font-size:12px" class="ch-topic-id">
+        <input type="text" placeholder="Tên topic (VD: Âm nhạc)" value="${topicName}"
+            style="flex:1;padding:5px 7px;border:1px solid #d0d0c8;border-radius:6px;font-size:12px" class="ch-topic-name">
+        <span onclick="chDelTopicRow(this)" style="color:#ef4444;cursor:pointer;font-size:18px;line-height:1;flex-shrink:0" title="Xóa">×</span>`;
+    list.appendChild(row);
+}
+
+function chDelTopicRow(btn){
+    const row=btn.closest('.ch-topic-row');
+    const name=row.querySelector('.ch-topic-name').value||row.querySelector('.ch-topic-id').value||'topic này';
+    if(!confirm('Xóa "'+name+'" khỏi danh sách?')) return;
+    row.remove();
+}
+
+function chGetTopics(){
+    const rows=document.querySelectorAll('.ch-topic-row');
+    const result=[];
+    rows.forEach(r=>{
+        const id=r.querySelector('.ch-topic-id').value.trim();
+        const name=r.querySelector('.ch-topic-name').value.trim();
+        if(id) result.push({id,name:name||id});
+    });
+    return result;
+}
+
 function loadChannelToForm(idx){
     selectedChannelIndex=parseInt(idx);
     if(selectedChannelIndex>=0&&tgChannels[selectedChannelIndex]){
@@ -2030,11 +2103,17 @@ function loadChannelToForm(idx){
         document.getElementById('ch-name').value=ch.name||'';
         document.getElementById('ch-is-group').checked=ch.is_group===true;
         document.getElementById('btn-ch-del').style.display='inline-block';
+        // Load topics
+        document.getElementById('ch-topic-list').innerHTML='';
+        (ch.topics||[]).forEach(t=>chAddTopicRow(t.id,t.name));
+        toggleTopicSection();
     } else {
         document.getElementById('ch-username').value='';
         document.getElementById('ch-name').value='';
         document.getElementById('ch-is-group').checked=false;
         document.getElementById('btn-ch-del').style.display='none';
+        document.getElementById('ch-topic-list').innerHTML='';
+        toggleTopicSection();
     }
 }
 
@@ -2045,7 +2124,8 @@ function saveTgSettings(){
     const normUsername=(!username.startsWith('@')&&!username.startsWith('-')&&!/^\d/.test(username))?'@'+username:username;
     // Dùng checkbox thay vì auto-detect — cho phép @username cũng là group
     const is_group=document.getElementById('ch-is-group').checked;
-    const chObj={username:normUsername,name,is_group};
+    const topics=is_group?chGetTopics():[];
+    const chObj={username:normUsername,name,is_group,topics};
     if(selectedChannelIndex>=0){
         tgChannels[selectedChannelIndex]=chObj;
     } else {
@@ -2561,7 +2641,16 @@ async function openBgJobPopup() {
 let _cuRunning = false;
 
 function openCleanupModal() {
-    cuRenderSavedList();
+    // Populate channel dropdown từ tgChannels (chỉ các Group có topics)
+    const chSel = document.getElementById('cu-channel');
+    const prevCh = chSel.value;
+    chSel.innerHTML = '<option value="">— Chọn kênh/group —</option>'
+        + tgChannels.filter(ch=>ch.is_group).map((ch,i)=>{
+            const realIdx = tgChannels.indexOf(ch);
+            return '<option value="'+ch.username+'" data-idx="'+realIdx+'">'+ch.name+' ('+ch.username+')</option>';
+        }).join('');
+    if(prevCh) chSel.value = prevCh;
+    cuUpdateTopicDd();
     document.getElementById('cu-status').textContent = '';
     document.getElementById('cu-bar-wrap').style.display = 'none';
     document.getElementById('cu-bar').style.width = '0%';
@@ -2569,69 +2658,29 @@ function openCleanupModal() {
     document.getElementById('cleanup-modal').classList.add('open');
 }
 
+function cuUpdateTopicDd() {
+    const chSel   = document.getElementById('cu-channel');
+    const topicSel= document.getElementById('cu-topic');
+    const selOpt  = chSel.options[chSel.selectedIndex];
+    const chIdx   = selOpt ? parseInt(selOpt.dataset.idx) : -1;
+    const ch      = (chIdx >= 0) ? tgChannels[chIdx] : null;
+    const topics  = (ch && ch.topics) ? ch.topics : [];
+    topicSel.innerHTML = '<option value="">— Chọn topic —</option>'
+        + topics.map(t=>'<option value="'+t.id+'">'+t.name+' ('+t.id+')</option>').join('');
+}
+
 function closeCleanupModal() {
     document.getElementById('cleanup-modal').classList.remove('open');
 }
 
-function cuGetSavedTopics() {
-    try { return JSON.parse(localStorage.getItem('cu_saved_topics') || '[]'); }
-    catch(e) { return []; }
-}
 
 function cuSaveTopics(list) {
     localStorage.setItem('cu_saved_topics', JSON.stringify(list));
 }
 
-function cuRenderSavedList() {
-    const list = cuGetSavedTopics();
-    const el = document.getElementById('cu-saved-list');
-    if (!list.length) {
-        el.innerHTML = '<div style="padding:8px;color:#aaa;font-size:12px;text-align:center">Chưa có topic nào được lưu</div>';
-        return;
-    }
-    el.innerHTML = list.map((t, i) => `
-        <div style="display:flex;align-items:center;gap:6px;padding:5px 8px;border-bottom:1px solid #f0f0e8;font-size:12px">
-            <span style="flex:1;cursor:pointer;color:#2563eb" onclick="cuLoadTopic(${i})" title="Nhấn để điền vào form">
-                <b>${t.channel}</b> › topic ${t.topic}
-                <span style="color:#aaa;margin-left:4px">${t.label||''}</span>
-            </span>
-            <span style="color:#aaa;font-size:11px">${t.autoClean ? '🔄 auto' : ''}</span>
-            <button onclick="cuDeleteTopic(${i})" style="border:none;background:none;cursor:pointer;color:#dc2626;font-size:13px;padding:0 4px">×</button>
-        </div>
-    `).join('');
-}
 
-function cuLoadTopic(idx) {
-    const t = cuGetSavedTopics()[idx];
-    if (!t) return;
-    document.getElementById('cu-channel').value = t.channel || '';
-    document.getElementById('cu-topic').value   = t.topic   || '';
-    document.getElementById('cu-count').value   = t.count   || '100';
-}
 
-function cuSaveCurrentTopic() {
-    const channel = document.getElementById('cu-channel').value.trim();
-    const topic   = document.getElementById('cu-topic').value.trim();
-    const count   = document.getElementById('cu-count').value.trim() || '100';
-    if (!channel || !topic) { showToastMsg('⚠️ Nhập kênh và topic ID trước'); return; }
-    const label = prompt('Tên gợi nhớ cho topic này (để trống nếu không cần):', '') || '';
-    const list = cuGetSavedTopics();
-    // Tránh lưu trùng
-    if (list.find(t => t.channel === channel && t.topic === topic)) {
-        showToastMsg('Topic này đã được lưu rồi'); return;
-    }
-    list.push({ channel, topic, count, label });
-    cuSaveTopics(list);
-    cuRenderSavedList();
-    showToastMsg('✅ Đã lưu topic');
-}
 
-function cuDeleteTopic(idx) {
-    const list = cuGetSavedTopics();
-    list.splice(idx, 1);
-    cuSaveTopics(list);
-    cuRenderSavedList();
-}
 
 let _cuPollTimer = null;
 

@@ -262,11 +262,194 @@ APP_API_KEY  = os.environ.get('APP_API_KEY', '').strip()   # dùng cho API calls
 # Đặt ERROR_NOTIFY_CHAT trong Render env — ví dụ: '123456789' (user ID của mày)
 ERROR_NOTIFY_CHAT = os.environ.get('ERROR_NOTIFY_CHAT', '').strip()
 
+# Bot Telegram riêng để nhận cảnh báo (có sound notification)
+# Tạo bot qua @BotFather → lấy token → khai báo ERROR_BOT_TOKEN trong Render env
+ERROR_BOT_TOKEN = os.environ.get('ERROR_BOT_TOKEN', '').strip()
+
+# Thời điểm khởi động server — dùng cho uptime
+_start_time = time.time()
+
 # Tracking lỗi feed — tránh spam notification
 _feed_errors      = {}   # {url: {'count': int, 'last_notify': float}}
 _feed_error_lock  = threading.Lock()
 _ERROR_THRESHOLD  = 3    # Báo sau 3 lần lỗi liên tiếp
 _NOTIFY_COOLDOWN  = 3600 # Không spam — tối thiểu 1 tiếng/lần
+
+# ===================== TELEGRAM BOT (Error Notification + Check System) =====================
+
+def _bot_send(text: str, chat_id: str = None, reply_markup: dict = None, parse_mode: str = 'HTML'):
+    """Gửi tin qua Bot API — không dùng Telethon, dùng HTTP thuần."""
+    cid = chat_id or ERROR_NOTIFY_CHAT
+    if not ERROR_BOT_TOKEN or not cid:
+        return False
+    try:
+        payload = {'chat_id': cid, 'text': text, 'parse_mode': parse_mode}
+        if reply_markup:
+            payload['reply_markup'] = json.dumps(reply_markup)
+        data = json.dumps(payload).encode('utf-8')
+        req  = urllib.request.Request(
+            f'https://api.telegram.org/bot{ERROR_BOT_TOKEN}/sendMessage',
+            data=data,
+            headers={'Content-Type': 'application/json'},
+            method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read())
+            return result.get('ok', False)
+    except Exception as e:
+        print(f'[Bot] Gửi thất bại: {e}')
+        return False
+
+def _bot_answer_callback(callback_query_id: str, text: str = ''):
+    """Answer callback query để Telegram biết bot đã xử lý."""
+    if not ERROR_BOT_TOKEN:
+        return
+    try:
+        payload = json.dumps({'callback_query_id': callback_query_id, 'text': text}).encode('utf-8')
+        req = urllib.request.Request(
+            f'https://api.telegram.org/bot{ERROR_BOT_TOKEN}/answerCallbackQuery',
+            data=payload, headers={'Content-Type': 'application/json'}, method='POST'
+        )
+        urllib.request.urlopen(req, timeout=5)
+    except Exception:
+        pass
+
+def _bot_get_system_status() -> str:
+    """Tạo message status hệ thống đầy đủ."""
+    now = time.time()
+    uptime_sec = int(now - _start_time)
+    h, m = divmod(uptime_sec // 60, 60)
+    d, h = divmod(h, 24)
+    uptime_str = f'{d}d {h}h {m}m' if d else f'{h}h {m}m'
+
+    # Feeds
+    with lock:
+        total_feeds = len(watched_urls)
+        tg_feeds  = sum(1 for u in watched_urls if is_tg_source(u.get('url', '')))
+        rss_feeds = total_feeds - tg_feeds
+
+    # Jobs đang chạy
+    with _read_all_job_lock:
+        running_jobs = [(v['name'], v['done'], v['total'])
+                        for v in _read_all_jobs.values() if v.get('status') == 'running']
+
+    # Redis
+    redis_ok = False
+    try:
+        if _deduplicator:
+            _deduplicator.r.ping()
+            redis_ok = True
+    except Exception:
+        pass
+
+    # Forward counts
+    with _fwd_count_lock:
+        total_fwd = sum(_fwd_counts.values())
+
+    lines = [
+        '📊 <b>RSS Reader — System Status</b>',
+        '',
+        f'🕐 <b>Uptime:</b> {uptime_str}',
+        f'🔗 <b>Telethon:</b> {"✅ Đã kết nối" if (TELETHON_AVAILABLE and tg_client is not None) else "❌ Chưa kết nối"}',
+        f'🗄 <b>Redis (dedup):</b> {"✅ OK" if redis_ok else "❌ Không kết nối được"}',
+        f'🔄 <b>Auto-forward:</b> {"✅ Bật" if auto_fwd_enabled else "⏸ Tắt"}',
+        '',
+        f'📋 <b>Feeds:</b> {total_feeds} tổng ({rss_feeds} RSS + {tg_feeds} TG)',
+        f'📤 <b>Đã forward:</b> {total_fwd} bài (từ khi khởi động)',
+        f'📡 <b>Kênh đích:</b> {len(tg_channels)} kênh',
+    ]
+
+    if running_jobs:
+        lines.append('')
+        lines.append(f'⚙️ <b>Đang chạy {len(running_jobs)} job:</b>')
+        for name, done, total in running_jobs:
+            pct = f'{round(done/total*100)}%' if total else '?%'
+            lines.append(f'  • {name}: {done}/{total} ({pct})')
+
+    # Feeds có lỗi gần đây
+    with _feed_error_lock:
+        err_feeds = [(url, rec) for url, rec in _feed_errors.items()
+                     if rec.get('count', 0) > 0 or rec.get('last_notify', 0) > 0]
+    if err_feeds:
+        lines.append('')
+        lines.append(f'⚠️ <b>Feeds có lỗi gần đây:</b>')
+        with lock:
+            url_to_name = {u['url']: u.get('name', u['url']) for u in watched_urls}
+        for url, rec in err_feeds[:5]:
+            name = url_to_name.get(url, url)[:30]
+            cnt  = rec.get('count', 0)
+            last = rec.get('last_notify', 0)
+            last_str = f'{int((now-last)//60)}p trước' if last else 'chưa báo'
+            lines.append(f'  • {name} (lỗi: {cnt}, báo: {last_str})')
+
+    return '\n'.join(lines)
+
+_CHECK_KEYBOARD = {
+    'inline_keyboard': [[
+        {'text': '🔍 Check system', 'callback_data': 'check_system'},
+        {'text': '🔕 Tắt cảnh báo tạm', 'callback_data': 'mute_1h'},
+    ]]
+}
+
+# Mute notification tạm thời
+_bot_muted_until = 0.0
+_bot_mute_lock   = threading.Lock()
+
+def _bot_is_muted() -> bool:
+    with _bot_mute_lock:
+        return time.time() < _bot_muted_until
+
+def _bot_poll_loop():
+    """Long-polling Bot API — chạy trên thread riêng, nhận lệnh từ Telegram."""
+    if not ERROR_BOT_TOKEN:
+        return
+    print('[Bot] Bắt đầu polling Telegram Bot API...')
+    offset = 0
+    while True:
+        try:
+            url = (f'https://api.telegram.org/bot{ERROR_BOT_TOKEN}/getUpdates'
+                   f'?offset={offset}&timeout=30&allowed_updates=["message","callback_query"]')
+            req = urllib.request.Request(url, method='GET')
+            with urllib.request.urlopen(req, timeout=35) as resp:
+                data = json.loads(resp.read())
+            if not data.get('ok'):
+                time.sleep(5); continue
+
+            for upd in data.get('result', []):
+                offset = upd['update_id'] + 1
+                # Xử lý callback_query (nút bấm)
+                if 'callback_query' in upd:
+                    cq     = upd['callback_query']
+                    cid    = str(cq['message']['chat']['id'])
+                    cqid   = cq['id']
+                    action = cq.get('data', '')
+                    if action == 'check_system':
+                        _bot_answer_callback(cqid, '🔍 Đang kiểm tra...')
+                        _bot_send(_bot_get_system_status(), chat_id=cid,
+                                  reply_markup=_CHECK_KEYBOARD)
+                    elif action == 'mute_1h':
+                        with _bot_mute_lock:
+                            global _bot_muted_until
+                            _bot_muted_until = time.time() + 3600
+                        _bot_answer_callback(cqid, '🔕 Đã tắt cảnh báo 1 tiếng')
+                        _bot_send('🔕 Cảnh báo lỗi đã tắt trong <b>1 tiếng</b>.\nDùng /start để bật lại sớm hơn.', chat_id=cid, reply_markup=_CHECK_KEYBOARD)
+
+
+
+
+                # Xử lý message text
+                elif 'message' in upd:
+                    msg  = upd['message']
+                    cid  = str(msg['chat']['id'])
+                    text = msg.get('text', '')
+                    if text in ('/start', '/status', '/check'):
+                        # Reset mute nếu có
+                        with _bot_mute_lock:
+                            _bot_muted_until = 0.0
+                        _bot_send('👋 <b>RSS Reader Bot</b> sẵn sàng! ' 'Tao sẽ thông báo khi có feed lỗi hoặc forward thất bại. ' 'Nhấn nút bên dưới để kiểm tra trạng thái hệ thống:', chat_id=cid, reply_markup=_CHECK_KEYBOARD)
+        except Exception as e:
+            print(f'[Bot] Poll lỗi: {e}')
+            time.sleep(10)
 
 def _notify_error(msg: str, feed_url: str = '', is_test: bool = False):
     """
@@ -277,11 +460,21 @@ def _notify_error(msg: str, feed_url: str = '', is_test: bool = False):
     # 1. UI banner — luôn broadcast
     broadcast({'type': 'error_alert', 'msg': msg, 'url': feed_url, 'ts': time.time()})
 
-    # 2. Telegram — chỉ nếu có chat ID và Telethon đã kết nối
-    if not ERROR_NOTIFY_CHAT or not TELETHON_AVAILABLE or tg_client is None:
-        return
+    # 2. Telegram — ưu tiên Bot API, fallback Telethon
     if is_test:
-        _tg_notify_send(f'🔔 Test thông báo\n{msg}')
+        test_text = '🔔 <b>Test thông báo RSS Reader</b>\n\nHệ thống hoạt động bình thường ✅'
+        if ERROR_BOT_TOKEN and ERROR_NOTIFY_CHAT:
+            ok = _bot_send(test_text, reply_markup=_CHECK_KEYBOARD)
+        else:
+            ok = False
+        if not ok:
+            _tg_notify_send(f'🔔 Test thông báo\n{msg}')
+        return
+
+    if not ERROR_NOTIFY_CHAT:
+        return
+    if _bot_is_muted():
+        print(f'[Notify] Muted — bỏ qua: {msg[:60]}')
         return
 
     now = time.time()
@@ -296,7 +489,15 @@ def _notify_error(msg: str, feed_url: str = '', is_test: bool = False):
         rec['last_notify'] = now
         rec['count'] = 0
 
-    _tg_notify_send(msg)
+    # Gửi qua Bot API (có sound) — fallback Telethon nếu chưa cấu hình bot
+    def _do_send():
+        err_text = f'⚠️ <b>RSS Reader — Cảnh báo lỗi</b>\n\n{msg}'
+        sent = False
+        if ERROR_BOT_TOKEN:
+            sent = _bot_send(err_text, reply_markup=_CHECK_KEYBOARD)
+        if not sent:
+            _tg_notify_send(msg)
+    _thread_pool.submit(_do_send)
 
 def _notify_recover(feed_url: str, feed_name: str):
     """Báo khi feed hoạt động trở lại sau khi đã có lỗi."""
@@ -306,7 +507,14 @@ def _notify_recover(feed_url: str, feed_name: str):
             return  # chưa bao giờ báo lỗi → không cần báo recover
         _feed_errors[feed_url] = {'count': 0, 'last_notify': 0}
     broadcast({'type': 'error_recover', 'url': feed_url})
-    _tg_notify_send(f'✅ Feed hoạt động trở lại: {feed_name}')
+    def _do_recover():
+        text = f'✅ <b>Feed hoạt động trở lại</b>\n\n{feed_name}'
+        sent = False
+        if ERROR_BOT_TOKEN:
+            sent = _bot_send(text, reply_markup=_CHECK_KEYBOARD)
+        if not sent:
+            _tg_notify_send(f'✅ Feed hoạt động trở lại: {feed_name}')
+    _thread_pool.submit(_do_recover)
 
 def _tg_notify_send(text: str):
     """Gửi text tới ERROR_NOTIFY_CHAT — chạy trên thread riêng, không block poller."""
@@ -4815,6 +5023,13 @@ if __name__ == '__main__':
 
     _pipeline.start()
     print('[i] BatchPipeline: OK')
+
+    # Khởi động Telegram Bot polling thread
+    if ERROR_BOT_TOKEN:
+        threading.Thread(target=_bot_poll_loop, daemon=True, name='TGBot-Poll').start()
+        print(f'[Bot] ✅ Telegram Bot polling bắt đầu')
+    else:
+        print('[Bot] ERROR_BOT_TOKEN chưa cấu hình — bot notification tắt')
 
     # Khởi động asyncio loop cho Telethon trên thread riêng
     if TELETHON_AVAILABLE:

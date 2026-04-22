@@ -1809,6 +1809,19 @@
         }
       ],
       "history_limit": 5
+    },
+    {
+      "url": "https://t.me/instrumentalmusic",
+      "name": "Instrumental Music",
+      "show_link": true,
+      "auto_fwd": true,
+      "destinations": [
+        {
+          "ch_idx": 3,
+          "topic_ids": "33142"
+        }
+      ],
+      "history_limit": 5
     }
   ],
   "auto_fwd": true,

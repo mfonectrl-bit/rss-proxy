@@ -1166,19 +1166,6 @@
       "history_limit": 5
     },
     {
-      "url": "https://t.me/verge",
-      "name": "The Verge",
-      "show_link": true,
-      "auto_fwd": true,
-      "destinations": [
-        {
-          "ch_idx": 3,
-          "topic_ids": "7"
-        }
-      ],
-      "history_limit": 5
-    },
-    {
       "url": "https://t.me/perplexity",
       "name": "Discover • Tech News",
       "show_link": true,

@@ -93,7 +93,7 @@
       "destinations": [
         {
           "ch_idx": 3,
-          "topic_ids": "43910"
+          "topic_ids": ""
         }
       ],
       "history_limit": 1

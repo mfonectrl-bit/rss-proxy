@@ -244,6 +244,10 @@ _read_all_job_lock = threading.Lock()
 _fwd_counts    = {}   # {url: int}
 _fwd_count_lock = threading.Lock()
 
+# Dedup per-send: tránh gửi trùng khi nhiều job song song cùng forward 1 guid tới cùng dest
+_fwd_sent_keys = set()   # {guid|dest|topic_id}
+_fwd_sent_lock = threading.Lock()
+
 # --- CẤU HÌNH ---
 POLL_INTERVAL    = 90
 HTTP_PORT = int(os.environ.get("PORT", 8765))
@@ -3639,29 +3643,31 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
 
             if group_msgs:
                 media_list = [m.media for m in group_msgs[:10]]
-                # Telegram giới hạn caption kèm media tối đa 1024 ký tự hiển thị (sau strip HTML)
-                caption_plain_len = len(re.sub(r'<[^>]+>', '', caption))
-                if caption_plain_len <= 1024:
-                    if len(media_list) == 1:
+                if len(media_list) == 1:
+                    # Tin đơn: gắn caption vào media như cũ
+                    caption_plain_len = len(re.sub(r'<[^>]+>', '', caption))
+                    if caption_plain_len <= 1024:
                         await tg_client.send_file(dest, media_list[0], caption=caption,
                                                   parse_mode='html', reply_to=thread_reply,
                                                   link_preview=show_preview)
                     else:
-                        await tg_client.send_file(dest, media_list, caption=caption,
-                                                  parse_mode='html', reply_to=thread_reply,
-                                                  link_preview=show_preview)
-                else:
-                    # Caption quá dài — gửi media không caption, reply text riêng
-                    if len(media_list) == 1:
                         sent = await tg_client.send_file(dest, media_list[0], caption='',
                                                          parse_mode='html', reply_to=thread_reply)
-                    else:
-                        sent = await tg_client.send_file(dest, media_list, caption='',
-                                                         parse_mode='html', reply_to=thread_reply)
-                    reply_to = sent.id if not isinstance(sent, list) else sent[0].id
+                        reply_to_id = sent.id if not isinstance(sent, list) else sent[0].id
+                        for chunk in _split_text(caption, 4096):
+                            await tg_client.send_message(dest, chunk, parse_mode='html',
+                                                         reply_to=reply_to_id, link_preview=show_preview)
+                else:
+                    # Album nhiều file: gửi caption TEXT TRƯỚC, rồi gửi album không caption
+                    # → đảm bảo thứ tự: text → album, không bị tách xen kẽ
+                    txt_msg = None
                     for chunk in _split_text(caption, 4096):
-                        await tg_client.send_message(dest, chunk, parse_mode='html',
-                                                     reply_to=reply_to, link_preview=show_preview)
+                        txt_msg = await tg_client.send_message(dest, chunk, parse_mode='html',
+                                                               reply_to=thread_reply, link_preview=show_preview)
+                    # Album reply vào tin text vừa gửi (hoặc topic nếu không có caption)
+                    album_reply = txt_msg.id if txt_msg else thread_reply
+                    await tg_client.send_file(dest, media_list, caption='',
+                                              reply_to=album_reply)
                 return True
             # Không lấy được media → fallback text
             for chunk in _split_text(caption, 4096):
@@ -3762,9 +3768,17 @@ def _do_forward(processed, category, url):
                 # Chuyển <br> → \n trước, rồi strip các HTML tag còn lại
                 # (strip_html thay tag bằng space nên phải xử lý <br> riêng trước)
                 desc_raw   = it.get('desc', '') or ''
-                desc_plain = re.sub(r'<br\s*/?>', '\n', desc_raw, flags=re.I)
-                desc_plain = re.sub(r'<[^>]+>', '', desc_plain).strip()
-                caption    = desc_plain
+                # Giữ nguyên newline gốc — không strip, không thêm/bớt \n
+                if '<br' not in desc_raw.lower():
+                    # Plain text từ TG: chỉ strip HTML tag còn sót, giữ \n nguyên
+                    desc_plain = re.sub(r'<[^>]+>', '', desc_raw)
+                else:
+                    # RSS có <br>: convert về \n
+                    desc_plain = re.sub(r'(<br\s*/?>){2,}', '\n\n', desc_raw, flags=re.I)
+                    desc_plain = re.sub(r'<br\s*/?>', '\n', desc_plain, flags=re.I)
+                    desc_plain = re.sub(r'<[^>]+>', '', desc_plain)
+                # Chỉ strip trailing whitespace cuối cùng, không strip newline đầu nội dung
+                caption    = desc_plain.rstrip()
                 # desc_has_link: chỉ check https link trong nội dung gốc, bỏ qua t.me
                 desc_has_link = bool(re.search(r'https?://(?!t\.me)', it.get('desc', '') or ''))
 
@@ -3772,6 +3786,14 @@ def _do_forward(processed, category, url):
                     caption += f'\n\n<a href="{it["link"]}">Xem bài gốc →</a>'
                 if channel_name:
                     caption += f'\n\n<i>{channel_name}</i>'
+
+                # Dedup per guid+dest+topic — tránh gửi trùng khi nhiều job song song
+                _fwd_key = f'{it.get("guid","")}|{dest}|{topic_id}'
+                with _fwd_sent_lock:
+                    if _fwd_key in _fwd_sent_keys:
+                        print(f'[Forward] Skip trùng: {_fwd_key[:80]}')
+                        continue
+                    _fwd_sent_keys.add(_fwd_key)
 
                 acquired = _send_semaphore.acquire(timeout=10)
                 if not acquired:
@@ -3843,6 +3865,7 @@ def _run_read_all_bg(url, feed_cfg):
              current=f'Tìm thấy {total} tin — đã forward {already_done}, còn {remaining} tin cần xử lý...')
 
         done = already_done  # counter bắt đầu từ số đã forward thực sự
+        _sent_groups = set()  # grouped_id đã gửi — tránh gửi album nhiều lần
         for msg in all_msgs:
             if url in _read_all_stop_urls:
                 break
@@ -3853,14 +3876,26 @@ def _run_read_all_bg(url, feed_cfg):
             chat_username = channel.lstrip("@")
             guid  = f"tg_@{chat_username}_{msg.id}"
             link  = f"https://t.me/{chat_username}/{msg.id}"
-            desc  = msg_text.replace("\n", "<br>")
+            desc  = msg_text  # giữ nguyên newline, KHÔNG replace thành <br>
             title = (msg_text[:80] + "...") if len(msg_text) > 80 else (msg_text or f"[Media] @{chat_username}")
             has_media = bool(msg.media)
+            grouped   = getattr(msg, "grouped_id", None)
 
-            # Skip nếu đã forward rồi
+            # Atomic check+add: tránh race condition giữa các job song song
             with lock:
-                if url in known_guids and guid in known_guids[url]:
-                    continue  # không tăng done — đã tính trong already_done
+                if url not in known_guids:
+                    known_guids[url] = set()
+                if guid in known_guids[url]:
+                    continue  # đã forward, bỏ qua
+                # Claim ngay trong lock — job khác sẽ thấy và skip
+                known_guids[url].add(guid)
+
+            # Skip nếu là msg phụ trong album đã được gửi qua msg đầu tiên
+            if grouped and grouped in _sent_groups:
+                # guid đã ghi ở trên, chỉ tăng counter
+                done += 1
+                _upd(done=done, current=title)
+                continue
 
             item = {
                 "guid": guid, "title": title, "desc": desc, "link": link,
@@ -3869,7 +3904,7 @@ def _run_read_all_bg(url, feed_cfg):
                 "show_link": show_link, "feed_url": url,
                 "_tg_has_media": has_media,
                 "_tg_msg_id": msg.id, "_tg_chat": chat_username,
-                "_tg_grouped_id": getattr(msg, "grouped_id", None),
+                "_tg_grouped_id": grouped,
                 "_source": "telethon",
                 "do_translate": do_translate,
             }
@@ -3878,17 +3913,18 @@ def _run_read_all_bg(url, feed_cfg):
                 raw_text = msg_text
                 item["text"] = raw_text
                 translated = _fast_translate(raw_text)
-                item["desc"] = translated.replace("\n", "<br>")
+                # Giữ nguyên newline gốc — không replace thành <br>
+                item["desc"] = translated
                 item["title"] = (translated[:80] + "...") if len(translated) > 80 else translated
                 item["translated"] = True
 
-            # Ghi guid vào known_guids để tránh forward lại
-            with lock:
-                if url not in known_guids:
-                    known_guids[url] = set()
-                known_guids[url].add(guid)
+            # Đánh dấu grouped_id đã xử lý (guid đã được ghi atomic ở trên)
+            if grouped:
+                _sent_groups.add(grouped)
 
             if auto_fwd_enabled and tg_channels:
+                # Đảm bảo feed được đánh dấu ready trước khi _do_forward check
+                _forward_ready_feeds.add(url)
                 _do_forward([item], category, url)
 
             done += 1

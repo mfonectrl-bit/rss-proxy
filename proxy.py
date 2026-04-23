@@ -451,6 +451,19 @@ def _bot_poll_loop():
                         with _bot_mute_lock:
                             _bot_muted_until = 0.0
                         _bot_send('👋 <b>RSS Reader Bot</b> sẵn sàng! ' 'Tao sẽ thông báo khi có feed lỗi hoặc forward thất bại. ' 'Nhấn nút bên dưới để kiểm tra trạng thái hệ thống:', chat_id=cid, reply_markup=_CHECK_KEYBOARD)
+        except urllib.error.HTTPError as e:
+            if e.code == 409:
+                # 409 Conflict: 2 instance đang poll cùng lúc (xảy ra khi Render deploy)
+                # Đợi lâu hơn để instance cũ tắt trước
+                print('[Bot] 409 Conflict — đang chờ instance cũ tắt...')
+                time.sleep(30)
+            elif e.code == 429:
+                # Rate limit
+                print('[Bot] 429 Too Many Requests — chờ 60s')
+                time.sleep(60)
+            else:
+                print(f'[Bot] HTTP lỗi {e.code}: {e}')
+                time.sleep(10)
         except Exception as e:
             print(f'[Bot] Poll lỗi: {e}')
             time.sleep(10)

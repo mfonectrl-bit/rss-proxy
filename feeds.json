@@ -92,7 +92,7 @@
       "auto_fwd": true,
       "destinations": [
         {
-          "ch_idx": 3,
+          "ch_idx": 0,
           "topic_ids": ""
         }
       ],

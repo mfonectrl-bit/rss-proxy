@@ -1848,14 +1848,6 @@
         }
       ],
       "history_limit": 5
-    },
-    {
-      "url": "https://t.me/nda_design_studio",
-      "name": "Houzz",
-      "show_link": true,
-      "auto_fwd": false,
-      "destinations": [],
-      "history_limit": 5
     }
   ],
   "auto_fwd": true,

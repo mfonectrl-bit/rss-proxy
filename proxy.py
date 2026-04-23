@@ -1057,33 +1057,16 @@ def _fast_translate(text):
         placeholders[placeholder] = url
         masked = masked.replace(url, placeholder, 1)
 
-    # Bước 2: Chia text thành các đoạn theo \n, dịch riêng từng đoạn, ghép lại
-    # Cách này đảm bảo 100% giữ nguyên cấu trúc xuống dòng — không dùng NLTOKEN
-    # vì Google/Gemini có thể dịch hoặc bỏ token lạ
-    lines = masked.split('\n')
-    translated_lines = []
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        if not line.strip():
-            # Dòng trắng: giữ nguyên
-            translated_lines.append('')
-            i += 1
-            continue
-        # Gom các dòng liên tiếp không trắng thành 1 đoạn để dịch cùng
-        block = [line]
-        j = i + 1
-        while j < len(lines) and lines[j].strip():
-            block.append(lines[j])
-            j += 1
-        block_text = '\n'.join(block)
-        block_translated, _used_engine = _engine_dispatcher.translate(block_text, preferred=translate_engine)
-        translated_lines.append(block_translated)
-        i = j
+    # Bước 2: Bảo toàn newlines bằng NLTOKEN trước khi dịch
+    NL_TOKEN = '⏎'   # dùng ký tự Unicode đặc biệt — engine không dịch ký tự này
+    masked = masked.replace('\n', NL_TOKEN)
 
-    translated = '\n'.join(translated_lines)
+    translated, _used_engine = _engine_dispatcher.translate(masked, preferred=translate_engine)
 
-    # Bước 3: Khôi phục URLs
+    # Bước 3: Khôi phục newlines
+    translated = translated.replace(NL_TOKEN, '\n')
+
+    # Bước 4: Khôi phục URLs
     for placeholder, url in placeholders.items():
         translated = translated.replace(placeholder, url)
         translated = translated.replace(placeholder.replace('URLTOKEN', ' URLTOKEN ').strip(), url)
@@ -4298,13 +4281,16 @@ def _process_tg_queue():
         for it in new_items:
             feed_cfg_tg = next((u for u in watched_urls if u['url'] == feed_url), {})
             # Khôi phục newline từ <br> trước khi dịch — strip_html thay <br> bằng space
+            # Dùng desc gốc (msg_text có \n) làm input cho translate
+            # desc = msg_text đã có \n thật — không cần xử lý thêm
             _raw_desc = it.get('desc', '') or ''
-            # desc đã là plain text với \n thật — chỉ strip HTML tag còn sót nếu có
             if '<br' in _raw_desc.lower():
+                # Fallback nếu desc vẫn còn <br> cũ
                 _raw_text = re.sub(r'<br\s*/?>', '\n', _raw_desc, flags=re.I)
                 _raw_text = re.sub(r'<[^>]+>', '', _raw_text)
             else:
-                _raw_text = re.sub(r'<[^>]+>', '', _raw_desc)
+                # desc là plain text với \n thật — giữ nguyên, không strip
+                _raw_text = _raw_desc
             _raw_text = _raw_text or it.get('title', '')
             pipeline_item = {
                 'text': _raw_text,

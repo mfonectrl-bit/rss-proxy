@@ -2847,8 +2847,13 @@ function stopReadAll() {
         body: JSON.stringify({url: url || ''})
     }).catch(() => {});
     _stopRaPoll();
+    _stopBgPoll();
     document.getElementById('read-all-modal').classList.remove('open');
-    _updateBgIndicator();
+    // Ẩn indicator ngay lập tức — không đợi server confirm
+    const bgEl = document.getElementById('ra-bg-indicator');
+    if (bgEl) bgEl.style.display = 'none';
+    // Poll lại sau 3s để đồng bộ trạng thái thực từ server
+    setTimeout(_updateBgIndicator, 3000);
 }
 
 // Indicator góc phải — poll tất cả jobs running
@@ -3668,41 +3673,38 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
                             base_text = gm.message
                             break
 
-                # Rebuild caption đầy đủ với text gốc
-                caption_parts = []
-                if base_text:
-                    caption_parts.append(base_text)
-                if show_link and item.get('link'):
-                    caption_parts.append(f'<a href="{item['link']}">Xem bài gốc →</a>')
-                if channel_name:
-                    caption_parts.append(f'<i>{channel_name}</i>')
-                caption = '\n\n'.join(caption_parts)
+                # Dùng caption đã được build bởi caller (_do_forward / _run_read_all_bg / manual forward)
+                # Nếu caption truyền vào rỗng (ví dụ media-only không text), thử lấy base_text
+                if not caption.strip() and base_text:
+                    caption = base_text
 
                 if len(media_list) == 1:
-                    # Tin đơn: gắn caption vào media như cũ
+                    # Tin đơn: gắn caption vào media
                     caption_plain_len = len(re.sub(r'<[^>]+>', '', caption))
+                    # Dùng None thay '' khi caption rỗng — audio/voice không chấp nhận caption=''
+                    caption_val = caption if caption.strip() else None
                     if caption_plain_len <= 1024:
-                        await tg_client.send_file(dest, media_list[0], caption=caption,
+                        await tg_client.send_file(dest, media_list[0], caption=caption_val,
                                                   parse_mode='html', reply_to=thread_reply,
                                                   link_preview=show_preview)
                     else:
-                        sent = await tg_client.send_file(dest, media_list[0], caption='',
-                                                         parse_mode='html', reply_to=thread_reply)
+                        sent = await tg_client.send_file(dest, media_list[0], caption=None,
+                                                         reply_to=thread_reply)
                         reply_to_id = sent.id if not isinstance(sent, list) else sent[0].id
                         for chunk in _split_text(caption, 4096):
                             await tg_client.send_message(dest, chunk, parse_mode='html',
                                                          reply_to=reply_to_id, link_preview=show_preview)
                 else:
-                    # Album nhiều file: gắn caption vào album trực tiếp
-                    # Telegram hỗ trợ caption cho media group — caption hiện dưới album
+                    # Album nhiều file
                     caption_plain_len = len(re.sub(r'<[^>]+>', '', caption))
+                    caption_val = caption if caption.strip() else None
                     if caption_plain_len <= 1024:
-                        await tg_client.send_file(dest, media_list, caption=caption,
+                        await tg_client.send_file(dest, media_list, caption=caption_val,
                                                   parse_mode='html', reply_to=thread_reply,
                                                   link_preview=show_preview)
                     else:
-                        # Caption dài: gửi album trước, rồi text sau (cùng topic, không reply)
-                        await tg_client.send_file(dest, media_list, caption='',
+                        # Caption dài: gửi album trước, rồi text sau
+                        await tg_client.send_file(dest, media_list, caption=None,
                                                   reply_to=thread_reply)
                         for chunk in _split_text(caption, 4096):
                             await tg_client.send_message(dest, chunk, parse_mode='html',

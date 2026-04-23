@@ -829,9 +829,9 @@ class BatchPipeline:
                 if not item.get('category'):
                     item['category'] = item.get('category') or 'Khác'
                 item['text_translated'] = translated
-                desc_html = translated.replace('\n', '<br>')
+                # Giữ \n thật — không convert thành <br>, _do_forward xử lý plain text
                 title     = (translated[:80] + '...') if len(translated) > 80 else translated
-                item['desc']       = desc_html
+                item['desc']       = translated
                 item['title']      = title
                 item['translated'] = should_translate
                 item['show_link']  = item.get('show_link', True)
@@ -3643,6 +3643,31 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
 
             if group_msgs:
                 media_list = [m.media for m in group_msgs[:10]]
+
+                # Build caption chuẩn: ưu tiên text từ msg nguồn (giữ nguyên format gốc)
+                # sau đó thêm Xem bài gốc + channel name
+                # item.desc có thể rỗng nếu msg đầu album là media-only
+                item_desc = item.get('desc', '').strip()
+                if item_desc:
+                    base_text = item_desc
+                else:
+                    # Lấy text từ bất kỳ msg nào trong group có text
+                    base_text = ''
+                    for gm in group_msgs:
+                        if gm and gm.message and gm.message.strip():
+                            base_text = gm.message
+                            break
+
+                # Rebuild caption đầy đủ với text gốc
+                caption_parts = []
+                if base_text:
+                    caption_parts.append(base_text)
+                if show_link and item.get('link'):
+                    caption_parts.append(f'<a href="{item['link']}">Xem bài gốc →</a>')
+                if channel_name:
+                    caption_parts.append(f'<i>{channel_name}</i>')
+                caption = '\n\n'.join(caption_parts)
+
                 if len(media_list) == 1:
                     # Tin đơn: gắn caption vào media như cũ
                     caption_plain_len = len(re.sub(r'<[^>]+>', '', caption))

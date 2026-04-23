@@ -88,7 +88,7 @@
     {
       "url": "@abcdnewstest",
       "name": "ABCD news",
-      "show_link": false,
+      "show_link": true,
       "auto_fwd": true,
       "destinations": [
         {

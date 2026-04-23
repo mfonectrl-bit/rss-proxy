@@ -829,8 +829,7 @@ class BatchPipeline:
                 if not item.get('category'):
                     item['category'] = item.get('category') or 'Khác'
                 item['text_translated'] = translated
-                # Giữ đoạn văn (\n\n) thành <br><br>, xuống dòng đơn thành <br>
-                desc_html = translated.replace('\n\n', '<br><br>').replace('\n', '<br>')
+                desc_html = translated.replace('\n', '<br>')
                 title     = (translated[:80] + '...') if len(translated) > 80 else translated
                 item['desc']       = desc_html
                 item['title']      = title
@@ -3502,8 +3501,8 @@ def process_tg_items(items):
 
         # Re-derive title từ bản dịch
         title_translated = (translated_desc_plain[:80] + '...') if len(translated_desc_plain) > 80 else translated_desc_plain
-        # Convert desc plain đã dịch về dạng HTML với <br>, giữ đoạn văn \n\n → <br><br>
-        desc_translated = translated_desc_plain.replace('\n\n', '<br><br>').replace('\n', '<br>')
+        # Convert desc plain đã dịch về dạng HTML với <br>
+        desc_translated = translated_desc_plain.replace('\n', '<br>')
 
         results[i] = {**it, 'title': title_translated, 'desc': desc_translated, 'translated': True}
 
@@ -3609,7 +3608,7 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
         grouped   = item.get('_tg_grouped_id')
         has_media = item.get('_tg_has_media', False)
         rss_media = item.get('_rss_media_url')
-        # link_preview bật khi desc có bất kỳ https link nào (kể cả t.me) hoặc có link bài gốc
+        # link_preview chỉ bật khi desc gốc có URL — không tính t.me link trong 'Xem bài gốc'
         show_preview = desc_has_link
 
         # reply_to = topic_id nếu gửi vào topic của group, None nếu gửi bình thường
@@ -3780,8 +3779,8 @@ def _do_forward(processed, category, url):
                     desc_plain = re.sub(r'<[^>]+>', '', desc_plain)
                 # Chỉ strip trailing whitespace cuối cùng, không strip newline đầu nội dung
                 caption    = desc_plain.rstrip()
-                # desc_has_link: chỉ check https link thật trong nội dung, bỏ qua t.me
-                desc_has_link = bool(re.search(r'https?://(?!t\.me)', it.get('desc', '') or ''))
+                # desc_has_link: check https link trong nội dung gốc, kể cả t.me
+                desc_has_link = bool(re.search(r'https?://', it.get('desc', '') or ''))
 
                 if show_link and it.get('link'):
                     caption += f'\n\n<a href="{it["link"]}">Xem bài gốc →</a>'
@@ -4816,8 +4815,7 @@ class HttpHandler(BaseHTTPRequestHandler):
                         show_link = it.get('show_link', True)
 
                         desc_raw   = it.get('desc', '') or ''
-                        desc_plain = re.sub(r'(<br\s*/?>){2,}', '\n\n', desc_raw, flags=re.I)
-                        desc_plain = re.sub(r'<br\s*/?>', '\n', desc_plain, flags=re.I)
+                        desc_plain = re.sub(r'<br\s*/?>', '\n', desc_raw, flags=re.I)
                         desc_plain = re.sub(r'<[^>]+>', '', desc_plain).strip()
                         caption    = desc_plain
                         if show_link and it.get('link'):
@@ -4839,8 +4837,8 @@ class HttpHandler(BaseHTTPRequestHandler):
                         else:
                             imgs, _ = extract_media(it.get('desc',''))
                             send_item['_rss_media_url'] = imgs[0] if imgs else None
-                        # desc_has_link: chỉ check https link thật trong nội dung, bỏ qua t.me
-                        desc_has_link = bool(re.search(r'https?://(?!t\.me)', it.get('desc', '') or ''))
+                        # desc_has_link: check https link trong nội dung gốc, kể cả t.me
+                        desc_has_link = bool(re.search(r'https?://', it.get('desc', '') or ''))
                         try:
                             ok = tg_run(_tg_send_item(dest, send_item, caption, topic_id=topic_id, desc_has_link=desc_has_link))
                             all_results.append({'title': it.get('title',''), 'ok': ok, 'error': '' if ok else 'Gửi thất bại'})

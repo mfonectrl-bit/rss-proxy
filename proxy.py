@@ -1337,7 +1337,7 @@ async def _register_handler(channels_list):
         guid     = f'tg_@{chat_username}_{msg.id}'
         link     = f'https://t.me/{chat_username}/{msg.id}'
         msg_text = msg.message or ''  # an toàn khi tin chỉ có media, không có text
-        desc     = msg_text.replace('\n', '<br>')
+        desc     = msg_text  # giữ \n thật — nhất quán với read_all_bg
         title    = (msg_text[:80] + '...') if len(msg_text) > 80 else (msg_text or f'[Media] @{chat_username}')
         pub      = msg.date.isoformat() if msg.date else ''
         has_media = bool(msg.media and isinstance(msg.media, (MessageMediaPhoto, MessageMediaDocument)))
@@ -3658,16 +3658,21 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
                             await tg_client.send_message(dest, chunk, parse_mode='html',
                                                          reply_to=reply_to_id, link_preview=show_preview)
                 else:
-                    # Album nhiều file: gửi caption TEXT TRƯỚC, rồi gửi album không caption
-                    # → đảm bảo thứ tự: text → album, không bị tách xen kẽ
-                    txt_msg = None
-                    for chunk in _split_text(caption, 4096):
-                        txt_msg = await tg_client.send_message(dest, chunk, parse_mode='html',
-                                                               reply_to=thread_reply, link_preview=show_preview)
-                    # Album reply vào tin text vừa gửi (hoặc topic nếu không có caption)
-                    album_reply = txt_msg.id if txt_msg else thread_reply
-                    await tg_client.send_file(dest, media_list, caption='',
-                                              reply_to=album_reply)
+                    # Album nhiều file: gắn caption vào album trực tiếp
+                    # Telegram hỗ trợ caption cho media group — caption hiện dưới album
+                    caption_plain_len = len(re.sub(r'<[^>]+>', '', caption))
+                    if caption_plain_len <= 1024:
+                        await tg_client.send_file(dest, media_list, caption=caption,
+                                                  parse_mode='html', reply_to=thread_reply,
+                                                  link_preview=show_preview)
+                    else:
+                        # Caption dài: gửi album trước, rồi text sau (cùng topic, không reply)
+                        await tg_client.send_file(dest, media_list, caption='',
+                                                  reply_to=thread_reply)
+                        for chunk in _split_text(caption, 4096):
+                            await tg_client.send_message(dest, chunk, parse_mode='html',
+                                                         reply_to=thread_reply,
+                                                         link_preview=show_preview)
                 return True
             # Không lấy được media → fallback text
             for chunk in _split_text(caption, 4096):
@@ -3767,20 +3772,20 @@ def _do_forward(processed, category, url):
             for it in reversed(processed):
                 # Chuyển <br> → \n trước, rồi strip các HTML tag còn lại
                 # (strip_html thay tag bằng space nên phải xử lý <br> riêng trước)
-                desc_raw   = it.get('desc', '') or ''
-                # Giữ nguyên newline gốc — không strip, không thêm/bớt \n
-                if '<br' not in desc_raw.lower():
-                    # Plain text từ TG: chỉ strip HTML tag còn sót, giữ \n nguyên
-                    desc_plain = re.sub(r'<[^>]+>', '', desc_raw)
-                else:
-                    # RSS có <br>: convert về \n
+                desc_raw = it.get('desc', '') or ''
+                # desc luôn là plain text với \n thật (cả TG realtime lẫn read_all)
+                # Chỉ convert <br> nếu là RSS feed còn sót lại
+                if '<br' in desc_raw.lower():
                     desc_plain = re.sub(r'(<br\s*/?>){2,}', '\n\n', desc_raw, flags=re.I)
                     desc_plain = re.sub(r'<br\s*/?>', '\n', desc_plain, flags=re.I)
                     desc_plain = re.sub(r'<[^>]+>', '', desc_plain)
-                # Chỉ strip trailing whitespace cuối cùng, không strip newline đầu nội dung
-                caption    = desc_plain.rstrip()
+                else:
+                    desc_plain = re.sub(r'<[^>]+>', '', desc_raw)
+                # Giữ nguyên format gốc — chỉ bỏ trailing whitespace/newline thừa cuối
+                caption = desc_plain.rstrip()
                 # desc_has_link: chỉ check https link trong nội dung gốc, bỏ qua t.me
-                desc_has_link = bool(re.search(r'https?://(?!t\.me)', it.get('desc', '') or ''))
+                # Bật web preview chỉ khi nội dung GỐC có link ngoài (không tính t.me và link Xem bài gốc)
+                desc_has_link = bool(re.search(r'https?://(?!t\.me)', desc_plain))
 
                 if show_link and it.get('link'):
                     caption += f'\n\n<a href="{it["link"]}">Xem bài gốc →</a>'
@@ -3850,6 +3855,24 @@ def _run_read_all_bg(url, feed_cfg):
 
         all_msgs = tg_run_long(_fetch_all(), timeout=300)
         total = len(all_msgs)
+
+        # Load checkpoint từ Redis nếu có (resume sau crash)
+        if _deduplicator:
+            try:
+                ck_key = f'readall_ckpt:{url}'
+                ck_data = _deduplicator.r.get(ck_key)
+                if ck_data:
+                    ck_guids = set(json.loads(ck_data.decode('utf-8')))
+                    with lock:
+                        if url not in known_guids:
+                            known_guids[url] = set()
+                        before = len(known_guids[url])
+                        known_guids[url].update(ck_guids)
+                        after = len(known_guids[url])
+                    if after > before:
+                        print(f'[ReadAll] Resume từ checkpoint: +{after-before} guids đã có')
+            except Exception as _ck_e:
+                print(f'[ReadAll] Load checkpoint lỗi (bỏ qua): {_ck_e}')
 
         # Snapshot known_guids tại thời điểm bắt đầu để xác định tin nào đã được xử lý
         with lock:
@@ -3929,6 +3952,19 @@ def _run_read_all_bg(url, feed_cfg):
 
             done += 1
             _upd(done=done, current=title)
+
+            # Checkpoint mỗi 20 tin — lưu progress vào Redis để resume sau crash
+            if done % 20 == 0 and _deduplicator:
+                try:
+                    ck_key = f'readall_ckpt:{url}'
+                    with lock:
+                        guids_snapshot = list(known_guids.get(url, set()))
+                    # Lưu dạng JSON vào Redis, TTL 7 ngày
+                    _deduplicator.r.set(ck_key,
+                                        json.dumps(guids_snapshot).encode('utf-8'),
+                                        ex=7*24*3600)
+                except Exception as _ck_e:
+                    pass  # Redis lỗi → bỏ qua, không crash job
 
             waited = 0
             delay = _random.uniform(5, 20)
@@ -4221,8 +4257,13 @@ def _process_tg_queue():
             feed_cfg_tg = next((u for u in watched_urls if u['url'] == feed_url), {})
             # Khôi phục newline từ <br> trước khi dịch — strip_html thay <br> bằng space
             _raw_desc = it.get('desc', '') or ''
-            _raw_text = re.sub(r'<br\s*/?>', '\n', _raw_desc, flags=re.I)
-            _raw_text = re.sub(r'<[^>]+>', '', _raw_text).strip() or it.get('title', '')
+            # desc đã là plain text với \n thật — chỉ strip HTML tag còn sót nếu có
+            if '<br' in _raw_desc.lower():
+                _raw_text = re.sub(r'<br\s*/?>', '\n', _raw_desc, flags=re.I)
+                _raw_text = re.sub(r'<[^>]+>', '', _raw_text)
+            else:
+                _raw_text = re.sub(r'<[^>]+>', '', _raw_desc)
+            _raw_text = _raw_text or it.get('title', '')
             pipeline_item = {
                 'text': _raw_text,
                 'feed_url': feed_url,

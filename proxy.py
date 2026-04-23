@@ -3608,7 +3608,7 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
         grouped   = item.get('_tg_grouped_id')
         has_media = item.get('_tg_has_media', False)
         rss_media = item.get('_rss_media_url')
-        # link_preview chỉ bật khi desc gốc có URL — không tính t.me link trong 'Xem bài gốc'
+        # link_preview bật khi desc có bất kỳ https link nào (kể cả t.me) hoặc có link bài gốc
         show_preview = desc_has_link
 
         # reply_to = topic_id nếu gửi vào topic của group, None nếu gửi bình thường
@@ -3779,8 +3779,10 @@ def _do_forward(processed, category, url):
                     desc_plain = re.sub(r'<[^>]+>', '', desc_plain)
                 # Chỉ strip trailing whitespace cuối cùng, không strip newline đầu nội dung
                 caption    = desc_plain.rstrip()
-                # desc_has_link: chỉ check https link trong nội dung gốc, bỏ qua t.me
-                desc_has_link = bool(re.search(r'https?://(?!t\.me)', it.get('desc', '') or ''))
+                # desc_has_link: bật preview nếu desc có bất kỳ https link nào (kể cả t.me)
+                # hoặc item có link bài gốc — giúp Telegram render web preview đúng như nguồn
+                desc_has_link = (bool(re.search(r'https?://', it.get('desc', '') or ''))
+                                 or bool(it.get('link')))
 
                 if show_link and it.get('link'):
                     caption += f'\n\n<a href="{it["link"]}">Xem bài gốc →</a>'
@@ -4837,8 +4839,10 @@ class HttpHandler(BaseHTTPRequestHandler):
                         else:
                             imgs, _ = extract_media(it.get('desc',''))
                             send_item['_rss_media_url'] = imgs[0] if imgs else None
-                        # desc_has_link: check link thật trong desc, bỏ t.me
-                        desc_has_link = bool(re.search(r'https?://(?!t\.me)', it.get('desc', '') or ''))
+                        # desc_has_link: bật preview nếu desc có bất kỳ https link nào (kể cả t.me)
+                        # hoặc item có link bài gốc
+                        desc_has_link = (bool(re.search(r'https?://', it.get('desc', '') or ''))
+                                         or bool(it.get('link')))
                         try:
                             ok = tg_run(_tg_send_item(dest, send_item, caption, topic_id=topic_id, desc_has_link=desc_has_link))
                             all_results.append({'title': it.get('title',''), 'ok': ok, 'error': '' if ok else 'Gửi thất bại'})

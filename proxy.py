@@ -829,7 +829,8 @@ class BatchPipeline:
                 if not item.get('category'):
                     item['category'] = item.get('category') or 'Khác'
                 item['text_translated'] = translated
-                desc_html = translated.replace('\n', '<br>')
+                # Giữ đoạn văn (\n\n) thành <br><br>, xuống dòng đơn thành <br>
+                desc_html = translated.replace('\n\n', '<br><br>').replace('\n', '<br>')
                 title     = (translated[:80] + '...') if len(translated) > 80 else translated
                 item['desc']       = desc_html
                 item['title']      = title
@@ -3501,8 +3502,8 @@ def process_tg_items(items):
 
         # Re-derive title từ bản dịch
         title_translated = (translated_desc_plain[:80] + '...') if len(translated_desc_plain) > 80 else translated_desc_plain
-        # Convert desc plain đã dịch về dạng HTML với <br>
-        desc_translated = translated_desc_plain.replace('\n', '<br>')
+        # Convert desc plain đã dịch về dạng HTML với <br>, giữ đoạn văn \n\n → <br><br>
+        desc_translated = translated_desc_plain.replace('\n\n', '<br><br>').replace('\n', '<br>')
 
         results[i] = {**it, 'title': title_translated, 'desc': desc_translated, 'translated': True}
 
@@ -4817,7 +4818,8 @@ class HttpHandler(BaseHTTPRequestHandler):
                         show_link = it.get('show_link', True)
 
                         desc_raw   = it.get('desc', '') or ''
-                        desc_plain = re.sub(r'<br\s*/?>', '\n', desc_raw, flags=re.I)
+                        desc_plain = re.sub(r'(<br\s*/?>){2,}', '\n\n', desc_raw, flags=re.I)
+                        desc_plain = re.sub(r'<br\s*/?>', '\n', desc_plain, flags=re.I)
                         desc_plain = re.sub(r'<[^>]+>', '', desc_plain).strip()
                         caption    = desc_plain
                         if show_link and it.get('link'):

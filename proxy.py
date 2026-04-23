@@ -1057,19 +1057,33 @@ def _fast_translate(text):
         placeholders[placeholder] = url
         masked = masked.replace(url, placeholder, 1)
 
-    # Bước 2: Bảo toàn newlines — thay \n bằng placeholder
-    # Google Translate hay gộp dòng, dùng placeholder để giữ nguyên cấu trúc
-    NL_TOKEN = ' NLTOKEN '
-    masked = masked.replace('\n', NL_TOKEN)
+    # Bước 2: Chia text thành các đoạn theo \n, dịch riêng từng đoạn, ghép lại
+    # Cách này đảm bảo 100% giữ nguyên cấu trúc xuống dòng — không dùng NLTOKEN
+    # vì Google/Gemini có thể dịch hoặc bỏ token lạ
+    lines = masked.split('\n')
+    translated_lines = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if not line.strip():
+            # Dòng trắng: giữ nguyên
+            translated_lines.append('')
+            i += 1
+            continue
+        # Gom các dòng liên tiếp không trắng thành 1 đoạn để dịch cùng
+        block = [line]
+        j = i + 1
+        while j < len(lines) and lines[j].strip():
+            block.append(lines[j])
+            j += 1
+        block_text = '\n'.join(block)
+        block_translated, _used_engine = _engine_dispatcher.translate(block_text, preferred=translate_engine)
+        translated_lines.append(block_translated)
+        i = j
 
-    translated, _used_engine = _engine_dispatcher.translate(masked, preferred=translate_engine)
+    translated = '\n'.join(translated_lines)
 
-    # Bước 3: Khôi phục newlines
-    translated = translated.replace(NL_TOKEN, '\n')
-    # Đề phòng engine thêm/bớt space quanh token
-    translated = re.sub(r'\s*NLTOKEN\s*', '\n', translated)
-
-    # Bước 4: Khôi phục URLs
+    # Bước 3: Khôi phục URLs
     for placeholder, url in placeholders.items():
         translated = translated.replace(placeholder, url)
         translated = translated.replace(placeholder.replace('URLTOKEN', ' URLTOKEN ').strip(), url)
@@ -3809,8 +3823,11 @@ def _do_forward(processed, category, url):
                 # Giữ nguyên format gốc — chỉ bỏ trailing whitespace/newline thừa cuối
                 caption = desc_plain.rstrip()
                 # desc_has_link: chỉ check https link trong nội dung gốc, bỏ qua t.me
-                # Bật web preview chỉ khi nội dung GỐC có link ngoài (không tính t.me và link Xem bài gốc)
-                desc_has_link = bool(re.search(r'https?://(?!t\.me)', desc_plain))
+                # Bật web preview chỉ khi nội dung GỐC có external link
+                # Check từ desc_plain (content gốc, không tính Xem bài gốc + channel name)
+                # t.me links không cần preview, nhưng bbc.com, youtube.com... thì có
+                _raw_for_check = it.get('desc', '') or it.get('text', '') or ''
+                desc_has_link = bool(re.search(r'https?://(?!t\.me)', _raw_for_check))
 
                 if show_link and it.get('link'):
                     caption += f'\n\n<a href="{it["link"]}">Xem bài gốc →</a>'

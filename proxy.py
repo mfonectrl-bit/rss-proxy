@@ -3631,19 +3631,23 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
 
         if source == 'telethon' and has_media and msg_id and chat:
             # --- TG nguồn có media: dùng msg.media object trực tiếp ---
-            from telethon.tl.types import MessageMediaWebPage
+            from telethon.tl.types import MessageMediaWebPage, MessageMediaDocument
+            from telethon.tl.types import DocumentAttributeAudio, DocumentAttributeVideo
             async with tg_semaphore:
                 if grouped:
-                    # Lấy ~20 messages gần msg_id để tìm đủ album
-                    # Album Telegram thường nằm trong khoảng nhỏ quanh msg_id
-                    id_range = list(range(max(1, msg_id - 5), msg_id + 15))
+                    # Mở rộng range tìm kiếm: album có thể span rộng quanh msg_id
+                    # msg_id là ID của msg đầu tiên (nhỏ nhất) trong album
+                    id_range = list(range(max(1, msg_id - 2), msg_id + 30))
                     all_msgs = await tg_client.get_messages(chat, ids=id_range)
                     if not isinstance(all_msgs, list):
                         all_msgs = [all_msgs] if all_msgs else []
-                    # Lọc đúng grouped_id, bỏ WebPage
-                    group_msgs = [m for m in all_msgs
-                                  if m and m.grouped_id == grouped and m.media
-                                  and not isinstance(m.media, MessageMediaWebPage)]
+                    # Lọc đúng grouped_id, bỏ WebPage, sắp xếp theo msg.id tăng dần
+                    group_msgs = sorted(
+                        [m for m in all_msgs
+                         if m and m.grouped_id == grouped and m.media
+                         and not isinstance(m.media, MessageMediaWebPage)],
+                        key=lambda m: m.id
+                    )
                     if not group_msgs:
                         # Fallback: chỉ lấy msg_id gốc
                         single = await tg_client.get_messages(chat, ids=msg_id)
@@ -3659,29 +3663,33 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
             if group_msgs:
                 media_list = [m.media for m in group_msgs[:10]]
 
-                # Build caption chuẩn: ưu tiên text từ msg nguồn (giữ nguyên format gốc)
-                # sau đó thêm Xem bài gốc + channel name
-                # item.desc có thể rỗng nếu msg đầu album là media-only
-                item_desc = item.get('desc', '').strip()
-                if item_desc:
-                    base_text = item_desc
-                else:
-                    # Lấy text từ bất kỳ msg nào trong group có text
-                    base_text = ''
+                # Nếu caption truyền vào rỗng (media-only), thử lấy text từ msg nguồn
+                if not caption.strip():
                     for gm in group_msgs:
                         if gm and gm.message and gm.message.strip():
-                            base_text = gm.message
+                            caption = gm.message
                             break
 
-                # Dùng caption đã được build bởi caller (_do_forward / _run_read_all_bg / manual forward)
-                # Nếu caption truyền vào rỗng (ví dụ media-only không text), thử lấy base_text
-                if not caption.strip() and base_text:
-                    caption = base_text
+                # Phát hiện audio/document group: Telegram KHÔNG hỗ trợ caption trên
+                # media group chứa audio/document — caption chỉ gắn vào file đầu tiên.
+                # Với audio group → gửi từng file không caption, rồi gửi caption riêng.
+                def _is_audio_or_doc(media):
+                    if not isinstance(media, MessageMediaDocument):
+                        return False
+                    doc = getattr(media, 'document', None)
+                    if not doc:
+                        return False
+                    attrs = getattr(doc, 'attributes', [])
+                    for a in attrs:
+                        if isinstance(a, (DocumentAttributeAudio, DocumentAttributeVideo)):
+                            return True
+                    return True  # Document không phải ảnh/video inline → treat as file
+
+                is_audio_group = len(media_list) > 1 and any(_is_audio_or_doc(m) for m in media_list)
 
                 if len(media_list) == 1:
                     # Tin đơn: gắn caption vào media
                     caption_plain_len = len(re.sub(r'<[^>]+>', '', caption))
-                    # Dùng None thay '' khi caption rỗng — audio/voice không chấp nhận caption=''
                     caption_val = caption if caption.strip() else None
                     if caption_plain_len <= 1024:
                         await tg_client.send_file(dest, media_list[0], caption=caption_val,
@@ -3694,8 +3702,19 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
                         for chunk in _split_text(caption, 4096):
                             await tg_client.send_message(dest, chunk, parse_mode='html',
                                                          reply_to=reply_to_id, link_preview=show_preview)
+                elif is_audio_group:
+                    # Audio/document group: gửi từng file riêng không caption,
+                    # sau đó gửi caption thành tin nhắn text riêng
+                    for audio_media in media_list:
+                        await tg_client.send_file(dest, audio_media, caption=None,
+                                                  reply_to=thread_reply)
+                    if caption.strip():
+                        for chunk in _split_text(caption, 4096):
+                            await tg_client.send_message(dest, chunk, parse_mode='html',
+                                                         reply_to=thread_reply,
+                                                         link_preview=show_preview)
                 else:
-                    # Album nhiều file
+                    # Photo/video album: Telegram hỗ trợ caption trên album
                     caption_plain_len = len(re.sub(r'<[^>]+>', '', caption))
                     caption_val = caption if caption.strip() else None
                     if caption_plain_len <= 1024:

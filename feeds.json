@@ -1811,19 +1811,6 @@
       "history_limit": 5
     },
     {
-      "url": "https://t.me/instrumentalmusic",
-      "name": "Instrumental Music",
-      "show_link": true,
-      "auto_fwd": true,
-      "destinations": [
-        {
-          "ch_idx": 3,
-          "topic_ids": "33142"
-        }
-      ],
-      "history_limit": 5
-    },
-    {
       "url": "https://t.me/playlist_instrumental",
       "name": "🎻 | Playlist Instrumental",
       "show_link": true,

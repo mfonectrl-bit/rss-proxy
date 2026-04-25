@@ -1772,19 +1772,6 @@
       "history_limit": 5
     },
     {
-      "url": "https://t.me/Kulinar9",
-      "name": "Рецепты 🧑‍🍳| Десерты Супы Закуски",
-      "show_link": true,
-      "auto_fwd": true,
-      "destinations": [
-        {
-          "ch_idx": 3,
-          "topic_ids": "41248"
-        }
-      ],
-      "history_limit": 5
-    },
-    {
       "url": "https://t.me/playlist_instrumental",
       "name": "🎻 | Playlist Instrumental",
       "show_link": true,

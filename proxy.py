@@ -1403,7 +1403,7 @@ _tg_new_message_handler = None
 # Cache các channel đã resolve thành công để không resolve lại mỗi lần WS reconnect
 _resolved_channels_cache = set()
 
-_tg_setup_lock = asyncio.Lock()  # Tránh concurrent setup gây duplicate handler
+_tg_setup_running = threading.Event()  # Tránh concurrent setup gây duplicate handler (thread-safe)
 
 async def _tg_setup_realtime(feed_urls):
     """
@@ -1417,7 +1417,12 @@ async def _tg_setup_realtime(feed_urls):
     if not tg_client or not await tg_client.is_user_authorized():
         return
 
-    async with _tg_setup_lock:
+    # threading.Event — thread-safe, hoạt động cross-loop (asyncio.Lock không dùng được vì tg_loop riêng)
+    if _tg_setup_running.is_set():
+        print('[TG] Setup đang chạy, bỏ qua lần gọi này')
+        return
+    _tg_setup_running.set()
+    try:
         # Xóa event handlers cũ
         try:
             for callback, event in tg_client.list_event_handlers():
@@ -1450,7 +1455,7 @@ async def _tg_setup_realtime(feed_urls):
                     err_str = str(e)
                     if 'FloodWait' in err_str or 'flood' in err_str.lower():
                         # Bị rate limit resolve → dừng lại, không resolve tiếp
-                        print(f'[TG] FloodWait khi resolve — dừng resolve, dùng cache hiện có: {e}')
+                        print(f'[TG] FloodWait khi resolve — dùng cache hiện có: {e}')
                         break
                     print(f'[TG] Bỏ qua @{ch}: {e}')
                     await asyncio.sleep(2.0)
@@ -1462,6 +1467,8 @@ async def _tg_setup_realtime(feed_urls):
             await _register_handler(all_channels)
         else:
             print('[TG] Không có channel nào resolve được')
+    finally:
+        _tg_setup_running.clear()  # luôn release dù có exception
 
 async def _register_handler(channels_list):
     """Đăng ký event handler cho danh sách channels"""

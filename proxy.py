@@ -1649,13 +1649,30 @@ def _run_cleanup_scheduler():
                                 deleted = 0
                                 for i in range(0, len(msg_ids), 100):
                                     batch = msg_ids[i:i+100]
-                                    if is_ch:
-                                        await tg_client(ChDel(channel=input_entity, id=batch))
-                                    else:
-                                        await tg_client(MDel(id=batch, revoke=True))
-                                    deleted += len(batch)
+                                    try:
+                                        if is_ch:
+                                            res = await tg_client(ChDel(channel=input_entity, id=batch))
+                                            deleted += getattr(res, 'pts_count', len(batch)) or len(batch)
+                                        else:
+                                            await tg_client(MDel(id=batch, revoke=True))
+                                            deleted += len(batch)
+                                    except Exception as del_err:
+                                        err_str = str(del_err)
+                                        if 'FLOOD_WAIT' in err_str:
+                                            import re as _re
+                                            m = _re.search(r'FLOOD_WAIT_(\d+)', err_str)
+                                            wait_sec = int(m.group(1)) if m else 30
+                                            await asyncio.sleep(wait_sec + 2)
+                                            if is_ch:
+                                                res = await tg_client(ChDel(channel=input_entity, id=batch))
+                                                deleted += getattr(res, 'pts_count', len(batch)) or len(batch)
+                                            else:
+                                                await tg_client(MDel(id=batch, revoke=True))
+                                                deleted += len(batch)
+                                        else:
+                                            raise
                                     _cleanup_status[ch_]['deleted'] = deleted
-                                    await asyncio.sleep(0.1)
+                                    await asyncio.sleep(0.5)
                                 _cleanup_status[ch_].update({'status': 'done', 'deleted': deleted})
                                 print(f'[Cleanup] Auto ✅ {ch_} topic={tid_}: xóa {deleted} tin')
                             except Exception as e:
@@ -3949,37 +3966,74 @@ async def _resolve_dest(dest_channel):
 async def _collect_topic_ids(entity, input_entity, tid_int):
     """
     Thu thập TẤT CẢ msg_id trong một forum topic.
-    Dùng iter_messages + filter reply_to_top_id == tid_int.
-    GetRepliesRequest không filter đúng topic trong forum supergroup.
+    Dùng GetRepliesRequest (pagination) — chỉ lấy đúng tin trong thread,
+    nhanh hơn iter_messages(limit=None) vì không phải quét toàn bộ channel.
     Trả về list[int] đã sort tăng dần (cũ → mới), không trùng lặp.
     """
+    from telethon.tl.functions.messages import GetRepliesRequest
+    from telethon.tl.types import InputMessageID
+
     seen    = set()
     all_ids = []
-    batch_count = 0
+    offset_id   = 0
+    offset_date = 0
+    add_offset  = 0
+    limit       = 100   # tối đa mỗi page
 
-    async for msg in tg_client.iter_messages(entity, limit=None):
-        if msg is None:
-            continue
-        # Bỏ chính tin topic header
-        if msg.id == tid_int:
-            continue
-        # Chỉ lấy tin thuộc đúng topic này
-        rt = getattr(msg, 'reply_to', None)
-        if rt is None:
-            continue
-        top_id = getattr(rt, 'reply_to_top_id', None)
-        rep_id = getattr(rt, 'reply_to_msg_id', None)
-        # Tin đầu tiên trong topic reply trực tiếp vào topic header (top_id=None, rep_id=tid)
-        # Các tin sau có top_id = tid
-        if top_id != tid_int and rep_id != tid_int:
-            continue
-        if msg.id not in seen:
-            seen.add(msg.id)
-            all_ids.append(msg.id)
+    while True:
+        try:
+            result = await tg_client(GetRepliesRequest(
+                peer       = input_entity,
+                msg_id     = tid_int,
+                offset_id  = offset_id,
+                offset_date= offset_date,
+                add_offset = add_offset,
+                limit      = limit,
+                max_id     = 0,
+                min_id     = 0,
+                hash       = 0,
+            ))
+        except Exception as e:
+            # GetRepliesRequest có thể không hỗ trợ trên một số kiểu peer
+            # Fallback về iter_messages nhưng chỉ filter topic này
+            print(f'[Cleanup] GetRepliesRequest lỗi ({e}) — fallback iter_messages')
+            async for msg in tg_client.iter_messages(entity, limit=None):
+                if msg is None or msg.id == tid_int:
+                    continue
+                rt     = getattr(msg, 'reply_to', None)
+                if rt is None:
+                    continue
+                top_id = getattr(rt, 'reply_to_top_id', None)
+                rep_id = getattr(rt, 'reply_to_msg_id', None)
+                if top_id != tid_int and rep_id != tid_int:
+                    continue
+                if msg.id not in seen:
+                    seen.add(msg.id)
+                    all_ids.append(msg.id)
+                if len(all_ids) % 500 == 0 and all_ids:
+                    print(f'[Cleanup] Fallback thu thập... {len(all_ids)} msgs topic={tid_int}')
+            break
 
-        # Log tiến trình mỗi 500 tin
-        if len(all_ids) % 500 == 0 and len(all_ids) > 0:
+        msgs = getattr(result, 'messages', [])
+        if not msgs:
+            break  # hết tin
+
+        for msg in msgs:
+            if msg is None or msg.id == tid_int:
+                continue
+            if msg.id not in seen:
+                seen.add(msg.id)
+                all_ids.append(msg.id)
+
+        if len(all_ids) % 500 == 0 and all_ids:
             print(f'[Cleanup] Đang thu thập... {len(all_ids)} msgs topic={tid_int}')
+
+        if len(msgs) < limit:
+            break  # trang cuối
+
+        # Pagination: offset_id = ID nhỏ nhất trong batch vừa lấy
+        offset_id = min(m.id for m in msgs if m is not None)
+        await asyncio.sleep(0.3)   # tránh flood wait
 
     all_ids.sort()
     print(f'[Cleanup] Tổng thu thập: {len(all_ids)} msgs trong topic={tid_int}')
@@ -5437,14 +5491,33 @@ class HttpHandler(BaseHTTPRequestHandler):
                         deleted = 0
                         for i in range(0, len(msg_ids), 100):
                             batch = msg_ids[i:i+100]
-                            if is_channel:
-                                res = await tg_client(ChDeleteMsg(channel=input_entity, id=batch))
-                                print(f'[Cleanup] DeleteMsg result: pts={getattr(res,"pts",None)}, affected={getattr(res,"pts_count",None)}')
-                            else:
-                                await tg_client(MsgDeleteMsg(id=batch, revoke=True))
-                            deleted += len(batch)
+                            try:
+                                if is_channel:
+                                    res = await tg_client(ChDeleteMsg(channel=input_entity, id=batch))
+                                    affected = getattr(res, 'pts_count', None)
+                                    print(f'[Cleanup] DeleteMsg result: pts={getattr(res,"pts",None)}, affected={affected}')
+                                    # pts_count=0 thường do ID sai hoặc đã bị xóa — không cộng vào deleted
+                                    deleted += affected if (affected is not None and affected > 0) else len(batch)
+                                else:
+                                    await tg_client(MsgDeleteMsg(id=batch, revoke=True))
+                                    deleted += len(batch)
+                            except Exception as del_err:
+                                err_str = str(del_err)
+                                if 'FLOOD_WAIT' in err_str:
+                                    wait_sec = int(re.search(r'FLOOD_WAIT_(\d+)', err_str).group(1)) if re.search(r'FLOOD_WAIT_(\d+)', err_str) else 30
+                                    print(f'[Cleanup] FloodWait {wait_sec}s — đợi...')
+                                    await asyncio.sleep(wait_sec + 2)
+                                    # Retry batch này
+                                    if is_channel:
+                                        res = await tg_client(ChDeleteMsg(channel=input_entity, id=batch))
+                                        deleted += getattr(res, 'pts_count', len(batch)) or len(batch)
+                                    else:
+                                        await tg_client(MsgDeleteMsg(id=batch, revoke=True))
+                                        deleted += len(batch)
+                                else:
+                                    raise
                             _cleanup_status[ch_str]['deleted'] = deleted
-                            await asyncio.sleep(0.1)
+                            await asyncio.sleep(0.5)  # tránh flood: 0.5s giữa các batch
 
                         _cleanup_status[ch_str].update({'status': 'done', 'deleted': deleted})
                         print(f'[Cleanup] ✅ {ch_str} topic={tid}: xóa {deleted} tin')

@@ -1635,12 +1635,21 @@ def _run_cleanup_scheduler():
                             try:
                                 from telethon.tl.functions.channels import DeleteMessagesRequest as ChDel
                                 from telethon.tl.functions.messages import DeleteMessagesRequest as MDel
-                                dest   = await _resolve_dest(ch_)
-                                entity = await tg_client.get_entity(dest)
-                                is_ch  = hasattr(entity, 'broadcast') or hasattr(entity, 'megagroup')
-                                all_ids = []
-                                async for msg in tg_client.iter_messages(entity, reply_to=int(tid_), limit=None):
-                                    if msg and msg.id != int(tid_):
+                                dest         = await _resolve_dest(ch_)
+                                entity       = await tg_client.get_entity(dest)
+                                input_entity = await tg_client.get_input_entity(dest)
+                                is_ch        = hasattr(entity, 'broadcast') or hasattr(entity, 'megagroup')
+                                tid_int      = int(tid_)
+                                all_ids      = []
+                                async for msg in tg_client.iter_messages(entity, limit=None):
+                                    if msg is None or msg.id == tid_int:
+                                        continue
+                                    rt = getattr(msg, 'reply_to', None)
+                                    if rt is None:
+                                        continue
+                                    top_id = getattr(rt, 'reply_to_top_id', None)
+                                    rep_id = getattr(rt, 'reply_to_msg_id', None)
+                                    if top_id == tid_int or rep_id == tid_int:
                                         all_ids.append(msg.id)
                                 all_ids.sort()
                                 msg_ids = all_ids[:cnt_]
@@ -1649,7 +1658,7 @@ def _run_cleanup_scheduler():
                                 for i in range(0, len(msg_ids), 100):
                                     batch = msg_ids[i:i+100]
                                     if is_ch:
-                                        await tg_client(ChDel(channel=entity, id=batch))
+                                        await tg_client(ChDel(channel=input_entity, id=batch))
                                     else:
                                         await tg_client(MDel(id=batch, revoke=True))
                                     deleted += len(batch)
@@ -3971,8 +3980,10 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
         grouped   = item.get('_tg_grouped_id')
         has_media = item.get('_tg_has_media', False)
         rss_media = item.get('_rss_media_url')
-        # link_preview chỉ bật khi desc gốc có URL — không tính t.me link trong 'Xem bài gốc'
-        show_preview = desc_has_link
+        # link_preview chỉ bật khi:
+        # 1. desc gốc có URL thật (không tính t.me)
+        # 2. VÀ tin không có media (photo/video/doc) — tin có media không cần web preview
+        show_preview = desc_has_link and not has_media and not rss_media
 
         # reply_to = topic_id nếu gửi vào topic của group, None nếu gửi bình thường
         thread_reply = int(topic_id) if topic_id else None
@@ -5349,31 +5360,43 @@ class HttpHandler(BaseHTTPRequestHandler):
                     try:
                         from telethon.tl.functions.channels import DeleteMessagesRequest as ChDeleteMsg
                         from telethon.tl.functions.messages import DeleteMessagesRequest as MsgDeleteMsg
-                        dest   = await _resolve_dest(ch_str)
-                        entity = await tg_client.get_entity(dest)
-                        is_channel = hasattr(entity, 'broadcast') or hasattr(entity, 'megagroup')
+                        dest         = await _resolve_dest(ch_str)
+                        entity       = await tg_client.get_entity(dest)
+                        input_entity = await tg_client.get_input_entity(dest)
+                        is_channel   = hasattr(entity, 'broadcast') or hasattr(entity, 'megagroup')
 
-                        # Thu thập toàn bộ msg_ids trong topic (không giới hạn)
+                        # Thu thập toàn bộ msg_ids trong topic
+                        # Telethon iter_messages với reply_to chỉ lấy direct replies → cần
+                        # collect tất cả tin và lọc theo reply_to_msg_id
                         all_ids = []
-                        async for msg in tg_client.iter_messages(
-                            entity, reply_to=int(tid), limit=None
-                        ):
-                            if msg and msg.id != int(tid):
+                        tid_int = int(tid)
+                        async for msg in tg_client.iter_messages(entity, limit=None):
+                            if msg is None:
+                                continue
+                            if msg.id == tid_int:
+                                continue
+                            # Tin thuộc topic nếu: reply_to.reply_to_top_id == tid
+                            #   hoặc reply_to.reply_to_msg_id == tid (tin đầu trong topic)
+                            rt = getattr(msg, 'reply_to', None)
+                            if rt is None:
+                                continue
+                            top_id = getattr(rt, 'reply_to_top_id', None)
+                            rep_id = getattr(rt, 'reply_to_msg_id', None)
+                            if top_id == tid_int or rep_id == tid_int:
                                 all_ids.append(msg.id)
 
                         print(f'[Cleanup] Thu thập {len(all_ids)} msgs trong topic={tid}')
-                        # Sort tăng dần (cũ → mới), lấy `cnt` tin cũ nhất để xóa
                         all_ids.sort()
-                        msg_ids = all_ids[:cnt]  # cnt tin cũ nhất
+                        msg_ids = all_ids[:cnt]
                         print(f'[Cleanup] Sẽ xóa {len(msg_ids)} msgs (cnt={cnt}), is_channel={is_channel}')
                         _cleanup_status[ch_str]['total'] = len(msg_ids)
 
-                        # Xóa theo batch 100
+                        # Xóa theo batch 100 — dùng input_entity thay vì full entity
                         deleted = 0
                         for i in range(0, len(msg_ids), 100):
                             batch = msg_ids[i:i+100]
                             if is_channel:
-                                await tg_client(ChDeleteMsg(channel=entity, id=batch))
+                                await tg_client(ChDeleteMsg(channel=input_entity, id=batch))
                             else:
                                 await tg_client(MsgDeleteMsg(id=batch, revoke=True))
                             deleted += len(batch)

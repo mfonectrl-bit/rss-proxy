@@ -836,9 +836,19 @@ class BatchPipeline:
                 text = item.get('text', '')
                 should_translate = item.get('do_translate', True)
                 if should_translate:
-                    translated = _fast_translate(text)
+                    has_hidden_link = item.get('_tg_has_hidden_link', False)
+                    html_text = item.get('_tg_html_text', '')
+                    if has_hidden_link and html_text:
+                        # Dịch bảo toàn link ẩn: Gemini HTML → DeepL HTML → Google plain
+                        translated, _eng, _is_html = _translate_with_hidden_links(html_text)
+                        item['_translated_is_html'] = _is_html
+                    else:
+                        # Bản tin thường: giữ flow cũ
+                        translated = _fast_translate(text)
+                        item['_translated_is_html'] = False
                 else:
                     translated = text  # Không dịch — giữ nguyên bản gốc
+                    item['_translated_is_html'] = False
                 if not item.get('category'):
                     item['category'] = item.get('category') or 'Khác'
                 item['text_translated'] = translated
@@ -891,6 +901,8 @@ try:
     from telethon import TelegramClient, events
     from telethon.sessions import StringSession
     from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument
+    from telethon.tl.types import MessageEntityTextUrl
+    from telethon.extensions import html as tg_html
     import telethon.errors
     TELETHON_AVAILABLE = True
     print('[i] Telethon: OK')
@@ -974,6 +986,94 @@ def _translate_gemini(text):
     except urllib.error.HTTPError as e:
         body = e.read().decode('utf-8', errors='ignore')
         raise RuntimeError(f'Gemini HTTP {e.code}: {body[:200]}')
+
+def _translate_gemini_html(html_text):
+    """
+    Dịch HTML có link ẩn bằng Gemini — yêu cầu model giữ nguyên thẻ <a href=...>.
+    Chỉ gọi khi bản tin có MessageEntityTextUrl.
+    """
+    if not GEMINI_API_KEY:
+        raise ValueError('GEMINI_API_KEY chưa set')
+    prompt = (
+        'Dịch đoạn HTML sau sang tiếng Việt tự nhiên, giữ nguyên format xuống dòng, '
+        'emoji và các ký tự đặc biệt. '
+        'QUAN TRỌNG: Giữ nguyên toàn bộ thẻ HTML <a href="...">...</a> — '
+        'chỉ dịch nội dung text bên trong thẻ, KHÔNG xóa, KHÔNG sửa thuộc tính href. '
+        'Chỉ trả về bản dịch HTML, không giải thích thêm:\n\n' + html_text[:3000]
+    )
+    payload = json.dumps({
+        'contents': [{'parts': [{'text': prompt}]}],
+        'generationConfig': {'temperature': 0.1, 'maxOutputTokens': 2048},
+    }).encode('utf-8')
+    url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}'
+    req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read())
+        result = data['candidates'][0]['content']['parts'][0]['text'].strip()
+        # Bỏ markdown fence nếu model trả về ```html ... ```
+        result = re.sub(r'^```html\s*', '', result)
+        result = re.sub(r'^```\s*', '', result)
+        result = re.sub(r'\s*```$', '', result).strip()
+        return result
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='ignore')
+        raise RuntimeError(f'Gemini HTML HTTP {e.code}: {body[:200]}')
+
+
+def _translate_deepl_html(html_text):
+    """
+    Dịch HTML có link ẩn bằng DeepL — dùng tag_handling=html để bảo toàn thẻ <a>.
+    Chỉ gọi khi bản tin có MessageEntityTextUrl.
+    """
+    payload = urllib.parse.urlencode({
+        'auth_key': DEEPL_API_KEY,
+        'text': html_text[:4000],
+        'target_lang': 'VI',
+        'source_lang': 'EN',
+        'tag_handling': 'html',
+    }).encode('utf-8')
+    base = 'api-free.deepl.com' if DEEPL_API_KEY.endswith(':fx') else 'api.deepl.com'
+    req = urllib.request.Request(
+        f'https://{base}/v2/translate', data=payload,
+        headers={'Content-Type': 'application/x-www-form-urlencoded'}
+    )
+    resp = urllib.request.urlopen(req, timeout=10)
+    data = json.loads(resp.read())
+    return data['translations'][0]['text'].strip()
+
+
+def _translate_with_hidden_links(html_text):
+    """
+    Dịch bản tin có link ẩn (MessageEntityTextUrl).
+    Ưu tiên: Gemini HTML → DeepL HTML → Google plain text (link mất, chấp nhận được).
+    Trả về (translated_text, engine_used, is_html).
+    """
+    # Thử Gemini trước
+    if GEMINI_API_KEY:
+        try:
+            result = _translate_gemini_html(html_text)
+            return result, 'gemini', True
+        except Exception as e:
+            print(f'[Translate] Gemini HTML lỗi: {e} — thử DeepL HTML')
+
+    # Thử DeepL
+    if DEEPL_API_KEY:
+        try:
+            result = _translate_deepl_html(html_text)
+            return result, 'deepl', True
+        except Exception as e:
+            print(f'[Translate] DeepL HTML lỗi: {e} — fallback Google plain text')
+
+    # Fallback Google: dịch plain text, link sẽ mất
+    plain = re.sub(r'<[^>]+>', '', html_text)
+    try:
+        result = GoogleTranslator(source='auto', target='vi').translate(plain) or plain
+        return result, 'google', False
+    except Exception as e:
+        print(f'[Translate] Google plain text lỗi: {e} — giữ nguyên bản gốc')
+        return plain, 'none', False
+
 
 def strip_html(text):
     return re.sub(r'<[^>]+>', ' ', text).strip()
@@ -1352,6 +1452,13 @@ async def _register_handler(channels_list):
         pub      = msg.date.isoformat() if msg.date else ''
         has_media = bool(msg.media and isinstance(msg.media, (MessageMediaPhoto, MessageMediaDocument)))
 
+        # Detect link ẩn (MessageEntityTextUrl) — nếu có, lưu HTML để dịch bảo toàn link
+        _has_hidden_link = bool(
+            msg_text and msg.entities and
+            any(isinstance(e, MessageEntityTextUrl) for e in msg.entities)
+        )
+        _html_text = tg_html.unparse(msg_text, msg.entities) if _has_hidden_link else ''
+
         item = {
             'guid': guid, 'title': title, 'desc': desc, 'link': link,
             'pubDate': pub, 'translated': False, 'category': category,
@@ -1359,6 +1466,8 @@ async def _register_handler(channels_list):
             '_tg_msg_id': msg.id, '_tg_chat': chat_username,
             '_tg_grouped_id': msg.grouped_id,
             '_source': 'telethon', '_feed_url': feed_url,
+            '_tg_has_hidden_link': _has_hidden_link,
+            '_tg_html_text': _html_text,
         }
         with tg_new_items_lock:
             tg_new_items_queue.append(item)
@@ -3961,6 +4070,13 @@ def _run_read_all_bg(url, feed_cfg):
             has_media = bool(msg.media)
             grouped   = getattr(msg, "grouped_id", None)
 
+            # Detect link ẩn
+            _has_hidden_link = bool(
+                msg_text and msg.entities and
+                any(isinstance(e, MessageEntityTextUrl) for e in msg.entities)
+            )
+            _html_text = tg_html.unparse(msg_text, msg.entities) if _has_hidden_link else ''
+
             # Atomic check+add: tránh race condition giữa các job song song
             with lock:
                 if url not in known_guids:
@@ -3987,13 +4103,20 @@ def _run_read_all_bg(url, feed_cfg):
                 "_tg_grouped_id": grouped,
                 "_source": "telethon",
                 "do_translate": do_translate,
+                "_tg_has_hidden_link": _has_hidden_link,
+                "_tg_html_text": _html_text,
             }
 
             if do_translate and msg_text:
-                raw_text = msg_text
-                item["text"] = raw_text
-                translated = _fast_translate(raw_text)
-                # Giữ nguyên newline gốc — không replace thành <br>
+                item["text"] = msg_text
+                if _has_hidden_link:
+                    # Dịch bảo toàn link ẩn: Gemini HTML → DeepL HTML → Google plain
+                    translated, _eng, _is_html = _translate_with_hidden_links(_html_text)
+                    item["_translated_is_html"] = _is_html
+                else:
+                    # Bản tin thường: giữ flow cũ
+                    translated = _fast_translate(msg_text)
+                    item["_translated_is_html"] = False
                 item["desc"] = translated
                 item["title"] = (translated[:80] + "...") if len(translated) > 80 else translated
                 item["translated"] = True
@@ -4338,6 +4461,8 @@ def _process_tg_queue():
                 '_tg_chat': it.get('_tg_chat'),
                 '_tg_grouped_id': it.get('_tg_grouped_id'),
                 '_source': 'telethon',
+                '_tg_has_hidden_link': it.get('_tg_has_hidden_link', False),
+                '_tg_html_text': it.get('_tg_html_text', ''),
             }
             _pipeline.put(pipeline_item)
 

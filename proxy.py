@@ -3965,44 +3965,50 @@ async def _resolve_dest(dest_channel):
 
 async def _collect_topic_ids(entity, input_entity, tid_int):
     """
-    Thu thập TẤT CẢ msg_id trong một forum topic (forum supergroup).
-    Quét toàn bộ channel, filter thủ công theo reply_to_top_id / reply_to_msg_id.
-    msg.id là global channel ID — đúng format cho channels.DeleteMessages.
-    Trả về list[int] đã sort tăng dần (cũ → mới).
+    Dung GetRepliesRequest - API chinh xac nhat cho forum thread.
+    Tra ve list[int] sort tang dan (cu -> moi).
     """
+    from telethon.tl.functions.messages import GetRepliesRequest
     seen    = set()
     all_ids = []
-    sampled = False  # log mẫu 5 tin đầu để debug
+    offset_id = 0
+    limit     = 100
 
-    async for msg in tg_client.iter_messages(entity, limit=None):
-        if msg is None or msg.id == tid_int:
-            continue
+    while True:
+        result = await tg_client(GetRepliesRequest(
+            peer        = input_entity,
+            msg_id      = tid_int,
+            offset_id   = offset_id,
+            offset_date = 0,
+            add_offset  = 0,
+            limit       = limit,
+            max_id      = 0,
+            min_id      = 0,
+            hash        = 0,
+        ))
+        msgs = getattr(result, 'messages', [])
+        if not msgs:
+            break
 
-        rt     = getattr(msg, 'reply_to', None)
-        top_id = getattr(rt, 'reply_to_top_id', None) if rt else None
-        rep_id = getattr(rt, 'reply_to_msg_id',  None) if rt else None
-
-        belongs = (top_id == tid_int) or (rep_id == tid_int and top_id is None)
-        if not belongs:
-            continue
-
-        if msg.id not in seen:
-            seen.add(msg.id)
-            all_ids.append(msg.id)
-
-            # Log 5 tin đầu để xác nhận đúng topic
-            if not sampled and len(all_ids) <= 5:
-                print(f'[Cleanup] Sample msg.id={msg.id} top_id={top_id} rep_id={rep_id}')
-            if len(all_ids) == 5:
-                sampled = True
+        for msg in msgs:
+            if msg is None:
+                continue
+            if msg.id not in seen:
+                seen.add(msg.id)
+                all_ids.append(msg.id)
 
         if len(all_ids) % 500 == 0 and len(all_ids) > 0:
-            print(f'[Cleanup] Đang thu thập... {len(all_ids)} msgs topic={tid_int}')
+            print(f'[Cleanup] Dang thu thap... {len(all_ids)} msgs topic={tid_int}')
+
+        if len(msgs) < limit:
+            break
+
+        offset_id = min(m.id for m in msgs if m is not None)
+        await asyncio.sleep(0.3)
 
     all_ids.sort()
-    print(f'[Cleanup] Tổng thu thập: {len(all_ids)} msgs trong topic={tid_int}')
+    print(f'[Cleanup] Tong thu thap: {len(all_ids)} msgs trong topic={tid_int}')
     return all_ids
-
 
 async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_link=False):
     """
@@ -5440,9 +5446,9 @@ class HttpHandler(BaseHTTPRequestHandler):
                         except Exception as pe:
                             print(f'[Cleanup] Không kiểm tra được quyền: {pe} — tiếp tục thử xóa')
 
-                        # Dùng GetRepliesRequest để lấy ĐÚNG toàn bộ tin trong topic
+                        # Thu thap tin trong topic
                         all_ids = await _collect_topic_ids(entity, input_entity, tid_int)
-                        print(f'[Cleanup] Thu thập {len(all_ids)} msgs trong topic={tid}')
+                        print(f'[Cleanup] Thu thap {len(all_ids)} msgs trong topic={tid}')
 
                         # GUARD: đảm bảo không xóa quá cnt tin
                         msg_ids = all_ids[:max(0, int(cnt))]

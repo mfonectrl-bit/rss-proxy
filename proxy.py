@@ -1643,7 +1643,8 @@ def _run_cleanup_scheduler():
 
                                 all_ids = await _collect_topic_ids(entity, input_entity, tid_int)
                                 all_ids.sort()
-                                msg_ids = all_ids[:cnt_]
+                                msg_ids = all_ids[:max(0, int(cnt_))]
+                                assert len(msg_ids) <= int(cnt_), f'Safety check fail: {len(msg_ids)} > {cnt_}'
                                 _cleanup_status[ch_]['total'] = len(msg_ids)
                                 deleted = 0
                                 for i in range(0, len(msg_ids), 100):
@@ -3949,9 +3950,10 @@ async def _collect_topic_ids(entity, input_entity, tid_int):
     """
     Thu thập TẤT CẢ msg_id trong một forum topic bằng GetRepliesRequest.
     Đây là API MTProto đúng cho Telegram forum topics — paginate qua offset_id.
-    Trả về list[int] đã sort tăng dần (cũ → mới).
+    Trả về list[int] đã sort tăng dần (cũ → mới), không trùng lặp.
     """
     from telethon.tl.functions.messages import GetRepliesRequest
+    seen = set()
     all_ids = []
     offset_id = 0
     limit = 200  # Telegram cho phép tối đa 200/request
@@ -3976,15 +3978,22 @@ async def _collect_topic_ids(entity, input_entity, tid_int):
         if not msgs:
             break
 
+        new_in_batch = 0
         for m in msgs:
-            if m and m.id != tid_int:
+            if m and m.id != tid_int and m.id not in seen:
+                seen.add(m.id)
                 all_ids.append(m.id)
+                new_in_batch += 1
+
+        # Nếu không có tin mới → đã hết (tránh loop vô hạn)
+        if new_in_batch == 0:
+            break
 
         if len(msgs) < limit:
             break
 
         offset_id = min(m.id for m in msgs if m)
-        await asyncio.sleep(0.05)  # giảm từ 0.2 → 0.05 cho nhanh
+        await asyncio.sleep(0.05)
 
     all_ids.sort()
     return all_ids
@@ -5383,7 +5392,12 @@ class HttpHandler(BaseHTTPRequestHandler):
             body = self._read_json()
             channel_str = body.get('channel', '').strip()
             topic_id    = body.get('topic_id')
-            count       = int(body.get('count', 100))
+            raw_count   = body.get('count', 100)
+            # Handle "All" / "all" → xóa toàn bộ (999999)
+            if str(raw_count).strip().lower() in ('all', ''):
+                count = 999999
+            else:
+                count = max(1, int(raw_count))
             if not channel_str or not topic_id:
                 self._json({'error': 'Thiếu channel hoặc topic_id'}, 400); return
 
@@ -5405,8 +5419,10 @@ class HttpHandler(BaseHTTPRequestHandler):
                         all_ids = await _collect_topic_ids(entity, input_entity, tid_int)
                         print(f'[Cleanup] Thu thập {len(all_ids)} msgs trong topic={tid}')
 
-                        msg_ids = all_ids[:cnt]  # cnt tin cũ nhất
+                        # GUARD: đảm bảo không xóa quá cnt tin
+                        msg_ids = all_ids[:max(0, int(cnt))]
                         print(f'[Cleanup] Sẽ xóa {len(msg_ids)} msgs (cnt={cnt}), is_channel={is_channel}')
+                        assert len(msg_ids) <= int(cnt), f'Safety check fail: {len(msg_ids)} > {cnt}'
                         _cleanup_status[ch_str]['total'] = len(msg_ids)
 
                         # Xóa theo batch 200 — dùng input_entity (Telethon yêu cầu)

@@ -1578,7 +1578,99 @@ tg_channels = []
 poll_next_time = time.time() + POLL_INTERVAL
 
 # Dict track trạng thái cleanup topic
-_cleanup_status = {}  # key: channel_str → {status, deleted, total, error}
+_cleanup_status   = {}  # key: channel_str → {status, deleted, total, error}
+# Schedule tự động: key = "channel|topic_id" → {channel, topic_id, count, hour, minute, enabled}
+_cleanup_schedules = {}  # lưu trong memory, persist qua Redis nếu có
+
+def _persist_cleanup_schedules():
+    """Lưu _cleanup_schedules vào Redis nếu có"""
+    if _deduplicator:
+        try:
+            _deduplicator.r.set('cleanup_schedules',
+                                json.dumps(list(_cleanup_schedules.values())).encode('utf-8'))
+        except Exception as e:
+            print(f'[Cleanup] Lưu schedule lỗi: {e}')
+
+def _load_cleanup_schedules():
+    """Load _cleanup_schedules từ Redis khi khởi động"""
+    global _cleanup_schedules
+    if _deduplicator:
+        try:
+            raw = _deduplicator.r.get('cleanup_schedules')
+            if raw:
+                items = json.loads(raw.decode('utf-8'))
+                for s in items:
+                    key = f'{s["channel"]}|{s["topic_id"]}'
+                    _cleanup_schedules[key] = s
+                print(f'[Cleanup] Load {len(_cleanup_schedules)} schedule(s) từ Redis')
+        except Exception as e:
+            print(f'[Cleanup] Load schedule lỗi: {e}')
+
+def _run_cleanup_scheduler():
+    """Background thread kiểm tra và chạy cleanup schedule hàng ngày"""
+    import datetime
+    print('[Cleanup] Scheduler thread started')
+    while True:
+        try:
+            now = datetime.datetime.now()
+            for key, s in list(_cleanup_schedules.items()):
+                if not s.get('enabled'):
+                    continue
+                if now.hour == s.get('hour', 3) and now.minute == s.get('minute', 0):
+                    last = s.get('last_run', '')
+                    today = now.strftime('%Y-%m-%d')
+                    if last == today:
+                        continue  # đã chạy hôm nay rồi
+                    print(f'[Cleanup] Auto-run: {s["channel"]} topic={s["topic_id"]} count={s["count"]}')
+                    _cleanup_schedules[key]['last_run'] = today
+                    _persist_cleanup_schedules()
+                    # Tái dụng _run_cleanup_bg đã có sẵn
+                    ch  = s['channel']
+                    tid = s['topic_id']
+                    cnt = s['count']
+                    _cleanup_status[ch] = {'status': 'running', 'deleted': 0, 'total': 0, 'error': ''}
+
+                    def _run_bg(ch_=ch, tid_=tid, cnt_=cnt):
+                        async def _do():
+                            try:
+                                from telethon.tl.functions.channels import DeleteMessagesRequest as ChDel
+                                from telethon.tl.functions.messages import DeleteMessagesRequest as MDel
+                                dest   = await _resolve_dest(ch_)
+                                entity = await tg_client.get_entity(dest)
+                                is_ch  = hasattr(entity, 'broadcast') or hasattr(entity, 'megagroup')
+                                all_ids = []
+                                async for msg in tg_client.iter_messages(entity, reply_to=int(tid_), limit=None):
+                                    if msg and msg.id != int(tid_):
+                                        all_ids.append(msg.id)
+                                all_ids.sort()
+                                msg_ids = all_ids[:cnt_]
+                                _cleanup_status[ch_]['total'] = len(msg_ids)
+                                deleted = 0
+                                for i in range(0, len(msg_ids), 100):
+                                    batch = msg_ids[i:i+100]
+                                    if is_ch:
+                                        await tg_client(ChDel(channel=entity, id=batch))
+                                    else:
+                                        await tg_client(MDel(id=batch, revoke=True))
+                                    deleted += len(batch)
+                                    _cleanup_status[ch_]['deleted'] = deleted
+                                    await asyncio.sleep(0.3)
+                                _cleanup_status[ch_].update({'status': 'done', 'deleted': deleted})
+                                print(f'[Cleanup] Auto ✅ {ch_} topic={tid_}: xóa {deleted} tin')
+                            except Exception as e:
+                                _cleanup_status[ch_].update({'status': 'error', 'error': str(e)})
+                                print(f'[Cleanup] Auto ❌ {ch_} topic={tid_}: {e}')
+                        try:
+                            tg_run_long(_do(), timeout=600)
+                        except Exception as e:
+                            _cleanup_status[ch_].update({'status': 'error', 'error': str(e)})
+
+                    threading.Thread(target=_run_bg, daemon=True, name='CleanupAutoRun').start()
+        except Exception as e:
+            print(f'[Cleanup] Scheduler lỗi: {e}')
+        time.sleep(60)  # kiểm tra mỗi phút
+
+threading.Thread(target=_run_cleanup_scheduler, daemon=True, name='CleanupScheduler').start()
 
 # Set chứa các feed URL đã init xong known_guids — chỉ feed nào có trong set mới được forward
 _forward_ready_feeds = set()
@@ -2113,31 +2205,45 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
 <!-- Modal tiến trình Đọc toàn bộ nguồn -->
 <!-- Modal dọn bài trong topic -->
 <div class="modal-bg" id="cleanup-modal" style="z-index:300">
-<div class="modal" style="width:520px;max-height:90vh;overflow-y:auto">
+<div class="modal" style="width:560px;max-height:90vh;overflow-y:auto">
   <h2 style="margin-bottom:1rem">🗑️ Dọn bài trong topic</h2>
 
+  <!-- Chọn group -->
   <div style="margin-bottom:.75rem">
-    <label style="font-size:12px;color:#666;display:block;margin-bottom:4px">Kênh/Group đích</label>
+    <label style="font-size:12px;color:#666;display:block;margin-bottom:4px">Group</label>
     <select id="cu-channel"
       style="width:100%;padding:8px;border:1px solid #d0d0c8;border-radius:8px;font-size:13px;background:#fff"
-      onchange="cuUpdateTopicDd()">
-      <option value="">— Chọn kênh/group —</option>
+      onchange="cuLoadTopics()">
+      <option value="">— Chọn group —</option>
     </select>
   </div>
 
-  <div style="display:flex;gap:8px;margin-bottom:.75rem">
-    <div style="flex:1">
-      <label style="font-size:12px;color:#666;display:block;margin-bottom:4px">Topic</label>
-      <select id="cu-topic"
-        style="width:100%;padding:8px;border:1px solid #d0d0c8;border-radius:8px;font-size:13px;background:#fff">
-        <option value="">— Chọn topic —</option>
-      </select>
+  <!-- Danh sách topics với số bài -->
+  <div id="cu-topics-wrap" style="display:none;margin-bottom:.75rem">
+    <label style="font-size:12px;color:#666;display:block;margin-bottom:6px">
+      Chọn topic &amp; số bài cần xóa
+    </label>
+    <div id="cu-topics-list" style="border:1px solid #e0e0d8;border-radius:8px;overflow:hidden"></div>
+  </div>
+
+  <!-- Lịch tự động -->
+  <div id="cu-schedule-wrap" style="display:none;margin-bottom:.75rem;padding:10px 12px;background:#f5f5f0;border-radius:8px">
+    <div style="font-size:12px;color:#666;margin-bottom:8px;font-weight:600">⏰ Lịch tự động (hàng ngày)</div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <label style="font-size:13px">Lúc</label>
+      <input id="cu-hour" type="number" min="0" max="23" value="3"
+        style="width:60px;padding:6px;border:1px solid #d0d0c8;border-radius:6px;font-size:13px;text-align:center">
+      <span style="font-size:13px">:</span>
+      <input id="cu-minute" type="number" min="0" max="59" value="0"
+        style="width:60px;padding:6px;border:1px solid #d0d0c8;border-radius:6px;font-size:13px;text-align:center">
+      <span style="font-size:12px;color:#888">giờ mỗi ngày</span>
     </div>
-    <div style="width:130px">
-      <label style="font-size:12px;color:#666;display:block;margin-bottom:4px">Số bài xóa</label>
-      <input id="cu-count" type="text" placeholder="100 hoặc All"
-        style="width:100%;padding:8px;border:1px solid #d0d0c8;border-radius:8px;font-size:13px">
-    </div>
+  </div>
+
+  <!-- Danh sách schedules đã lưu -->
+  <div id="cu-saved-wrap" style="margin-bottom:.75rem;display:none">
+    <div style="font-size:12px;color:#666;margin-bottom:6px;font-weight:600">📋 Schedules đã cài</div>
+    <div id="cu-saved-list" style="border:1px solid #e0e0d8;border-radius:8px;overflow:hidden;font-size:12px"></div>
   </div>
 
   <div id="cu-status" style="font-size:13px;color:#555;min-height:20px;margin-bottom:.5rem"></div>
@@ -2147,7 +2253,12 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
 
   <div class="modal-btns">
     <button onclick="closeCleanupModal()">Đóng</button>
-    <button id="cu-run-btn" class="btn-ok" style="background:#dc2626;border-color:#dc2626" onclick="runCleanup()">🗑️ Dọn ngay</button>
+    <button id="cu-auto-btn" class="btn-ok"
+      style="background:#2563eb;border-color:#2563eb;display:none"
+      onclick="cuSaveSchedules()">⏰ Bật Auto</button>
+    <button id="cu-run-btn" class="btn-ok"
+      style="background:#dc2626;border-color:#dc2626;display:none"
+      onclick="runCleanup()">🗑️ Dọn ngay</button>
   </div>
 </div>
 </div>
@@ -3064,118 +3175,198 @@ async function openBgJobPopup() {
 let _cuRunning = false;
 
 function openCleanupModal() {
-    // Populate channel dropdown từ tgChannels (chỉ các Group có topics)
     const chSel = document.getElementById('cu-channel');
     const prevCh = chSel.value;
-    chSel.innerHTML = '<option value="">— Chọn kênh/group —</option>'
-        + tgChannels.filter(ch=>ch.is_group).map((ch,i)=>{
-            const realIdx = tgChannels.indexOf(ch);
-            return '<option value="'+ch.username+'" data-idx="'+realIdx+'">'+ch.name+' ('+ch.username+')</option>';
+    chSel.innerHTML = '<option value="">— Chọn group —</option>'
+        + tgChannels.filter(ch=>ch.is_group).map(ch=>{
+            return '<option value="'+ch.username+'">'+ch.name+' ('+ch.username+')</option>';
         }).join('');
     if(prevCh) chSel.value = prevCh;
-    cuUpdateTopicDd();
+    document.getElementById('cu-topics-wrap').style.display = 'none';
+    document.getElementById('cu-schedule-wrap').style.display = 'none';
+    document.getElementById('cu-run-btn').style.display = 'none';
+    document.getElementById('cu-auto-btn').style.display = 'none';
     document.getElementById('cu-status').textContent = '';
     document.getElementById('cu-bar-wrap').style.display = 'none';
     document.getElementById('cu-bar').style.width = '0%';
-    document.getElementById('cu-run-btn').disabled = false;
+    cuLoadSavedSchedules();
     document.getElementById('cleanup-modal').classList.add('open');
 }
 
-function cuUpdateTopicDd() {
-    const chSel   = document.getElementById('cu-channel');
-    const topicSel= document.getElementById('cu-topic');
-    const selOpt  = chSel.options[chSel.selectedIndex];
-    const chIdx   = selOpt ? parseInt(selOpt.dataset.idx) : -1;
-    const ch      = (chIdx >= 0) ? tgChannels[chIdx] : null;
-    const topics  = (ch && ch.topics) ? ch.topics : [];
-    topicSel.innerHTML = '<option value="">— Chọn topic —</option>'
-        + topics.map(t=>'<option value="'+t.id+'">'+t.name+' ('+t.id+')</option>').join('');
+function cuLoadTopics() {
+    const chSel  = document.getElementById('cu-channel');
+    const ch     = tgChannels.find(c=>c.username===chSel.value);
+    const topics = (ch && ch.topics) ? ch.topics : [];
+    const wrap   = document.getElementById('cu-topics-wrap');
+    const list   = document.getElementById('cu-topics-list');
+    if(!ch || topics.length === 0) {
+        wrap.style.display = 'none';
+        document.getElementById('cu-schedule-wrap').style.display = 'none';
+        document.getElementById('cu-run-btn').style.display = 'none';
+        document.getElementById('cu-auto-btn').style.display = 'none';
+        return;
+    }
+    list.innerHTML = topics.map((t,i)=>`
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;
+        ${i>0?'border-top:1px solid #f0f0e8':''}">
+        <input type="checkbox" id="cu-chk-${t.id}" value="${t.id}"
+          data-name="${t.name}" style="width:15px;height:15px;cursor:pointer"
+          onchange="cuUpdateButtons()">
+        <label for="cu-chk-${t.id}" style="flex:1;font-size:13px;cursor:pointer">
+          ${t.name} <span style="color:#aaa;font-size:11px">(${t.id})</span>
+        </label>
+        <input type="number" id="cu-cnt-${t.id}" min="1" value="100"
+          placeholder="Số bài xóa"
+          style="width:90px;padding:5px 8px;border:1px solid #d0d0c8;border-radius:6px;font-size:12px;text-align:center">
+      </div>
+    `).join('');
+    wrap.style.display = '';
+    document.getElementById('cu-schedule-wrap').style.display = '';
+    cuUpdateButtons();
+}
+
+function cuUpdateButtons() {
+    const anyChecked = document.querySelectorAll('#cu-topics-list input[type=checkbox]:checked').length > 0;
+    document.getElementById('cu-run-btn').style.display  = anyChecked ? '' : 'none';
+    document.getElementById('cu-auto-btn').style.display = anyChecked ? '' : 'none';
+}
+
+async function cuSaveSchedules() {
+    const channel = document.getElementById('cu-channel').value.trim();
+    const hour    = parseInt(document.getElementById('cu-hour').value) || 3;
+    const minute  = parseInt(document.getElementById('cu-minute').value) || 0;
+    const checked = [...document.querySelectorAll('#cu-topics-list input[type=checkbox]:checked')];
+    if(!checked.length) { showToastMsg('⚠️ Chọn ít nhất 1 topic'); return; }
+    let saved = 0;
+    for(const chk of checked) {
+        const tid   = chk.value;
+        const tname = chk.dataset.name || tid;
+        const count = parseInt(document.getElementById('cu-cnt-'+tid)?.value) || 100;
+        await fetch('/tg_cleanup_schedule_save', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({channel, topic_id: parseInt(tid), topic_name: tname,
+                                  count, hour, minute, enabled: true})
+        });
+        saved++;
+    }
+    showToastMsg(`✅ Đã lưu ${saved} schedule — chạy lúc ${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')} hàng ngày`);
+    cuLoadSavedSchedules();
+}
+
+async function cuLoadSavedSchedules() {
+    try {
+        const r = await fetch('/tg_cleanup_schedule_list', {method:'POST',
+            headers:{'Content-Type':'application/json'}, body:'{}'});
+        const d = await r.json();
+        const wrap = document.getElementById('cu-saved-wrap');
+        const list = document.getElementById('cu-saved-list');
+        if(!d.schedules || d.schedules.length === 0) { wrap.style.display='none'; return; }
+        wrap.style.display = '';
+        list.innerHTML = d.schedules.map((s,i)=>`
+          <div style="display:flex;align-items:center;gap:8px;padding:7px 12px;
+            ${i>0?'border-top:1px solid #f0f0e8':''};background:${s.enabled?'#fff':'#fafaf8'}">
+            <span style="flex:1;font-size:12px;color:${s.enabled?'#333':'#aaa'}">
+              <b>${s.channel}</b> / ${s.topic_name||s.topic_id}
+              — xóa ${s.count} tin lúc
+              ${String(s.hour).padStart(2,'0')}:${String(s.minute).padStart(2,'0')}
+              ${s.last_run?'<span style="color:#aaa">(chạy: '+s.last_run+')</span>':''}
+            </span>
+            <button onclick="cuToggleSchedule('${s.channel}','${s.topic_id}',${!s.enabled})"
+              style="padding:3px 8px;border:1px solid #d0d0c8;border-radius:5px;font-size:11px;cursor:pointer;background:#fff;color:${s.enabled?'#2563eb':'#aaa'}">
+              ${s.enabled?'✅ Bật':'⏸ Tắt'}
+            </button>
+            <button onclick="cuDeleteSchedule('${s.channel}','${s.topic_id}')"
+              style="padding:3px 8px;border:1px solid #fca5a5;border-radius:5px;font-size:11px;cursor:pointer;background:#fff;color:#dc2626">🗑</button>
+          </div>
+        `).join('');
+    } catch(e) {}
+}
+
+async function cuToggleSchedule(channel, topic_id, enabled) {
+    const r = await fetch('/tg_cleanup_schedule_list', {method:'POST',
+        headers:{'Content-Type':'application/json'}, body:'{}'});
+    const d = await r.json();
+    const s = d.schedules.find(x=>x.channel===channel && String(x.topic_id)===String(topic_id));
+    if(!s) return;
+    await fetch('/tg_cleanup_schedule_save', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({...s, enabled})
+    });
+    cuLoadSavedSchedules();
+}
+
+async function cuDeleteSchedule(channel, topic_id) {
+    if(!confirm(`Xóa schedule cho topic ${topic_id} của ${channel}?`)) return;
+    await fetch('/tg_cleanup_schedule_delete', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({channel, topic_id: parseInt(topic_id)})
+    });
+    cuLoadSavedSchedules();
 }
 
 function closeCleanupModal() {
     document.getElementById('cleanup-modal').classList.remove('open');
 }
 
-
-function cuSaveTopics(list) {
-    localStorage.setItem('cu_saved_topics', JSON.stringify(list));
-}
-
-
-
-
-
 let _cuPollTimer = null;
 
 async function runCleanup() {
     if (_cuRunning) return;
-    const channel  = document.getElementById('cu-channel').value.trim();
-    const topic    = document.getElementById('cu-topic').value.trim();
-    const countRaw = document.getElementById('cu-count').value.trim() || '100';
-    if (!channel) { showToastMsg('⚠️ Nhập kênh/group đích'); return; }
-    if (!topic)   { showToastMsg('⚠️ Nhập Topic ID'); return; }
-
-    const isAll  = countRaw.toLowerCase() === 'all';
-    const count  = isAll ? 999999 : parseInt(countRaw);
-    if (!isAll && isNaN(count)) { showToastMsg('⚠️ Số bài không hợp lệ'); return; }
-
-    if (!confirm(`Xóa ${isAll ? 'TẤT CẢ' : count + ' bài'} trong topic ${topic} của ${channel}?\nHành động này không thể hoàn tác!`)) return;
-
+    const channel = document.getElementById('cu-channel').value.trim();
+    const checked = [...document.querySelectorAll('#cu-topics-list input[type=checkbox]:checked')];
+    if(!channel) { showToastMsg('⚠️ Chọn group'); return; }
+    if(!checked.length) { showToastMsg('⚠️ Chọn ít nhất 1 topic'); return; }
+    const topics = checked.map(chk=>({
+        id: chk.value, name: chk.dataset.name || chk.value,
+        count: parseInt(document.getElementById('cu-cnt-'+chk.value)?.value) || 100
+    }));
+    const summary = topics.map(t=>`${t.name}: ${t.count} bài`).join(', ');
+    if(!confirm(`Xóa ${topics.length} topic(s):\n${summary}\n\nHành động này không thể hoàn tác!`)) return;
     _cuRunning = true;
     document.getElementById('cu-run-btn').disabled = true;
-    document.getElementById('cu-status').textContent = '⏳ Đang khởi động...';
+    document.getElementById('cu-auto-btn').disabled = true;
     document.getElementById('cu-bar-wrap').style.display = '';
     document.getElementById('cu-bar').style.width = '0%';
-
-    try {
-        const resp = await fetch('/tg_cleanup_topic', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ channel, topic_id: parseInt(topic), count })
-        });
-        const d = await resp.json();
-        if (!d.ok && d.error) {
-            document.getElementById('cu-status').textContent = '❌ ' + d.error;
-            _cuRunning = false;
-            document.getElementById('cu-run-btn').disabled = false;
-            return;
+    let totalDone = 0;
+    for(let i=0; i<topics.length; i++) {
+        const t = topics[i];
+        document.getElementById('cu-status').textContent =
+            `⏳ [${i+1}/${topics.length}] Đang xóa topic "${t.name}"...`;
+        try {
+            const resp = await fetch('/tg_cleanup_topic', {
+                method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({channel, topic_id: parseInt(t.id), count: t.count})
+            });
+            const d = await resp.json();
+            if(!d.ok) { document.getElementById('cu-status').textContent = '❌ '+(d.error||'Lỗi'); break; }
+            await new Promise(resolve=>{
+                const poll = setInterval(async()=>{
+                    try {
+                        const r2 = await fetch('/tg_cleanup_status', {method:'POST',
+                            headers:{'Content-Type':'application/json'},
+                            body: JSON.stringify({channel})});
+                        const st = await r2.json();
+                        const pct = st.total>0 ? Math.round(st.deleted/st.total*100) : 0;
+                        document.getElementById('cu-bar').style.width =
+                            Math.round((i/topics.length + pct/100/topics.length)*100)+'%';
+                        if(st.status==='done') { totalDone+=st.deleted; clearInterval(poll); resolve(); }
+                        else if(st.status==='error') {
+                            document.getElementById('cu-status').textContent = `❌ "${t.name}": ${st.error}`;
+                            clearInterval(poll); resolve();
+                        }
+                    } catch(e) { clearInterval(poll); resolve(); }
+                }, 2000);
+            });
+        } catch(e) {
+            document.getElementById('cu-status').textContent = '❌ Lỗi kết nối: '+e.message; break;
         }
-        // Poll status mỗi 2s
-        if (_cuPollTimer) clearInterval(_cuPollTimer);
-        _cuPollTimer = setInterval(async () => {
-            try {
-                const r2 = await fetch('/tg_cleanup_status', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ channel })
-                });
-                const st = await r2.json();
-                const pct = st.total > 0 ? Math.round(st.deleted / st.total * 100) : 0;
-                document.getElementById('cu-bar').style.width = pct + '%';
-                if (st.status === 'running') {
-                    document.getElementById('cu-status').textContent =
-                        `⏳ Đang xóa... ${st.deleted}/${st.total || '?'} tin`;
-                } else if (st.status === 'done') {
-                    clearInterval(_cuPollTimer); _cuPollTimer = null;
-                    document.getElementById('cu-status').textContent =
-                        `✅ Đã xóa ${st.deleted} tin trong topic ${topic}`;
-                    document.getElementById('cu-bar').style.width = '100%';
-                    showToastMsg(`✅ Đã dọn ${st.deleted} tin`);
-                    _cuRunning = false;
-                    document.getElementById('cu-run-btn').disabled = false;
-                } else if (st.status === 'error') {
-                    clearInterval(_cuPollTimer); _cuPollTimer = null;
-                    document.getElementById('cu-status').textContent = '❌ Lỗi: ' + st.error;
-                    _cuRunning = false;
-                    document.getElementById('cu-run-btn').disabled = false;
-                }
-            } catch(e) {}
-        }, 2000);
-    } catch(e) {
-        document.getElementById('cu-status').textContent = '❌ Lỗi kết nối: ' + e.message;
-        _cuRunning = false;
-        document.getElementById('cu-run-btn').disabled = false;
     }
+    document.getElementById('cu-bar').style.width = '100%';
+    document.getElementById('cu-status').textContent = `✅ Hoàn thành — đã xóa ${totalDone} tin`;
+    showToastMsg(`✅ Đã dọn ${totalDone} tin`);
+    _cuRunning = false;
+    document.getElementById('cu-run-btn').disabled = false;
+    document.getElementById('cu-auto-btn').disabled = false;
 }
 // ===================== END CLEANUP TOPIC =====================
 
@@ -5162,14 +5353,17 @@ class HttpHandler(BaseHTTPRequestHandler):
                         entity = await tg_client.get_entity(dest)
                         is_channel = hasattr(entity, 'broadcast') or hasattr(entity, 'megagroup')
 
-                        # Thu thập msg_ids trong topic
-                        msg_ids = []
+                        # Thu thập toàn bộ msg_ids trong topic (không giới hạn)
+                        all_ids = []
                         async for msg in tg_client.iter_messages(
-                            entity, reply_to=int(tid), limit=min(cnt, 200000)
+                            entity, reply_to=int(tid), limit=None
                         ):
                             if msg and msg.id != int(tid):
-                                msg_ids.append(msg.id)
+                                all_ids.append(msg.id)
 
+                        # Sort tăng dần (cũ → mới), lấy `cnt` tin cũ nhất để xóa
+                        all_ids.sort()
+                        msg_ids = all_ids[:cnt]  # cnt tin cũ nhất
                         _cleanup_status[ch_str]['total'] = len(msg_ids)
 
                         # Xóa theo batch 100
@@ -5203,6 +5397,39 @@ class HttpHandler(BaseHTTPRequestHandler):
             body = self._read_json()
             ch   = body.get('channel', '').strip()
             self._json(_cleanup_status.get(ch, {'status': 'unknown'}))
+
+        elif p.path == '/tg_cleanup_schedule_save':
+            # Lưu hoặc cập nhật 1 schedule: {channel, topic_id, count, hour, minute, enabled}
+            body     = self._read_json()
+            channel  = body.get('channel', '').strip()
+            topic_id = str(body.get('topic_id', '')).strip()
+            count    = int(body.get('count', 100))
+            hour     = int(body.get('hour', 3))
+            minute   = int(body.get('minute', 0))
+            enabled  = bool(body.get('enabled', True))
+            topic_name = str(body.get('topic_name', topic_id))
+            if not channel or not topic_id:
+                self._json({'error': 'Thiếu channel hoặc topic_id'}, 400); return
+            key = f'{channel}|{topic_id}'
+            _cleanup_schedules[key] = {
+                'channel': channel, 'topic_id': topic_id, 'topic_name': topic_name,
+                'count': count, 'hour': hour, 'minute': minute,
+                'enabled': enabled, 'last_run': _cleanup_schedules.get(key, {}).get('last_run', ''),
+            }
+            _persist_cleanup_schedules()
+            self._json({'ok': True})
+
+        elif p.path == '/tg_cleanup_schedule_delete':
+            body     = self._read_json()
+            channel  = body.get('channel', '').strip()
+            topic_id = str(body.get('topic_id', '')).strip()
+            key = f'{channel}|{topic_id}'
+            _cleanup_schedules.pop(key, None)
+            _persist_cleanup_schedules()
+            self._json({'ok': True})
+
+        elif p.path == '/tg_cleanup_schedule_list':
+            self._json({'schedules': list(_cleanup_schedules.values())})
 
         elif p.path == '/tg_read_all_stop':
             body_stop = self._read_json()
@@ -5314,6 +5541,7 @@ if __name__ == '__main__':
             _redis_client.ping()
             _deduplicator = RSSDeduplicator(_redis_client)
             print('[i] Redis Deduplicator: OK ✅')
+            _load_cleanup_schedules()
         except Exception as e:
             print(f'[!] Redis kết nối lỗi — dedup tắt: {e}')
     else:

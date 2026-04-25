@@ -3948,56 +3948,38 @@ async def _resolve_dest(dest_channel):
 
 async def _collect_topic_ids(entity, input_entity, tid_int):
     """
-    Thu thập TẤT CẢ msg_id trong một forum topic bằng GetRepliesRequest.
-    Telegram giới hạn thực tế 100 msg/request với API này.
+    Thu thập TẤT CẢ msg_id trong một forum topic.
+    Dùng iter_messages + filter reply_to_top_id == tid_int.
+    GetRepliesRequest không filter đúng topic trong forum supergroup.
     Trả về list[int] đã sort tăng dần (cũ → mới), không trùng lặp.
     """
-    from telethon.tl.functions.messages import GetRepliesRequest
-    seen   = set()
+    seen    = set()
     all_ids = []
-    offset_id = 0
-    limit  = 100  # Telegram thực tế giới hạn 100/request với GetRepliesRequest
-    while True:
-        try:
-            result = await tg_client(GetRepliesRequest(
-                peer=input_entity,
-                msg_id=tid_int,
-                offset_id=offset_id,
-                offset_date=None,
-                add_offset=0,
-                limit=limit,
-                max_id=0,
-                min_id=0,
-                hash=0,
-            ))
-        except Exception as e:
-            print(f'[Cleanup] GetRepliesRequest lỗi (offset={offset_id}): {e}')
-            break
+    batch_count = 0
 
-        msgs = getattr(result, 'messages', [])
-        if not msgs:
-            break
+    async for msg in tg_client.iter_messages(entity, limit=None):
+        if msg is None:
+            continue
+        # Bỏ chính tin topic header
+        if msg.id == tid_int:
+            continue
+        # Chỉ lấy tin thuộc đúng topic này
+        rt = getattr(msg, 'reply_to', None)
+        if rt is None:
+            continue
+        top_id = getattr(rt, 'reply_to_top_id', None)
+        rep_id = getattr(rt, 'reply_to_msg_id', None)
+        # Tin đầu tiên trong topic reply trực tiếp vào topic header (top_id=None, rep_id=tid)
+        # Các tin sau có top_id = tid
+        if top_id != tid_int and rep_id != tid_int:
+            continue
+        if msg.id not in seen:
+            seen.add(msg.id)
+            all_ids.append(msg.id)
 
-        new_in_batch = 0
-        for m in msgs:
-            if m and m.id != tid_int and m.id not in seen:
-                seen.add(m.id)
-                all_ids.append(m.id)
-                new_in_batch += 1
-
-        print(f'[Cleanup] Batch offset={offset_id}: {len(msgs)} msgs, {new_in_batch} mới, tổng={len(all_ids)}')
-
-        # Không có tin mới → đã hết hoặc loop
-        if new_in_batch == 0:
-            break
-
-        # Ít hơn limit → đây là batch cuối
-        if len(msgs) < limit:
-            break
-
-        # offset_id = ID nhỏ nhất trong batch → lần sau lấy tin cũ hơn
-        offset_id = min(m.id for m in msgs if m)
-        await asyncio.sleep(0.05)
+        # Log tiến trình mỗi 500 tin
+        if len(all_ids) % 500 == 0 and len(all_ids) > 0:
+            print(f'[Cleanup] Đang thu thập... {len(all_ids)} msgs topic={tid_int}')
 
     all_ids.sort()
     print(f'[Cleanup] Tổng thu thập: {len(all_ids)} msgs trong topic={tid_int}')
@@ -5419,6 +5401,26 @@ class HttpHandler(BaseHTTPRequestHandler):
                         input_entity = await tg_client.get_input_entity(dest)
                         is_channel   = hasattr(entity, 'broadcast') or hasattr(entity, 'megagroup')
                         tid_int      = int(tid)
+
+                        # Kiểm tra quyền admin trước khi xóa
+                        try:
+                            me = await tg_client.get_me()
+                            from telethon.tl.functions.channels import GetParticipantRequest
+                            part = await tg_client(GetParticipantRequest(channel=input_entity, participant=me.id))
+                            from telethon.tl.types import ChannelParticipantCreator, ChannelParticipantAdmin
+                            p = part.participant
+                            is_admin = isinstance(p, (ChannelParticipantCreator, ChannelParticipantAdmin))
+                            can_delete = is_admin and (
+                                isinstance(p, ChannelParticipantCreator) or
+                                getattr(getattr(p, 'admin_rights', None), 'delete_messages', False)
+                            )
+                            print(f'[Cleanup] Account is_admin={is_admin}, can_delete_messages={can_delete}')
+                            if not can_delete:
+                                raise PermissionError('Account không có quyền delete_messages trong channel này')
+                        except PermissionError:
+                            raise
+                        except Exception as pe:
+                            print(f'[Cleanup] Không kiểm tra được quyền: {pe} — tiếp tục thử xóa')
 
                         # Dùng GetRepliesRequest để lấy ĐÚNG toàn bộ tin trong topic
                         all_ids = await _collect_topic_ids(entity, input_entity, tid_int)

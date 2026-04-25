@@ -1080,17 +1080,46 @@ def strip_html(text):
 
 def _extract_first_hidden_link_url(item):
     """
-    Trích URL của link ẩn đầu tiên (MessageEntityTextUrl) từ item.
-    Dùng _tg_html_text nếu có, fallback parse desc.
-    Trả về URL string hoặc None nếu không có.
+    Giữ lại để tương thích — không còn dùng trực tiếp.
+    Dùng _expand_hidden_links_to_text thay thế.
     """
-    # Ưu tiên _tg_html_text đã lưu sẵn khi build item
-    html_src = item.get('_tg_html_text', '') or item.get('desc', '') or ''
+    html_src = item.get('_tg_html_text', '') or ''
     if not html_src:
         return None
-    # Tìm thẻ <a href="..."> đầu tiên
     m = re.search(r'<a\s+href=["\']([^"\']+)["\']', html_src, re.I)
     return m.group(1) if m else None
+
+
+def _expand_hidden_links_to_text(item):
+    """
+    Chuyển HTML có link ẩn thành plain text với URL nổi.
+    Mỗi <a href="URL">text</a> → "text:\nURL"
+    Các thẻ HTML khác (<b>, <i>, ...) bị strip bình thường.
+    Trả về plain text đã expand, hoặc None nếu item không có _tg_html_text.
+    """
+    html_src = item.get('_tg_html_text', '') or ''
+    if not html_src:
+        return None
+
+    # Thay mỗi <a href="URL">text</a> → "text:\nURL"
+    def _replace_anchor(m):
+        url  = m.group(1)
+        text = m.group(2).strip()
+        # Strip thẻ HTML lồng bên trong text nếu có
+        text = re.sub(r'<[^>]+>', '', text).strip()
+        if text:
+            return f'{text}:\n{url}'
+        return url
+
+    result = re.sub(
+        r'<a\s+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
+        _replace_anchor,
+        html_src,
+        flags=re.I | re.DOTALL
+    )
+    # Strip các thẻ HTML còn lại (<b>, <i>, ...)
+    result = re.sub(r'<[^>]+>', '', result)
+    return result.strip()
 
 def is_vietnamese(text):
     """Kiểm tra xem text có phải tiếng Việt không — dùng nhiều tín hiệu để tránh false positive"""
@@ -3958,25 +3987,24 @@ def _do_forward(processed, category, url):
                     desc_plain = re.sub(r'<[^>]+>', '', desc_plain)
                 else:
                     desc_plain = re.sub(r'<[^>]+>', '', desc_raw)
-                # Giữ nguyên format gốc — chỉ bỏ trailing whitespace/newline thừa cuối
-                caption = desc_plain.rstrip()
+                # Nếu có link ẩn → dùng text đã expand (link ẩn → URL nổi ngay tại chỗ)
+                _expanded = _expand_hidden_links_to_text(it)
+                if _expanded:
+                    caption = _expanded
+                else:
+                    caption = desc_plain.rstrip()
                 # desc_has_link: chỉ check https link trong nội dung gốc, bỏ qua t.me
                 # Bật web preview chỉ khi nội dung GỐC có external link
                 # Check từ desc_plain (content gốc, không tính Xem bài gốc + channel name)
                 # t.me links không cần preview, nhưng bbc.com, youtube.com... thì có
                 _raw_for_check = it.get('desc', '') or it.get('text', '') or ''
                 desc_has_link = bool(re.search(r'https?://(?!t\.me)', _raw_for_check))
+                # Nếu expanded có URL nổi → bật web preview
+                if _expanded:
+                    desc_has_link = True
 
                 if show_link and it.get('link'):
-                    # Nếu có link ẩn → chèn URL nổi trước "Xem bài gốc" để đảm bảo web preview
-                    _hidden_url = _extract_first_hidden_link_url(it)
-                    if _hidden_url:
-                        caption += f'\n\n{_hidden_url}'
                     caption += f'\n\n<a href="{it["link"]}">Xem bài gốc →</a>'
-                elif it.get('link'):
-                    _hidden_url = _extract_first_hidden_link_url(it)
-                    if _hidden_url:
-                        caption += f'\n\n{_hidden_url}'
                 if channel_name:
                     caption += f'\n\n<i>{channel_name}</i>'
 
@@ -5065,16 +5093,11 @@ class HttpHandler(BaseHTTPRequestHandler):
                         desc_raw   = it.get('desc', '') or ''
                         desc_plain = re.sub(r'<br\s*/?>', '\n', desc_raw, flags=re.I)
                         desc_plain = re.sub(r'<[^>]+>', '', desc_plain).strip()
-                        caption    = desc_plain
+                        # Nếu có link ẩn → dùng text đã expand
+                        _expanded = _expand_hidden_links_to_text(it)
+                        caption   = _expanded if _expanded else desc_plain
                         if show_link and it.get('link'):
-                            _hidden_url = _extract_first_hidden_link_url(it)
-                            if _hidden_url:
-                                caption += f'\n\n{_hidden_url}'
                             caption += f'\n\n<a href="{it["link"]}">Xem bài gốc →</a>'
-                        elif it.get('link'):
-                            _hidden_url = _extract_first_hidden_link_url(it)
-                            if _hidden_url:
-                                caption += f'\n\n{_hidden_url}'
                         if channel_name:
                             caption += f'\n\n<i>{channel_name}</i>'
 

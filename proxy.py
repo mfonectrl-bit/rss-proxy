@@ -3949,14 +3949,14 @@ async def _resolve_dest(dest_channel):
 async def _collect_topic_ids(entity, input_entity, tid_int):
     """
     Thu thập TẤT CẢ msg_id trong một forum topic bằng GetRepliesRequest.
-    Đây là API MTProto đúng cho Telegram forum topics — paginate qua offset_id.
+    Telegram giới hạn thực tế 100 msg/request với API này.
     Trả về list[int] đã sort tăng dần (cũ → mới), không trùng lặp.
     """
     from telethon.tl.functions.messages import GetRepliesRequest
-    seen = set()
+    seen   = set()
     all_ids = []
     offset_id = 0
-    limit = 200  # Telegram cho phép tối đa 200/request
+    limit  = 100  # Telegram thực tế giới hạn 100/request với GetRepliesRequest
     while True:
         try:
             result = await tg_client(GetRepliesRequest(
@@ -3985,17 +3985,22 @@ async def _collect_topic_ids(entity, input_entity, tid_int):
                 all_ids.append(m.id)
                 new_in_batch += 1
 
-        # Nếu không có tin mới → đã hết (tránh loop vô hạn)
+        print(f'[Cleanup] Batch offset={offset_id}: {len(msgs)} msgs, {new_in_batch} mới, tổng={len(all_ids)}')
+
+        # Không có tin mới → đã hết hoặc loop
         if new_in_batch == 0:
             break
 
+        # Ít hơn limit → đây là batch cuối
         if len(msgs) < limit:
             break
 
+        # offset_id = ID nhỏ nhất trong batch → lần sau lấy tin cũ hơn
         offset_id = min(m.id for m in msgs if m)
         await asyncio.sleep(0.05)
 
     all_ids.sort()
+    print(f'[Cleanup] Tổng thu thập: {len(all_ids)} msgs trong topic={tid_int}')
     return all_ids
 
 
@@ -5422,15 +5427,17 @@ class HttpHandler(BaseHTTPRequestHandler):
                         # GUARD: đảm bảo không xóa quá cnt tin
                         msg_ids = all_ids[:max(0, int(cnt))]
                         print(f'[Cleanup] Sẽ xóa {len(msg_ids)} msgs (cnt={cnt}), is_channel={is_channel}')
+                        print(f'[Cleanup] IDs mẫu (10 đầu): {msg_ids[:10]}')
                         assert len(msg_ids) <= int(cnt), f'Safety check fail: {len(msg_ids)} > {cnt}'
                         _cleanup_status[ch_str]['total'] = len(msg_ids)
 
-                        # Xóa theo batch 200 — dùng input_entity (Telethon yêu cầu)
+                        # Xóa theo batch 100 — dùng input_entity (Telethon yêu cầu)
                         deleted = 0
                         for i in range(0, len(msg_ids), 100):
                             batch = msg_ids[i:i+100]
                             if is_channel:
-                                await tg_client(ChDeleteMsg(channel=input_entity, id=batch))
+                                res = await tg_client(ChDeleteMsg(channel=input_entity, id=batch))
+                                print(f'[Cleanup] DeleteMsg result: pts={getattr(res,"pts",None)}, affected={getattr(res,"pts_count",None)}')
                             else:
                                 await tg_client(MsgDeleteMsg(id=batch, revoke=True))
                             deleted += len(batch)

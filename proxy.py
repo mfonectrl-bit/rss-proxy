@@ -1675,6 +1675,21 @@ def _run_cleanup_scheduler():
                                     await asyncio.sleep(0.5)
                                 _cleanup_status[ch_].update({'status': 'done', 'deleted': deleted})
                                 print(f'[Cleanup] Auto ✅ {ch_} topic={tid_}: xóa {deleted} tin')
+
+                                # Force refresh Telegram UI sau khi xóa một phần
+                                if deleted > 0 and deleted < len(all_ids):
+                                    try:
+                                        sent = await tg_client.send_message(
+                                            entity,
+                                            '.',
+                                            reply_to=tid_int,
+                                            silent=True
+                                        )
+                                        await asyncio.sleep(0.5)
+                                        await tg_client.delete_messages(entity, [sent.id], revoke=True)
+                                        print(f'[Cleanup] 🔄 Auto force UI refresh topic={tid_} OK')
+                                    except Exception as rf_err:
+                                        print(f'[Cleanup] Auto force refresh warning: {rf_err}')
                             except Exception as e:
                                 _cleanup_status[ch_].update({'status': 'error', 'error': str(e)})
                                 print(f'[Cleanup] Auto ❌ {ch_} topic={tid_}: {e}')
@@ -5477,6 +5492,23 @@ class HttpHandler(BaseHTTPRequestHandler):
 
                         _cleanup_status[ch_str].update({'status': 'done', 'deleted': deleted})
                         print(f'[Cleanup] ✅ {ch_str} topic={tid}: xóa {deleted} tin')
+
+                        # Force refresh Telegram UI: gửi + xóa ngay 1 tin dummy
+                        # Chỉ cần khi xóa một phần (xóa toàn bộ thì Telegram tự refresh)
+                        if deleted > 0 and deleted < len(all_ids):
+                            try:
+                                from telethon.tl.types import InputReplyToMessage
+                                sent = await tg_client.send_message(
+                                    entity,
+                                    '.',
+                                    reply_to=tid_int,
+                                    silent=True
+                                )
+                                await asyncio.sleep(0.5)
+                                await tg_client.delete_messages(entity, [sent.id], revoke=True)
+                                print(f'[Cleanup] 🔄 Force UI refresh topic={tid} OK')
+                            except Exception as rf_err:
+                                print(f'[Cleanup] Force refresh warning (không ảnh hưởng xóa): {rf_err}')
                     except Exception as e:
                         _cleanup_status[ch_str].update({'status': 'error', 'error': str(e)})
                         print(f'[Cleanup] ❌ {ch_str} topic={tid}: {e}')

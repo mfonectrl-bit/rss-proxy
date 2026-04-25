@@ -3965,22 +3965,37 @@ async def _resolve_dest(dest_channel):
 
 async def _collect_topic_ids(entity, input_entity, tid_int):
     """
-    Thu thập TẤT CẢ msg_id trong một forum topic.
-    Dùng iter_messages(reply_to=tid_int) — Telegram filter server-side,
-    trả về đúng global channel message IDs (dùng được với DeleteMessagesRequest).
-    Trả về list[int] đã sort tăng dần (cũ → mới), không trùng lặp.
+    Thu thập TẤT CẢ msg_id trong một forum topic (forum supergroup).
+    Quét toàn bộ channel, filter thủ công theo reply_to_top_id / reply_to_msg_id.
+    msg.id là global channel ID — đúng format cho channels.DeleteMessages.
+    Trả về list[int] đã sort tăng dần (cũ → mới).
     """
     seen    = set()
     all_ids = []
+    sampled = False  # log mẫu 5 tin đầu để debug
 
-    # reply_to=tid_int → Telethon/Telegram filter server-side chỉ tin trong thread
-    # msg.id là global channel ID — đúng format cần cho channels.DeleteMessages
-    async for msg in tg_client.iter_messages(entity, reply_to=tid_int, limit=None):
+    async for msg in tg_client.iter_messages(entity, limit=None):
         if msg is None or msg.id == tid_int:
             continue
+
+        rt     = getattr(msg, 'reply_to', None)
+        top_id = getattr(rt, 'reply_to_top_id', None) if rt else None
+        rep_id = getattr(rt, 'reply_to_msg_id',  None) if rt else None
+
+        belongs = (top_id == tid_int) or (rep_id == tid_int and top_id is None)
+        if not belongs:
+            continue
+
         if msg.id not in seen:
             seen.add(msg.id)
             all_ids.append(msg.id)
+
+            # Log 5 tin đầu để xác nhận đúng topic
+            if not sampled and len(all_ids) <= 5:
+                print(f'[Cleanup] Sample msg.id={msg.id} top_id={top_id} rep_id={rep_id}')
+            if len(all_ids) == 5:
+                sampled = True
+
         if len(all_ids) % 500 == 0 and len(all_ids) > 0:
             print(f'[Cleanup] Đang thu thập... {len(all_ids)} msgs topic={tid_int}')
 

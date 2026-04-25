@@ -5361,9 +5361,11 @@ class HttpHandler(BaseHTTPRequestHandler):
                             if msg and msg.id != int(tid):
                                 all_ids.append(msg.id)
 
+                        print(f'[Cleanup] Thu thập {len(all_ids)} msgs trong topic={tid}')
                         # Sort tăng dần (cũ → mới), lấy `cnt` tin cũ nhất để xóa
                         all_ids.sort()
                         msg_ids = all_ids[:cnt]  # cnt tin cũ nhất
+                        print(f'[Cleanup] Sẽ xóa {len(msg_ids)} msgs (cnt={cnt}), is_channel={is_channel}')
                         _cleanup_status[ch_str]['total'] = len(msg_ids)
 
                         # Xóa theo batch 100

@@ -3965,7 +3965,7 @@ async def _resolve_dest(dest_channel):
 
 async def _collect_topic_ids(entity, input_entity, tid_int):
     """
-    Dung GetRepliesRequest - API chinh xac nhat cho forum thread.
+    Thu thap TẤT CA msg_id trong forum topic dung GetRepliesRequest.
     Tra ve list[int] sort tang dan (cu -> moi).
     """
     from telethon.tl.functions.messages import GetRepliesRequest
@@ -3989,20 +3989,14 @@ async def _collect_topic_ids(entity, input_entity, tid_int):
         msgs = getattr(result, 'messages', [])
         if not msgs:
             break
-
         for msg in msgs:
-            if msg is None:
-                continue
-            if msg.id not in seen:
+            if msg is not None and msg.id not in seen:
                 seen.add(msg.id)
                 all_ids.append(msg.id)
-
         if len(all_ids) % 500 == 0 and len(all_ids) > 0:
             print(f'[Cleanup] Dang thu thap... {len(all_ids)} msgs topic={tid_int}')
-
         if len(msgs) < limit:
             break
-
         offset_id = min(m.id for m in msgs if m is not None)
         await asyncio.sleep(0.3)
 
@@ -5457,37 +5451,29 @@ class HttpHandler(BaseHTTPRequestHandler):
                         assert len(msg_ids) <= int(cnt), f'Safety check fail: {len(msg_ids)} > {cnt}'
                         _cleanup_status[ch_str]['total'] = len(msg_ids)
 
-                        # Xóa theo batch 100 — dùng input_entity (Telethon yêu cầu)
+                        # Xoa bang Telethon high-level API - tu xu ly peer dung
                         deleted = 0
                         for i in range(0, len(msg_ids), 100):
                             batch = msg_ids[i:i+100]
                             try:
-                                if is_channel:
-                                    res = await tg_client(ChDeleteMsg(channel=input_entity, id=batch))
-                                    affected = getattr(res, 'pts_count', None)
-                                    print(f'[Cleanup] DeleteMsg result: pts={getattr(res,"pts",None)}, affected={affected}')
-                                    # pts_count=0 thường do ID sai hoặc đã bị xóa — không cộng vào deleted
-                                    deleted += affected if (affected is not None and affected > 0) else len(batch)
-                                else:
-                                    await tg_client(MsgDeleteMsg(id=batch, revoke=True))
-                                    deleted += len(batch)
+                                result = await tg_client.delete_messages(entity, batch, revoke=True)
+                                n = sum(getattr(r, 'pts_count', 0) or 0 for r in (result if isinstance(result, list) else [result]))
+                                deleted += n if n > 0 else len(batch)
+                                print(f'[Cleanup] delete_messages batch={len(batch)} pts_count={n}')
                             except Exception as del_err:
                                 err_str = str(del_err)
                                 if 'FLOOD_WAIT' in err_str:
-                                    wait_sec = int(re.search(r'FLOOD_WAIT_(\d+)', err_str).group(1)) if re.search(r'FLOOD_WAIT_(\d+)', err_str) else 30
-                                    print(f'[Cleanup] FloodWait {wait_sec}s — đợi...')
+                                    import re as _re
+                                    m = _re.search(r'FLOOD_WAIT_(\d+)', err_str)
+                                    wait_sec = int(m.group(1)) if m else 30
+                                    print(f'[Cleanup] FloodWait {wait_sec}s - doi...')                                    
                                     await asyncio.sleep(wait_sec + 2)
-                                    # Retry batch này
-                                    if is_channel:
-                                        res = await tg_client(ChDeleteMsg(channel=input_entity, id=batch))
-                                        deleted += getattr(res, 'pts_count', len(batch)) or len(batch)
-                                    else:
-                                        await tg_client(MsgDeleteMsg(id=batch, revoke=True))
-                                        deleted += len(batch)
+                                    result = await tg_client.delete_messages(entity, batch, revoke=True)
+                                    deleted += len(batch)
                                 else:
                                     raise
                             _cleanup_status[ch_str]['deleted'] = deleted
-                            await asyncio.sleep(0.5)  # tránh flood: 0.5s giữa các batch
+                            await asyncio.sleep(0.5)
 
                         _cleanup_status[ch_str].update({'status': 'done', 'deleted': deleted})
                         print(f'[Cleanup] ✅ {ch_str} topic={tid}: xóa {deleted} tin')

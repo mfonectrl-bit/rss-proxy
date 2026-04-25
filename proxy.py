@@ -1673,8 +1673,9 @@ def _run_cleanup_scheduler():
                                             raise
                                     _cleanup_status[ch_]['deleted'] = deleted
                                     await asyncio.sleep(0.5)
-                                _cleanup_status[ch_].update({'status': 'done', 'deleted': deleted})
-                                print(f'[Cleanup] Auto ✅ {ch_} topic={tid_}: xóa {deleted} tin')
+                                remaining = max(0, len(all_ids) - deleted)
+                                _cleanup_status[ch_].update({'status': 'done', 'deleted': deleted, 'remaining': remaining})
+                                print(f'[Cleanup] Auto ✅ {ch_} topic={tid_}: xóa {deleted} tin, còn lại {remaining} tin')
 
                                 # Force refresh Telegram UI sau khi xóa một phần
                                 if deleted > 0 and deleted < len(all_ids):
@@ -3361,6 +3362,7 @@ async function runCleanup() {
     document.getElementById('cu-bar-wrap').style.display = '';
     document.getElementById('cu-bar').style.width = '0%';
     let totalDone = 0;
+    let lastRemaining = null;
     for(let i=0; i<topics.length; i++) {
         const t = topics[i];
         document.getElementById('cu-status').textContent =
@@ -3382,7 +3384,11 @@ async function runCleanup() {
                         const pct = st.total>0 ? Math.round(st.deleted/st.total*100) : 0;
                         document.getElementById('cu-bar').style.width =
                             Math.round((i/topics.length + pct/100/topics.length)*100)+'%';
-                        if(st.status==='done') { totalDone+=st.deleted; clearInterval(poll); resolve(); }
+                        if(st.status==='done') {
+                            totalDone += st.deleted;
+                            if(st.remaining != null) lastRemaining = st.remaining;
+                            clearInterval(poll); resolve();
+                        }
                         else if(st.status==='error') {
                             document.getElementById('cu-status').textContent = `❌ "${t.name}": ${st.error}`;
                             clearInterval(poll); resolve();
@@ -3395,7 +3401,10 @@ async function runCleanup() {
         }
     }
     document.getElementById('cu-bar').style.width = '100%';
-    document.getElementById('cu-status').textContent = `✅ Hoàn thành — đã xóa ${totalDone} tin`;
+    const remainingTxt = lastRemaining != null
+        ? ` — còn lại <b>~${lastRemaining} tin</b> <span style="color:#999;font-size:11px">(Telegram app cache, restart để thấy đúng)</span>`
+        : '';
+    document.getElementById('cu-status').innerHTML = `✅ Hoàn thành — đã xóa <b>${totalDone} tin</b>${remainingTxt}`;
     showToastMsg(`✅ Đã dọn ${totalDone} tin`);
     _cuRunning = false;
     document.getElementById('cu-run-btn').disabled = false;
@@ -5490,8 +5499,9 @@ class HttpHandler(BaseHTTPRequestHandler):
                             _cleanup_status[ch_str]['deleted'] = deleted
                             await asyncio.sleep(0.5)
 
-                        _cleanup_status[ch_str].update({'status': 'done', 'deleted': deleted})
-                        print(f'[Cleanup] ✅ {ch_str} topic={tid}: xóa {deleted} tin')
+                        remaining = max(0, len(all_ids) - deleted)
+                        _cleanup_status[ch_str].update({'status': 'done', 'deleted': deleted, 'remaining': remaining})
+                        print(f'[Cleanup] ✅ {ch_str} topic={tid}: xóa {deleted} tin, còn lại {remaining} tin')
 
                         # Force refresh Telegram UI: gửi + xóa ngay 1 tin dummy
                         # Chỉ cần khi xóa một phần (xóa toàn bộ thì Telegram tự refresh)

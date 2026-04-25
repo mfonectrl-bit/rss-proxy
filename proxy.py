@@ -3966,74 +3966,23 @@ async def _resolve_dest(dest_channel):
 async def _collect_topic_ids(entity, input_entity, tid_int):
     """
     Thu thập TẤT CẢ msg_id trong một forum topic.
-    Dùng GetRepliesRequest (pagination) — chỉ lấy đúng tin trong thread,
-    nhanh hơn iter_messages(limit=None) vì không phải quét toàn bộ channel.
+    Dùng iter_messages(reply_to=tid_int) — Telegram filter server-side,
+    trả về đúng global channel message IDs (dùng được với DeleteMessagesRequest).
     Trả về list[int] đã sort tăng dần (cũ → mới), không trùng lặp.
     """
-    from telethon.tl.functions.messages import GetRepliesRequest
-    from telethon.tl.types import InputMessageID
-
     seen    = set()
     all_ids = []
-    offset_id   = 0
-    offset_date = 0
-    add_offset  = 0
-    limit       = 100   # tối đa mỗi page
 
-    while True:
-        try:
-            result = await tg_client(GetRepliesRequest(
-                peer       = input_entity,
-                msg_id     = tid_int,
-                offset_id  = offset_id,
-                offset_date= offset_date,
-                add_offset = add_offset,
-                limit      = limit,
-                max_id     = 0,
-                min_id     = 0,
-                hash       = 0,
-            ))
-        except Exception as e:
-            # GetRepliesRequest có thể không hỗ trợ trên một số kiểu peer
-            # Fallback về iter_messages nhưng chỉ filter topic này
-            print(f'[Cleanup] GetRepliesRequest lỗi ({e}) — fallback iter_messages')
-            async for msg in tg_client.iter_messages(entity, limit=None):
-                if msg is None or msg.id == tid_int:
-                    continue
-                rt     = getattr(msg, 'reply_to', None)
-                if rt is None:
-                    continue
-                top_id = getattr(rt, 'reply_to_top_id', None)
-                rep_id = getattr(rt, 'reply_to_msg_id', None)
-                if top_id != tid_int and rep_id != tid_int:
-                    continue
-                if msg.id not in seen:
-                    seen.add(msg.id)
-                    all_ids.append(msg.id)
-                if len(all_ids) % 500 == 0 and all_ids:
-                    print(f'[Cleanup] Fallback thu thập... {len(all_ids)} msgs topic={tid_int}')
-            break
-
-        msgs = getattr(result, 'messages', [])
-        if not msgs:
-            break  # hết tin
-
-        for msg in msgs:
-            if msg is None or msg.id == tid_int:
-                continue
-            if msg.id not in seen:
-                seen.add(msg.id)
-                all_ids.append(msg.id)
-
-        if len(all_ids) % 500 == 0 and all_ids:
+    # reply_to=tid_int → Telethon/Telegram filter server-side chỉ tin trong thread
+    # msg.id là global channel ID — đúng format cần cho channels.DeleteMessages
+    async for msg in tg_client.iter_messages(entity, reply_to=tid_int, limit=None):
+        if msg is None or msg.id == tid_int:
+            continue
+        if msg.id not in seen:
+            seen.add(msg.id)
+            all_ids.append(msg.id)
+        if len(all_ids) % 500 == 0 and len(all_ids) > 0:
             print(f'[Cleanup] Đang thu thập... {len(all_ids)} msgs topic={tid_int}')
-
-        if len(msgs) < limit:
-            break  # trang cuối
-
-        # Pagination: offset_id = ID nhỏ nhất trong batch vừa lấy
-        offset_id = min(m.id for m in msgs if m is not None)
-        await asyncio.sleep(0.3)   # tránh flood wait
 
     all_ids.sort()
     print(f'[Cleanup] Tổng thu thập: {len(all_ids)} msgs trong topic={tid_int}')

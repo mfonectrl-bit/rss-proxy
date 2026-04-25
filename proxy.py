@@ -3670,22 +3670,20 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
                             caption = gm.message
                             break
 
-                # Phát hiện audio/document group: Telegram KHÔNG hỗ trợ caption trên
-                # media group chứa audio/document — caption chỉ gắn vào file đầu tiên.
-                # Với audio group → gửi từng file không caption, rồi gửi caption riêng.
-                def _is_audio_or_doc(media):
+                # Chỉ treat là audio group khi TẤT CẢ file đều là pure audio (DocumentAttributeAudio).
+                # Video album và photo album Telegram hỗ trợ caption bình thường → không tách.
+                def _is_pure_audio(media):
                     if not isinstance(media, MessageMediaDocument):
                         return False
                     doc = getattr(media, 'document', None)
                     if not doc:
                         return False
                     attrs = getattr(doc, 'attributes', [])
-                    for a in attrs:
-                        if isinstance(a, (DocumentAttributeAudio, DocumentAttributeVideo)):
-                            return True
-                    return True  # Document không phải ảnh/video inline → treat as file
+                    has_audio = any(isinstance(a, DocumentAttributeAudio) for a in attrs)
+                    has_video = any(isinstance(a, DocumentAttributeVideo) for a in attrs)
+                    return has_audio and not has_video
 
-                is_audio_group = len(media_list) > 1 and any(_is_audio_or_doc(m) for m in media_list)
+                is_audio_group = len(media_list) > 1 and all(_is_pure_audio(m) for m in media_list)
 
                 if len(media_list) == 1:
                     # Tin đơn: gắn caption vào media

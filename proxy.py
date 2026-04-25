@@ -615,18 +615,18 @@ class EngineDispatcher:
 
     # Rate limit config (requests/phút)
     LIMITS = {
-        'gemini': 10,   # Gemini free: 15/phút hard limit — dùng 10 để tránh fixed-window burst
+        'gemini': 8,    # Gemini free: 10 RPM thực tế — dùng 8 để có buffer, tránh burst
         'deepl' : 40,   # DeepL free: ~500k ký tự/tháng, không giới hạn/phút cứng
         'google': 999,  # Google: không giới hạn cứng
     }
     # Minimum interval giữa 2 request liên tiếp (giây) — trải đều trong phút
     MIN_INTERVAL = {
-        'gemini': 6.0,  # 10 req/phút = 1 req/6s → trải đều, tránh burst
+        'gemini': 8.0,  # 8 req/phút = 1 req/7.5s → dùng 8s để chắc không burst
         'deepl' : 1.5,
         'google': 0.0,
     }
-    COOLDOWN_SEC  = 300   # 5 phút cooldown sau khi bị rate limit
-    MAX_FAILS     = 2     # số lần lỗi liên tiếp trước khi cooldown
+    COOLDOWN_SEC  = 600   # 10 phút cooldown sau khi bị rate limit (free tier recover chậm)
+    MAX_FAILS     = 1     # cooldown ngay sau lần lỗi đầu tiên — fallback DeepL/Google nhanh hơn
 
     def __init__(self):
         self._lock = threading.Lock()
@@ -990,7 +990,10 @@ def _translate_gemini(text):
         return result
     except urllib.error.HTTPError as e:
         body = e.read().decode('utf-8', errors='ignore')
-        raise RuntimeError(f'Gemini HTTP {e.code}: {body[:200]}')
+        # Parse Retry-After nếu có để log chính xác
+        retry_after = e.headers.get('Retry-After', '') if hasattr(e, 'headers') else ''
+        ra_str = f' retry-after={retry_after}s' if retry_after else ''
+        raise RuntimeError(f'Gemini HTTP {e.code}{ra_str}: {body[:200]}')
 
 def _translate_gemini_html(html_text):
     """
@@ -1023,7 +1026,9 @@ def _translate_gemini_html(html_text):
         return result
     except urllib.error.HTTPError as e:
         body = e.read().decode('utf-8', errors='ignore')
-        raise RuntimeError(f'Gemini HTML HTTP {e.code}: {body[:200]}')
+        retry_after = e.headers.get('Retry-After', '') if hasattr(e, 'headers') else ''
+        ra_str = f' retry-after={retry_after}s' if retry_after else ''
+        raise RuntimeError(f'Gemini HTML HTTP {e.code}{ra_str}: {body[:200]}')
 
 
 def _translate_deepl_html(html_text):
@@ -1054,13 +1059,18 @@ def _translate_with_hidden_links(html_text):
     Ưu tiên: Gemini HTML → DeepL HTML → Google plain text (link mất, chấp nhận được).
     Trả về (translated_text, engine_used, is_html).
     """
-    # Thử Gemini trước
-    if GEMINI_API_KEY:
+    # Thử Gemini trước — CHỈ khi Dispatcher cho phép (tránh gọi khi đang cooldown)
+    if GEMINI_API_KEY and _engine_dispatcher._is_available('gemini', __import__('time').time()):
         try:
             result = _translate_gemini_html(html_text)
+            _engine_dispatcher._record_success('gemini')
             return result, 'gemini', True
         except Exception as e:
+            is_rl = '429' in str(e) or 'quota' in str(e).lower()
+            _engine_dispatcher._record_failure('gemini', is_rate_limit=is_rl)
             print(f'[Translate] Gemini HTML lỗi: {e} — thử DeepL HTML')
+    elif GEMINI_API_KEY:
+        print(f'[Translate] Gemini HTML skip (cooldown) — thử DeepL HTML')
 
     # Thử DeepL
     if DEEPL_API_KEY:
@@ -1390,61 +1400,65 @@ _tg_new_message_handler = None
 # Cache các channel đã resolve thành công để không resolve lại mỗi lần WS reconnect
 _resolved_channels_cache = set()
 
+_tg_setup_lock = asyncio.Lock()  # Tránh concurrent setup gây duplicate handler
+
 async def _tg_setup_realtime(feed_urls):
     """
     Setup real-time listener cho danh sách feed URLs.
     - Resolve channel mới (chưa có trong cache) tuần tự với delay nhỏ
     - Luôn đăng ký handler với TOÀN BỘ channels (cached + newly resolved)
+    - Lock để tránh 2 lần gọi song song gây duplicate handler
     """
     global _tg_new_message_handler, _resolved_channels_cache
 
     if not tg_client or not await tg_client.is_user_authorized():
         return
 
-    # Xóa event handlers cũ
-    try:
-        for callback, event in tg_client.list_event_handlers():
-            tg_client.remove_event_handler(callback, event)
-    except Exception:
-        pass
-    _tg_new_message_handler = None
+    async with _tg_setup_lock:
+        # Xóa event handlers cũ
+        try:
+            for callback, event in tg_client.list_event_handlers():
+                tg_client.remove_event_handler(callback, event)
+        except Exception:
+            pass
+        _tg_new_message_handler = None
 
-    if not feed_urls:
-        return
+        if not feed_urls:
+            return
 
-    def _to_channel_id(u):
-        n = normalize_tg_channel(u)
-        stripped = n.lstrip('-')
-        if stripped.isdigit() and len(stripped) >= 5:
-            return int(n)  # numeric ID → int cho Telethon
-        return n.lstrip('@')
-    raw_channels = [_to_channel_id(u) for u in feed_urls]
+        def _to_channel_id(u):
+            n = normalize_tg_channel(u)
+            stripped = n.lstrip('-')
+            if stripped.isdigit() and len(stripped) >= 5:
+                return int(n)  # numeric ID → int cho Telethon
+            return n.lstrip('@')
+        raw_channels = [_to_channel_id(u) for u in feed_urls]
 
-    # Resolve các channel chưa có trong cache
-    need_resolve = [ch for ch in raw_channels if ch not in _resolved_channels_cache]
-    if need_resolve:
-        print(f'[TG] Resolve {len(need_resolve)} channels mới...')
-        for ch in need_resolve:
-            try:
-                await tg_client.get_input_entity(ch)
-                _resolved_channels_cache.add(ch)
-                await asyncio.sleep(2.0)  # 2s/channel tránh FloodWait ResolveUsername
-            except Exception as e:
-                err_str = str(e)
-                if 'FloodWait' in err_str or 'flood' in err_str.lower():
-                    # Bị rate limit resolve → dừng lại, không resolve tiếp
-                    print(f'[TG] FloodWait khi resolve — dừng resolve, dùng cache hiện có: {e}')
-                    break
-                print(f'[TG] Bỏ qua @{ch}: {e}')
-                await asyncio.sleep(2.0)
+        # Resolve các channel chưa có trong cache
+        need_resolve = [ch for ch in raw_channels if ch not in _resolved_channels_cache]
+        if need_resolve:
+            print(f'[TG] Resolve {len(need_resolve)} channels mới...')
+            for ch in need_resolve:
+                try:
+                    await tg_client.get_input_entity(ch)
+                    _resolved_channels_cache.add(ch)
+                    await asyncio.sleep(2.0)  # 2s/channel tránh FloodWait ResolveUsername
+                except Exception as e:
+                    err_str = str(e)
+                    if 'FloodWait' in err_str or 'flood' in err_str.lower():
+                        # Bị rate limit resolve → dừng lại, không resolve tiếp
+                        print(f'[TG] FloodWait khi resolve — dừng resolve, dùng cache hiện có: {e}')
+                        break
+                    print(f'[TG] Bỏ qua @{ch}: {e}')
+                    await asyncio.sleep(2.0)
 
-    # Luôn đăng ký với TẤT CẢ channels đã resolve thành công
-    all_channels = [ch for ch in raw_channels if ch in _resolved_channels_cache]
-    if all_channels:
-        print(f'[TG] Đăng ký real-time đầy đủ: {len(all_channels)} channels')
-        await _register_handler(all_channels)
-    else:
-        print('[TG] Không có channel nào resolve được')
+        # Luôn đăng ký với TẤT CẢ channels đã resolve thành công
+        all_channels = [ch for ch in raw_channels if ch in _resolved_channels_cache]
+        if all_channels:
+            print(f'[TG] Đăng ký real-time đầy đủ: {len(all_channels)} channels')
+            await _register_handler(all_channels)
+        else:
+            print('[TG] Không có channel nào resolve được')
 
 async def _register_handler(channels_list):
     """Đăng ký event handler cho danh sách channels"""
@@ -4855,11 +4869,15 @@ def poller():
                             if not handlers:
                                 tg_urls_all = [u['url'] for u in watched_urls if is_tg_source(u.get('url', ''))]
                                 if tg_urls_all:
+                                    # Reset debounce timestamp để force re-register
+                                    _tg_realtime_last_setup = 0.0
+                                    _tg_realtime_last_urls.clear()
                                     tg_run_long(_tg_setup_realtime(tg_urls_all), timeout=300)
                                     _tg_realtime_last_setup = time.time()
+                                    _tg_realtime_last_urls.update(tg_urls_all)
                                     print(f'[TG Watchdog] ✅ Re-register {len(tg_urls_all)} channels (handler bị mất)')
                             else:
-                                print(f'[TG Watchdog] ✅ Handler OK — không cần re-register')
+                                print(f'[TG Watchdog] ✅ Handler OK ({len(handlers)} handlers) — không cần re-register')
                         else:
                             print('[TG Watchdog] ⚠️ Mất xác thực Telethon')
                     except Exception as e:

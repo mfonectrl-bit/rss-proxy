@@ -1646,8 +1646,8 @@ def _run_cleanup_scheduler():
                                 msg_ids = all_ids[:cnt_]
                                 _cleanup_status[ch_]['total'] = len(msg_ids)
                                 deleted = 0
-                                for i in range(0, len(msg_ids), 200):
-                                    batch = msg_ids[i:i+200]
+                                for i in range(0, len(msg_ids), 100):
+                                    batch = msg_ids[i:i+100]
                                     if is_ch:
                                         await tg_client(ChDel(channel=input_entity, id=batch))
                                     else:
@@ -5411,8 +5411,8 @@ class HttpHandler(BaseHTTPRequestHandler):
 
                         # Xóa theo batch 200 — dùng input_entity (Telethon yêu cầu)
                         deleted = 0
-                        for i in range(0, len(msg_ids), 200):
-                            batch = msg_ids[i:i+200]
+                        for i in range(0, len(msg_ids), 100):
+                            batch = msg_ids[i:i+100]
                             if is_channel:
                                 await tg_client(ChDeleteMsg(channel=input_entity, id=batch))
                             else:

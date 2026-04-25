@@ -900,7 +900,10 @@ if GEMINI_API_KEY: _engines_ready.append('Gemini ✅')
 if DEEPL_API_KEY:  _engines_ready.append('DeepL ✅')
 _engines_ready.append('Google ✅')
 print(f'[i] Engine dịch: {" | ".join(_engines_ready)} — ưu tiên: {_active_engine}')
-print(f'[i] EngineDispatcher: Gemini=10/min(min 6s/req) | DeepL=40/min | Google=unlimited')
+_ed = _engine_dispatcher
+_g_lim = _ed.LIMITS['gemini']; _g_iv = int(_ed.MIN_INTERVAL['gemini'])
+_d_lim = _ed.LIMITS['deepl']
+print(f'[i] EngineDispatcher: Gemini={_g_lim}/min(min {_g_iv}s/req) | DeepL={_d_lim}/min | Google=unlimited')
 
 try:
     from telethon import TelegramClient, events
@@ -3628,6 +3631,7 @@ function connectWS(){
         }
         // Gửi feeds qua HTTP chỉ 1 lần — không lặp lại mỗi khi WS reconnect
         if(feedsSynced) return;
+        feedsSynced = true;  // set ngay để tránh gọi đôi nếu onopen fire 2 lần
         fetch('/sync_feeds', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
@@ -3639,7 +3643,6 @@ function connectWS(){
             })
         }).then(r=>r.json()).then(d=>{
             if(d.ok){
-                feedsSynced=true;
                 feedsAckReceived=true;
                 if(feedsAckTimer){clearTimeout(feedsAckTimer);feedsAckTimer=null;}
                 document.getElementById('ws-lbl').textContent='Đang theo dõi';
@@ -3647,9 +3650,10 @@ function connectWS(){
             }
         }).catch(e=>{
             console.warn('[HTTP] sync_feeds lỗi:',e);
-            // Retry sau 5s nếu lỗi mạng
+            // Reset để retry sau 5s nếu lỗi mạng thực sự
+            feedsSynced=false;
             if(feedsAckTimer) clearTimeout(feedsAckTimer);
-            feedsAckTimer=setTimeout(()=>{ feedsSynced=false; _sendInitMessages(); }, 5000);
+            feedsAckTimer=setTimeout(()=>{ _sendInitMessages(); }, 5000);
         });
         // Fetch RSS sau khi init (song song ok vì không dùng Telethon)
         if(wsReconnectCount>1){

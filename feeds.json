@@ -1811,7 +1811,7 @@
       "history_limit": 5
     }
   ],
-  "auto_fwd": true,
+  "auto_fwd": false,
   "tg_channels": [
     {
       "username": "3801422731",

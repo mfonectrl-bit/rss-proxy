@@ -1078,6 +1078,20 @@ def _translate_with_hidden_links(html_text):
 def strip_html(text):
     return re.sub(r'<[^>]+>', ' ', text).strip()
 
+def _extract_first_hidden_link_url(item):
+    """
+    Trích URL của link ẩn đầu tiên (MessageEntityTextUrl) từ item.
+    Dùng _tg_html_text nếu có, fallback parse desc.
+    Trả về URL string hoặc None nếu không có.
+    """
+    # Ưu tiên _tg_html_text đã lưu sẵn khi build item
+    html_src = item.get('_tg_html_text', '') or item.get('desc', '') or ''
+    if not html_src:
+        return None
+    # Tìm thẻ <a href="..."> đầu tiên
+    m = re.search(r'<a\s+href=["\']([^"\']+)["\']', html_src, re.I)
+    return m.group(1) if m else None
+
 def is_vietnamese(text):
     """Kiểm tra xem text có phải tiếng Việt không — dùng nhiều tín hiệu để tránh false positive"""
     clean = strip_html(text)
@@ -3954,7 +3968,15 @@ def _do_forward(processed, category, url):
                 desc_has_link = bool(re.search(r'https?://(?!t\.me)', _raw_for_check))
 
                 if show_link and it.get('link'):
+                    # Nếu có link ẩn → chèn URL nổi trước "Xem bài gốc" để đảm bảo web preview
+                    _hidden_url = _extract_first_hidden_link_url(it)
+                    if _hidden_url:
+                        caption += f'\n\n{_hidden_url}'
                     caption += f'\n\n<a href="{it["link"]}">Xem bài gốc →</a>'
+                elif it.get('link'):
+                    _hidden_url = _extract_first_hidden_link_url(it)
+                    if _hidden_url:
+                        caption += f'\n\n{_hidden_url}'
                 if channel_name:
                     caption += f'\n\n<i>{channel_name}</i>'
 
@@ -5045,7 +5067,14 @@ class HttpHandler(BaseHTTPRequestHandler):
                         desc_plain = re.sub(r'<[^>]+>', '', desc_plain).strip()
                         caption    = desc_plain
                         if show_link and it.get('link'):
+                            _hidden_url = _extract_first_hidden_link_url(it)
+                            if _hidden_url:
+                                caption += f'\n\n{_hidden_url}'
                             caption += f'\n\n<a href="{it["link"]}">Xem bài gốc →</a>'
+                        elif it.get('link'):
+                            _hidden_url = _extract_first_hidden_link_url(it)
+                            if _hidden_url:
+                                caption += f'\n\n{_hidden_url}'
                         if channel_name:
                             caption += f'\n\n<i>{channel_name}</i>'
 

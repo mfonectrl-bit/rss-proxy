@@ -842,9 +842,11 @@ class BatchPipeline:
                         # Dịch bảo toàn link ẩn: Gemini HTML → DeepL HTML → Google plain
                         translated, _eng, _is_html = _translate_with_hidden_links(html_text)
                         item['_translated_is_html'] = _is_html
-                        if _is_html:
-                            # Lưu HTML đã dịch lại để _expand_hidden_links_to_text dùng đúng bản dịch
-                            item['_tg_html_text'] = translated
+                        # Luôn update _tg_html_text bằng kết quả dịch:
+                        # - Nếu _is_html=True: HTML đã dịch → _expand_hidden_links_to_text dùng đúng
+                        # - Nếu _is_html=False (Google fallback): plain text đã dịch → expand trả None
+                        #   → _do_forward fallback về desc_plain (đã dịch) — vẫn đúng
+                        item['_tg_html_text'] = translated
                     else:
                         # Bản tin thường: giữ flow cũ
                         translated = _fast_translate(text)
@@ -4167,9 +4169,8 @@ def _run_read_all_bg(url, feed_cfg):
                     # Dịch bảo toàn link ẩn: Gemini HTML → DeepL HTML → Google plain
                     translated, _eng, _is_html = _translate_with_hidden_links(_html_text)
                     item["_translated_is_html"] = _is_html
-                    if _is_html:
-                        # Lưu HTML đã dịch lại để _expand_hidden_links_to_text dùng đúng bản dịch
-                        item["_tg_html_text"] = translated
+                    # Luôn update _tg_html_text — xem giải thích ở BatchPipeline
+                    item["_tg_html_text"] = translated
                 else:
                     # Bản tin thường: giữ flow cũ
                     translated = _fast_translate(msg_text)

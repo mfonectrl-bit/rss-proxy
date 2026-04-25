@@ -3992,6 +3992,7 @@ def _do_forward(processed, category, url):
                     desc_plain = re.sub(r'<[^>]+>', '', desc_raw)
                 # Nếu có link ẩn → dùng text đã expand (link ẩn → URL nổi ngay tại chỗ)
                 _expanded = _expand_hidden_links_to_text(it)
+                print(f'[DEBUG fwd] guid={it.get("guid","")} has_hidden={it.get("_tg_has_hidden_link")} html_text_len={len(it.get("_tg_html_text",""))} expanded={bool(_expanded)}')
                 if _expanded:
                     caption = _expanded
                 else:

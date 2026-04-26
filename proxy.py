@@ -602,7 +602,8 @@ def _default_engine():
         return 'deepl'
     return 'google'
 
-translate_engine = _default_engine()
+translate_engine      = _default_engine()
+translate_target_lang = 'vi'   # ngôn ngữ đích dịch — có thể đổi qua UI
 
 class EngineDispatcher:
     """
@@ -942,8 +943,8 @@ def _translate_deepl(text):
     payload = urllib.parse.urlencode({
         'auth_key': DEEPL_API_KEY,
         'text': text[:4000],
-        'target_lang': 'VI',
-        'source_lang': 'EN',
+        'target_lang': translate_target_lang.upper(),
+        'source_lang': 'auto',
     }).encode('utf-8')
     base = 'api-free.deepl.com' if DEEPL_API_KEY.endswith(':fx') else 'api.deepl.com'
     req = urllib.request.Request(
@@ -957,7 +958,7 @@ def _translate_deepl(text):
 def _translate_google(text):
     """Dịch bằng Google Translate (deep_translator) — fallback"""
     try:
-        result = GoogleTranslator(source='auto', target='vi').translate(text)
+        result = GoogleTranslator(source='auto', target=translate_target_lang).translate(text)
         return result or text
     except Exception as e:
         err_str = str(e)
@@ -1040,8 +1041,8 @@ def _translate_deepl_html(html_text):
     payload = urllib.parse.urlencode({
         'auth_key': DEEPL_API_KEY,
         'text': html_text[:4000],
-        'target_lang': 'VI',
-        'source_lang': 'EN',
+        'target_lang': translate_target_lang.upper(),
+        'source_lang': 'auto',
         'tag_handling': 'html',
     }).encode('utf-8')
     base = 'api-free.deepl.com' if DEEPL_API_KEY.endswith(':fx') else 'api.deepl.com'
@@ -1103,7 +1104,7 @@ def _translate_with_hidden_links(html_text):
                         and inner[0] not in '.,!?:;)】」』"\'':
                     inner = ' ' + inner
                 try:
-                    translated = GoogleTranslator(source='auto', target='vi').translate(inner)
+                    translated = GoogleTranslator(source='auto', target=translate_target_lang).translate(inner)
                     result.append(leading + (translated or inner) + trailing)
                 except Exception:
                     result.append(part)
@@ -2055,6 +2056,47 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
 <button class="tg-save" style="background:#6366f1" onclick="openTelethonModal()">⚡ Telethon</button>
 <span id="tg-saved" style="display:none;color:#16a34a;font-size:11px">✓ Đã lưu</span>
 <span id="tg-auth-badge" style="font-size:11px;color:#aaa">Telethon: chưa kết nối</span>
+<span style="display:flex;align-items:center;gap:6px;font-size:12px;color:#374151;font-weight:600">
+  🗣 Ngôn ngữ:
+  <select id="lang-select" onchange="setTranslateLang(this.value)"
+    style="padding:4px 8px;border:1px solid #d1d5db;border-radius:7px;font-size:12px;background:#fff;cursor:pointer">
+    <option value="vi">🇻🇳 Tiếng Việt</option>
+    <option value="en">🇬🇧 English</option>
+    <option value="zh">🇨🇳 中文 (Chinese)</option>
+    <option value="ja">🇯🇵 日本語 (Japanese)</option>
+    <option value="ko">🇰🇷 한국어 (Korean)</option>
+    <option value="fr">🇫🇷 Français (French)</option>
+    <option value="de">🇩🇪 Deutsch (German)</option>
+    <option value="es">🇪🇸 Español (Spanish)</option>
+    <option value="pt">🇵🇹 Português (Portuguese)</option>
+    <option value="it">🇮🇹 Italiano (Italian)</option>
+    <option value="ru">🇷🇺 Русский (Russian)</option>
+    <option value="ar">🇸🇦 العربية (Arabic)</option>
+    <option value="hi">🇮🇳 हिन्दी (Hindi)</option>
+    <option value="th">🇹🇭 ภาษาไทย (Thai)</option>
+    <option value="id">🇮🇩 Bahasa Indonesia</option>
+    <option value="ms">🇲🇾 Bahasa Melayu</option>
+    <option value="nl">🇳🇱 Nederlands (Dutch)</option>
+    <option value="pl">🇵🇱 Polski (Polish)</option>
+    <option value="sv">🇸🇪 Svenska (Swedish)</option>
+    <option value="tr">🇹🇷 Türkçe (Turkish)</option>
+    <option value="uk">🇺🇦 Українська (Ukrainian)</option>
+    <option value="cs">🇨🇿 Čeština (Czech)</option>
+    <option value="ro">🇷🇴 Română (Romanian)</option>
+    <option value="hu">🇭🇺 Magyar (Hungarian)</option>
+    <option value="el">🇬🇷 Ελληνικά (Greek)</option>
+    <option value="da">🇩🇰 Dansk (Danish)</option>
+    <option value="fi">🇫🇮 Suomi (Finnish)</option>
+    <option value="nb">🇳🇴 Norsk (Norwegian)</option>
+    <option value="sk">🇸🇰 Slovenčina (Slovak)</option>
+    <option value="bg">🇧🇬 Български (Bulgarian)</option>
+    <option value="hr">🇭🇷 Hrvatski (Croatian)</option>
+    <option value="lt">🇱🇹 Lietuvių (Lithuanian)</option>
+    <option value="lv">🇱🇻 Latviešu (Latvian)</option>
+    <option value="et">🇪🇪 Eesti (Estonian)</option>
+    <option value="sl">🇸🇮 Slovenščina (Slovenian)</option>
+  </select>
+</span>
 <span style="margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12px;color:#92400e;font-weight:600">
   🌐 Dịch:
   <select id="engine-select" onchange="setTranslateEngine(this.value)"
@@ -2362,6 +2404,7 @@ let tgChannels=JSON.parse(localStorage.getItem('tg_channels')||'null')||[];
 let allItems=[],newBadges={},filterUrl=null,searchQ='',ws=null,wsReady=false,shownCount=PAGE_SIZE;
 let translateOn=JSON.parse(localStorage.getItem('translate_on')??'true');
 let translateEngine=localStorage.getItem('translate_engine')||'deepl';
+let translateLang=localStorage.getItem('translate_lang')||'vi';
 let selected=new Set(),autoFwd=JSON.parse(localStorage.getItem('auto_fwd')??'false');
 let editFeedIndex=-1,selectedChannelIndex=-1;
 let pollInterval=60,pollNextIn=0;
@@ -2377,6 +2420,11 @@ function setTranslateEngine(val){
     translateEngine=val;
     localStorage.setItem('translate_engine',val);
     wsSend({type:'translate_engine',engine:val});
+}
+function setTranslateLang(val){
+    translateLang=val;
+    localStorage.setItem('translate_lang',val);
+    wsSend({type:'translate_lang',lang:val});
 }
 function adjustLayout(){
     const h=document.getElementById('top-fixed').offsetHeight;
@@ -3784,9 +3832,11 @@ function showToastMsg(msg){
             }).catch(()=>{});
     }).catch(()=>{});
     checkTelethonStatus();
-    // Khôi phục engine đã chọn từ localStorage
+    // Khôi phục engine và ngôn ngữ đã chọn từ localStorage
     const sel=document.getElementById('engine-select');
     if(sel) sel.value=translateEngine;
+    const langSel=document.getElementById('lang-select');
+    if(langSel) langSel.value=translateLang;
     connectWS();
     // Chỉ load RSS feeds ngay lập tức
     // TG feeds: không gọi /tl_fetch lúc init vì server đang bận setup realtime listeners
@@ -4994,7 +5044,7 @@ def poller():
             time.sleep(5)   # tránh cpu 100% nếu lỗi liên tục
 
 def ws_handler(ws):
-    global translate_enabled, auto_fwd_enabled, tg_channels, translate_engine
+    global translate_enabled, auto_fwd_enabled, tg_channels, translate_engine, translate_target_lang
     
     with lock:
         ws_clients.add(ws)
@@ -5070,6 +5120,12 @@ def ws_handler(ws):
                 else:
                     print(f'[WS] Engine ưu tiên → {translate_engine} | '
                           f'dispatcher status: {st}')
+
+            elif t == 'translate_lang':
+                lang = msg.get('lang', 'vi').strip().lower()
+                if lang:
+                    translate_target_lang = lang
+                    print(f'[WS] Ngôn ngữ đích → {translate_target_lang}')
 
             elif t == 'auto_fwd':
                 auto_fwd_enabled = msg.get('enabled', False)

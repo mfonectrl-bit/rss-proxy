@@ -1061,26 +1061,31 @@ def sanitize_tg_html(html_text):
     Chỉ giữ lại các tag Telegram HTML cho phép: <a href>, <b>, <i>, <u>, <s>, <code>, <pre>.
     Tag không hợp lệ bị strip nhưng text bên trong vẫn giữ.
     <br> → \n. Mọi tag khác → text content only.
-    Dùng trước khi gửi lên Telegram để tránh lỗi parse_mode='html'.
+    Dùng regex thay BeautifulSoup để giữ nguyên \n thật trong text.
     """
-    try:
-        from bs4 import BeautifulSoup
-        ALLOWED = {'a', 'b', 'i', 'u', 's', 'code', 'pre'}
-        soup = BeautifulSoup(html_text, 'html.parser')
-        for tag in soup.find_all(True):
-            if tag.name == 'br':
-                tag.replace_with('\n')
-            elif tag.name not in ALLOWED:
-                # Giữ text, bỏ tag
-                tag.unwrap()
-            elif tag.name == 'a':
-                # Chỉ giữ href, bỏ các attribute khác
-                href = tag.get('href', '')
-                tag.attrs = {'href': href} if href else {}
-        return str(soup)
-    except Exception as e:
-        print(f'[sanitize_tg_html] lỗi: {e} — trả về nguyên bản')
-        return html_text
+    # <br> và <br/> → \n
+    result = re.sub(r'<br\s*/?>', '\n', html_text, flags=re.I)
+
+    # Chuẩn hoá <a href="URL" class="..." ...> → <a href="URL">
+    def _clean_a_tag(m):
+        attrs = m.group(1)
+        href_m = re.search(r'href=["\']([^"\']*)["\']', attrs, re.I)
+        if href_m:
+            return f'<a href="{href_m.group(1)}">'
+        return ''  # <a> không có href → bỏ hẳn
+    result = re.sub(r'<a\s+([^>]+)>', _clean_a_tag, result, flags=re.I)
+
+    # Strip các tag không nằm trong whitelist (giữ nội dung bên trong)
+    ALLOWED = {'a', '/a', 'b', '/b', 'i', '/i', 'u', '/u',
+               's', '/s', 'code', '/code', 'pre', '/pre'}
+    def _strip_unknown(m):
+        tag_content = m.group(1).strip().lower().split()[0] if m.group(1).strip() else ''
+        if tag_content in ALLOWED:
+            return m.group(0)  # giữ nguyên
+        return ''  # strip tag, giữ text bên ngoài
+    result = re.sub(r'<(/?\w[^>]*)>', _strip_unknown, result)
+
+    return result
 
 
 def _translate_google_html(html_text):

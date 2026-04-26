@@ -1081,18 +1081,26 @@ def _translate_with_hidden_links(html_text):
     try:
         parts = re.split(r'(<[^>]+>)', html_text)
         result = []
-        for part in parts:
+        for i, part in enumerate(parts):
             if re.match(r'<[^>]+>', part):
-                # Nếu tag là <a ...> và phần trước không kết thúc bằng space/newline → chèn space
-                if re.match(r'<a[\s>]', part, re.I) and result and result[-1] and not result[-1][-1] in (' ', '\n'):
+                is_opening = not part.startswith('</')
+                is_closing = part.startswith('</')
+                # Opening tag (<b>, <i>, <a ...>): nếu text trước không kết thúc bằng space/newline → chèn space
+                if is_opening and result and result[-1] and result[-1][-1] not in (' ', '\n'):
                     result.append(' ')
-                result.append(part)  # tag → giữ nguyên
+                result.append(part)
             elif part.strip():
                 leading  = part[:len(part) - len(part.lstrip('\n'))]
                 trailing = part[len(part.rstrip('\n')):]
+                inner    = part.strip()
+                # Nếu text này ngay sau closing tag và không có leading space → chèn space
+                # Ngoại trừ dấu câu (., ,, !, ?, :, ;) — không thêm space trước dấu câu
+                if result and re.match(r'</', result[-1]) and inner and inner[0] not in (' ', '\n') \
+                        and inner[0] not in '.,!?:;)】」』"\'':
+                    inner = ' ' + inner
                 try:
-                    translated = GoogleTranslator(source='auto', target='vi').translate(part.strip())
-                    result.append(leading + (translated or part.strip()) + trailing)
+                    translated = GoogleTranslator(source='auto', target='vi').translate(inner)
+                    result.append(leading + (translated or inner) + trailing)
                 except Exception:
                     result.append(part)
             else:

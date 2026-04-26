@@ -1056,10 +1056,70 @@ def _translate_deepl_html(html_text):
     return data['translations'][0]['text'].strip()
 
 
+def sanitize_tg_html(html_text):
+    """
+    Chỉ giữ lại các tag Telegram HTML cho phép: <a href>, <b>, <i>, <u>, <s>, <code>, <pre>.
+    Tag không hợp lệ bị strip nhưng text bên trong vẫn giữ.
+    <br> → \n. Mọi tag khác → text content only.
+    Dùng trước khi gửi lên Telegram để tránh lỗi parse_mode='html'.
+    """
+    try:
+        from bs4 import BeautifulSoup
+        ALLOWED = {'a', 'b', 'i', 'u', 's', 'code', 'pre'}
+        soup = BeautifulSoup(html_text, 'html.parser')
+        for tag in soup.find_all(True):
+            if tag.name == 'br':
+                tag.replace_with('\n')
+            elif tag.name not in ALLOWED:
+                # Giữ text, bỏ tag
+                tag.unwrap()
+            elif tag.name == 'a':
+                # Chỉ giữ href, bỏ các attribute khác
+                href = tag.get('href', '')
+                tag.attrs = {'href': href} if href else {}
+        return str(soup)
+    except Exception as e:
+        print(f'[sanitize_tg_html] lỗi: {e} — trả về nguyên bản')
+        return html_text
+
+
+def _translate_google_html(html_text):
+    """
+    Dịch HTML có link ẩn bằng Google Translate (deep_translator),
+    dùng BeautifulSoup walk để dịch từng text node — giữ nguyên <a href>.
+    Trả về HTML đã dịch với link còn nguyên vẹn.
+    """
+    try:
+        from bs4 import BeautifulSoup, NavigableString
+    except ImportError:
+        # Fallback nếu bs4 chưa cài: dịch plain text, link mất
+        plain = re.sub(r'<[^>]+>', '', html_text)
+        return GoogleTranslator(source='auto', target='vi').translate(plain) or plain
+
+    soup = BeautifulSoup(html_text, 'html.parser')
+
+    def _translate_node(node):
+        if isinstance(node, NavigableString):
+            text = str(node)
+            if text.strip():
+                try:
+                    translated = GoogleTranslator(source='auto', target='vi').translate(text)
+                    node.replace_with(translated or text)
+                except Exception:
+                    pass  # giữ nguyên nếu lỗi
+        else:
+            for child in list(node.children):
+                _translate_node(child)
+
+    _translate_node(soup)
+    return str(soup)
+
+
 def _translate_with_hidden_links(html_text):
     """
     Dịch bản tin có link ẩn (MessageEntityTextUrl).
-    Ưu tiên: Gemini HTML → DeepL HTML → Google plain text (link mất, chấp nhận được).
+    Ưu tiên: Gemini HTML → DeepL HTML → Google HTML (BeautifulSoup walk).
+    Tất cả path đều trả về is_html=True để giữ link ẩn nguyên vẹn.
     Trả về (translated_text, engine_used, is_html).
     """
     # Thử Gemini trước — CHỈ khi Dispatcher cho phép (tránh gọi khi đang cooldown)
@@ -1081,16 +1141,15 @@ def _translate_with_hidden_links(html_text):
             result = _translate_deepl_html(html_text)
             return result, 'deepl', True
         except Exception as e:
-            print(f'[Translate] DeepL HTML lỗi: {e} — fallback Google plain text')
+            print(f'[Translate] DeepL HTML lỗi: {e} — fallback Google HTML')
 
-    # Fallback Google: dịch plain text, link sẽ mất
-    plain = re.sub(r'<[^>]+>', '', html_text)
+    # Fallback Google: dùng BeautifulSoup walk — giữ nguyên <a href>, link không mất
     try:
-        result = GoogleTranslator(source='auto', target='vi').translate(plain) or plain
-        return result, 'google', False
+        result = _translate_google_html(html_text)
+        return result, 'google', True
     except Exception as e:
-        print(f'[Translate] Google plain text lỗi: {e} — giữ nguyên bản gốc')
-        return plain, 'none', False
+        print(f'[Translate] Google HTML lỗi: {e} — giữ nguyên bản gốc')
+        return html_text, 'none', True
 
 
 def strip_html(text):
@@ -1110,34 +1169,16 @@ def _extract_first_hidden_link_url(item):
 
 def _expand_hidden_links_to_text(item):
     """
-    Chuyển HTML có link ẩn thành plain text với URL nổi.
-    Mỗi <a href="URL">text</a> → "text:\nURL"
-    Các thẻ HTML khác (<b>, <i>, ...) bị strip bình thường.
-    Trả về plain text đã expand, hoặc None nếu item không có _tg_html_text.
+    Trả về HTML đã dịch (với <a href> còn nguyên) để gửi lên Telegram với parse_mode='html'.
+    Chạy qua sanitize_tg_html() để đảm bảo chỉ có tag Telegram cho phép.
+    Trả về None nếu item không có _tg_html_text (không có link ẩn).
+
+    Tên hàm giữ nguyên để không phải sửa các chỗ gọi khác.
     """
     html_src = item.get('_tg_html_text', '') or ''
     if not html_src:
         return None
-
-    # Thay mỗi <a href="URL">text</a> → "text:\nURL"
-    def _replace_anchor(m):
-        url  = m.group(1)
-        text = m.group(2).strip()
-        # Strip thẻ HTML lồng bên trong text nếu có
-        text = re.sub(r'<[^>]+>', '', text).strip()
-        if text:
-            return f'{text}:\n{url}'
-        return url
-
-    result = re.sub(
-        r'<a\s+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
-        _replace_anchor,
-        html_src,
-        flags=re.I | re.DOTALL
-    )
-    # Strip các thẻ HTML còn lại (<b>, <i>, ...)
-    result = re.sub(r'<[^>]+>', '', result)
-    return result.strip()
+    return sanitize_tg_html(html_src)
 
 def is_vietnamese(text):
     """Kiểm tra xem text có phải tiếng Việt không — dùng nhiều tín hiệu để tránh false positive"""
@@ -4236,6 +4277,18 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
             return True
 
     except Exception as e:
+        err_str = str(e)
+        # Nếu lỗi parse HTML (tag không hợp lệ) → strip toàn bộ HTML và gửi lại plain text
+        if 'parse' in err_str.lower() or 'html' in err_str.lower() or 'MessageTooLong' in err_str:
+            print(f'[TG Send] HTML parse lỗi, fallback plain text: {e}')
+            try:
+                plain_caption = re.sub(r'<[^>]+>', '', caption).strip()
+                for chunk in _split_text(plain_caption, 4096):
+                    await tg_client.send_message(dest, chunk, parse_mode=None,
+                                                 reply_to=thread_reply, link_preview=show_preview)
+                return True
+            except Exception as e2:
+                print(f'[TG Send] Plain text fallback cũng lỗi: {e2}')
         print(f'[TG Send] Lỗi gửi {dest_channel} topic={topic_id}: {e}')
         return False
 
@@ -4313,7 +4366,7 @@ def _do_forward(processed, category, url):
                     desc_plain = re.sub(r'<[^>]+>', '', desc_plain)
                 else:
                     desc_plain = re.sub(r'<[^>]+>', '', desc_raw)
-                # Nếu có link ẩn → dùng text đã expand (link ẩn → URL nổi ngay tại chỗ)
+                # Nếu có link ẩn → dùng HTML đã dịch+sanitize (giữ <a href> nguyên vẹn)
                 _expanded = _expand_hidden_links_to_text(it)
                 # Log 1 lần thôi — tránh lặp khi channel có nhiều topics
                 if topic_id == topic_list[0]:
@@ -4322,15 +4375,10 @@ def _do_forward(processed, category, url):
                     caption = _expanded
                 else:
                     caption = desc_plain.rstrip()
-                # desc_has_link: chỉ check https link trong nội dung gốc, bỏ qua t.me
-                # Bật web preview chỉ khi nội dung GỐC có external link
-                # Check từ desc_plain (content gốc, không tính Xem bài gốc + channel name)
-                # t.me links không cần preview, nhưng bbc.com, youtube.com... thì có
-                _raw_for_check = it.get('desc', '') or it.get('text', '') or ''
+                # desc_has_link: bật web preview khi có external link (bỏ qua t.me)
+                # Với bản tin có link ẩn: check href trong HTML thay vì URL nổi
+                _raw_for_check = it.get('_tg_html_text', '') or it.get('desc', '') or it.get('text', '') or ''
                 desc_has_link = bool(re.search(r'https?://(?!t\.me)', _raw_for_check))
-                # Nếu expanded có URL nổi → bật web preview
-                if _expanded:
-                    desc_has_link = True
 
                 if show_link and it.get('link'):
                     caption += f'\n\n<a href="{it["link"]}">Xem bài gốc →</a>'
@@ -5428,7 +5476,7 @@ class HttpHandler(BaseHTTPRequestHandler):
                         desc_raw   = it.get('desc', '') or ''
                         desc_plain = re.sub(r'<br\s*/?>', '\n', desc_raw, flags=re.I)
                         desc_plain = re.sub(r'<[^>]+>', '', desc_plain).strip()
-                        # Nếu có link ẩn → dùng text đã expand
+                        # Nếu có link ẩn → dùng HTML đã dịch+sanitize (giữ <a href> nguyên vẹn)
                         _expanded = _expand_hidden_links_to_text(it)
                         caption   = _expanded if _expanded else desc_plain
                         if show_link and it.get('link'):
@@ -5450,8 +5498,9 @@ class HttpHandler(BaseHTTPRequestHandler):
                         else:
                             imgs, _ = extract_media(it.get('desc',''))
                             send_item['_rss_media_url'] = imgs[0] if imgs else None
-                        # desc_has_link: check link thật trong desc, bỏ t.me
-                        desc_has_link = bool(re.search(r'https?://(?!t\.me)', it.get('desc', '') or ''))
+                        # desc_has_link: check link trong HTML (link ẩn) hoặc desc thường, bỏ t.me
+                        _check_src = it.get('_tg_html_text', '') or it.get('desc', '') or ''
+                        desc_has_link = bool(re.search(r'https?://(?!t\.me)', _check_src))
                         try:
                             ok = tg_run(_tg_send_item(dest, send_item, caption, topic_id=topic_id, desc_has_link=desc_has_link))
                             all_results.append({'title': it.get('title',''), 'ok': ok, 'error': '' if ok else 'Gửi thất bại'})

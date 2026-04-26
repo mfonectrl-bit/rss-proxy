@@ -1123,34 +1123,25 @@ def _extract_first_hidden_link_url(item):
 
 def _expand_hidden_links_to_text(item):
     """
-    Chuyển HTML có link ẩn thành plain text với URL nổi.
-    Mỗi <a href="URL">text</a> → "text:\nURL"
-    Các thẻ HTML khác (<b>, <i>, ...) bị strip bình thường.
-    Trả về plain text đã expand, hoặc None nếu item không có _tg_html_text.
+    Trả về HTML với <a href> nguyên vẹn (Telegram Bot API hỗ trợ parse_mode=HTML).
+    Giữ các tag Telegram hỗ trợ: <a href>, <b>, <i>, <s>, <u>, <code>, <pre>.
+    Strip các tag khác. Không dùng BS4, không đụng \\n.
+    Trả về HTML string, hoặc None nếu item không có _tg_html_text.
     """
     html_src = item.get('_tg_html_text', '') or ''
     if not html_src:
         return None
 
-    # Thay mỗi <a href="URL">text</a> → "text:\nURL"
-    def _replace_anchor(m):
-        url  = m.group(1)
-        text = m.group(2).strip()
-        # Strip thẻ HTML lồng bên trong text nếu có
-        text = re.sub(r'<[^>]+>', '', text).strip()
-        if text:
-            return f'{text}:\n{url}'
-        return url
-
-    result = re.sub(
-        r'<a\s+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
-        _replace_anchor,
-        html_src,
-        flags=re.I | re.DOTALL
+    _allowed = re.compile(
+        r'^</?(?:b|i|s|u|code|pre|a)(?:\s+href=(?:"[^"]*"|\'[^\']*\'))?>$',
+        re.I
     )
-    # Strip các thẻ HTML còn lại (<b>, <i>, ...)
-    result = re.sub(r'<[^>]+>', '', result)
-    return result.strip()
+
+    def _keep_or_strip(m):
+        return m.group(0) if _allowed.match(m.group(0)) else ''
+
+    result = re.sub(r'<[^>]+>', _keep_or_strip, html_src)
+    return result.strip() or None
 
 def is_vietnamese(text):
     """Kiểm tra xem text có phải tiếng Việt không — dùng nhiều tín hiệu để tránh false positive"""

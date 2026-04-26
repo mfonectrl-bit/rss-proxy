@@ -3694,6 +3694,7 @@ function connectWS(){
             setTimeout(()=>{ if(wsReady) wsSend({type:'tg_settings',channels:tgChannels}); }, 100);
             setTimeout(()=>{ if(wsReady) wsSend({type:'auto_fwd',enabled:autoFwd,channels:tgChannels}); }, 200);
             setTimeout(()=>{ if(wsReady) wsSend({type:'translate_engine',engine:translateEngine}); }, 300);
+            setTimeout(()=>{ if(wsReady) wsSend({type:'translate_lang',lang:translateLang}); }, 400);
         }
         // Gửi feeds qua HTTP chỉ 1 lần — không lặp lại mỗi khi WS reconnect
         if(feedsSynced) return;
@@ -3705,7 +3706,8 @@ function connectWS(){
                 feeds: feedsPayload,
                 auto_fwd: autoFwd,
                 tg_channels: tgChannels,
-                translate_engine: translateEngine
+                translate_engine: translateEngine,
+                translate_lang: translateLang
             })
         }).then(r=>r.json()).then(d=>{
             if(d.ok){
@@ -5398,6 +5400,10 @@ class HttpHandler(BaseHTTPRequestHandler):
                 global translate_engine
                 translate_engine = body['translate_engine']
                 print(f'[CONFIG] translate_engine = {translate_engine}')
+            if 'translate_lang' in body:
+                global translate_target_lang
+                translate_target_lang = body['translate_lang'].strip().lower()
+                print(f'[CONFIG] translate_target_lang = {translate_target_lang}')
 
             with lock:
                 watched_urls.clear()

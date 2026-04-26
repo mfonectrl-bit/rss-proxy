@@ -1692,8 +1692,8 @@ def _run_cleanup_scheduler():
                                 _cleanup_status[ch_].update({'status': 'done', 'deleted': deleted, 'remaining': remaining})
                                 print(f'[Cleanup] Auto ✅ {ch_} topic={tid_}: xóa {deleted} tin, còn lại {remaining} tin')
 
-                                # Force refresh Telegram UI sau khi xóa một phần
-                                if deleted > 0 and deleted < len(all_ids):
+                                # Force refresh Telegram UI sau khi xóa (cả toàn bộ lẫn một phần)
+                                if deleted > 0:
                                     try:
                                         sent = await tg_client.send_message(
                                             entity,
@@ -5538,8 +5538,8 @@ class HttpHandler(BaseHTTPRequestHandler):
                         print(f'[Cleanup] ✅ {ch_str} topic={tid}: xóa {deleted} tin, còn lại {remaining} tin')
 
                         # Force refresh Telegram UI: gửi + xóa ngay 1 tin dummy
-                        # Chỉ cần khi xóa một phần (xóa toàn bộ thì Telegram tự refresh)
-                        if deleted > 0 and deleted < len(all_ids):
+                        # Chạy mọi lúc khi deleted > 0 — topic forum không tự refresh dù xóa toàn bộ
+                        if deleted > 0:
                             try:
                                 from telethon.tl.types import InputReplyToMessage
                                 sent = await tg_client.send_message(

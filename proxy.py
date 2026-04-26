@@ -625,7 +625,10 @@ class EngineDispatcher:
         'deepl' : 1.5,
         'google': 0.0,
     }
-    COOLDOWN_SEC  = 600   # 10 phút cooldown sau khi bị rate limit (free tier recover chậm)
+    # Exponential backoff: cooldown tự điều chỉnh theo số lần fail liên tiếp
+    # 30s → 60s → 120s → 240s → 480s (cap) — recover nhanh khi chỉ bị burst nhẹ
+    COOLDOWN_BASE = 30    # giây, lần fail đầu tiên
+    COOLDOWN_CAP  = 480   # giây, tối đa
     MAX_FAILS     = 1     # cooldown ngay sau lần lỗi đầu tiên — fallback DeepL/Google nhanh hơn
 
     def __init__(self):
@@ -666,10 +669,11 @@ class EngineDispatcher:
             st = self._state[engine]
             st['fails'] += 1
             if is_rate_limit or st['fails'] >= self.MAX_FAILS:
-                st['cooldown_until'] = time.time() + self.COOLDOWN_SEC
-                st['fails'] = 0
-                print(f'[Dispatcher] {engine} → cooldown {self.COOLDOWN_SEC}s '
-                      f'({"rate limit" if is_rate_limit else f"{self.MAX_FAILS} lỗi liên tiếp"})')
+                # Exponential backoff: 30s * 2^(fails-1), cap ở COOLDOWN_CAP
+                cooldown = min(self.COOLDOWN_BASE * (2 ** (st['fails'] - 1)), self.COOLDOWN_CAP)
+                st['cooldown_until'] = time.time() + cooldown
+                reason = 'rate limit' if is_rate_limit else f'{st["fails"]} lỗi liên tiếp'
+                print(f'[Dispatcher] {engine} → cooldown {cooldown}s ({reason})')
 
     def pick_engine(self, preferred=None):
         """

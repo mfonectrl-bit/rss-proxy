@@ -1564,10 +1564,10 @@ def tg_setup_realtime_sync(feed_urls):
         return
     now = time.time()
     new_url_set = set(feed_urls)
-    if now - _tg_realtime_last_setup < 120 and new_url_set == _tg_realtime_last_urls:
-        return  # channels không thay đổi, bỏ qua
-    if now - _tg_realtime_last_setup < 30:
-        return  # hard minimum 30s
+    if now - _tg_realtime_last_setup < 300 and new_url_set == _tg_realtime_last_urls:
+        return  # channels không thay đổi, bỏ qua (300s — đủ để lần đầu resolve 104 channels xong)
+    if now - _tg_realtime_last_setup < 60:
+        return  # hard minimum 60s
     _tg_realtime_last_urls = new_url_set
     _tg_realtime_last_setup = now
     if tg_loop and TELETHON_AVAILABLE:
@@ -2361,6 +2361,7 @@ let editFeedIndex=-1,selectedChannelIndex=-1;
 let pollInterval=60,pollNextIn=0;
 let telethonConnected=false;
 let feedsSynced=false;  // global — không reset khi WS reconnect
+let _wsRetryDelay=3000;  // backoff delay, reset về 3s khi connect thành công
 let settingsSent=false; // global — chỉ gửi WS settings 1 lần
 
 function saveFeeds(){localStorage.setItem('rss_feeds',JSON.stringify(feeds));}
@@ -3747,8 +3748,13 @@ function connectWS(){
         if(feedsAckTimer){clearTimeout(feedsAckTimer);feedsAckTimer=null;}
         document.getElementById('ws-dot').className='ws-dot wait';
         document.getElementById('ws-lbl').textContent='Mất kết nối...';
-        setTimeout(connectWS,3000);
+        // Exponential backoff: 3s → 6s → 12s → 24s → 60s (tránh reconnect loop)
+        _wsRetryDelay = Math.min((_wsRetryDelay||3000) * 2, 60000);
+        setTimeout(connectWS, _wsRetryDelay);
     };
+    ws.onopen=ws.onopen||(()=>{});
+    const _origOnOpen = ws.onopen;
+    ws.onopen = function(e){ _wsRetryDelay=3000; if(_origOnOpen) _origOnOpen(e); };
 }
 function wsSend(obj){if(ws&&wsReady)ws.send(JSON.stringify(obj));}
 

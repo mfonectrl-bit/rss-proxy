@@ -1164,23 +1164,30 @@ def _expand_hidden_links_to_text(item):
     result = re.sub(r'<[^>]+>', _keep_or_strip, html_src)
     return result.strip() or None
 
-def is_vietnamese(text):
-    """Kiểm tra xem text có phải tiếng Việt không — dùng nhiều tín hiệu để tránh false positive"""
+def is_same_as_target(text):
+    """Kiểm tra xem text đã là ngôn ngữ đích chưa — nếu rồi thì skip dịch"""
     clean = strip_html(text)
-    # Lấy tối đa 400 ký tự, bỏ emoji và ký tự đặc biệt
     clean = re.sub(r'[^\w\s\u00C0-\u024F\u1E00-\u1EFF]', ' ', clean)[:400].strip()
     if not clean or len(clean) < 5:
         return True  # text quá ngắn, không cần dịch
-    # Dấu hiệu rõ ràng là tiếng Việt: có dấu thanh điệu đặc trưng
-    viet_chars = set('àáâãèéêìíòóôõùúýăđơưạảấầẩẫậắằẳẵặẹẻẽếềểễệỉịọỏốồổỗộớờởỡợụủứừửữựỳỷỹỵ'
-                     'ÀÁÂÃÈÉÊÌÍÒÓÔÕÙÚÝĂĐƠƯẠẢẤẦẨẪẬẮẰẲẴẶẸẺẼẾỀỂỄỆỈỊỌỎỐỒỔỖỘỚỜỞỠỢỤỦỨỪỬỮỰỲỶỸỴ')
-    viet_count = sum(1 for c in clean if c in viet_chars)
-    if viet_count >= 3:
-        return True
-    # Fallback langdetect
+    # Nếu target là tiếng Việt: dùng fast-check dấu thanh điệu
+    if translate_target_lang == 'vi':
+        viet_chars = set('àáâãèéêìíòóôõùúýăđơưạảấầẩẫậắằẳẵặẹẻẽếềểễệỉịọỏốồổỗộớờởỡợụủứừửữựỳỷỹỵ'
+                         'ÀÁÂÃÈÉÊÌÍÒÓÔÕÙÚÝĂĐƠƯẠẢẤẦẨẪẬẮẰẲẴẶẸẺẼẾỀỂỄỆỈỊỌỎỐỒỔỖỘỚỜỞỠỢỤỦỨỪỬỮỰỲỶỸỴ')
+        if sum(1 for c in clean if c in viet_chars) >= 3:
+            return True
+    # Fallback langdetect cho mọi ngôn ngữ
     try:
-        lang = detect(clean)
-        return lang == 'vi'
+        detected = detect(clean)
+        # Normalize: zh-cn/zh-tw → zh-CN; nb/nn → no
+        target = translate_target_lang.lower()
+        if target in ('zh-cn', 'zh-tw'):
+            target = 'zh-cn'
+        if detected in ('zh-cn', 'zh-tw'):
+            detected = 'zh-cn'
+        if target == 'no' and detected in ('no', 'nb', 'nn'):
+            return True
+        return detected == target
     except:
         return False  # không detect được → thử dịch
 
@@ -1230,7 +1237,7 @@ def translate_text(text):
 
 def maybe_translate(title, desc):
     sample = strip_html(title + ' ' + desc)
-    if is_vietnamese(sample):
+    if is_same_as_target(sample):
         return title, desc, False
     return (translate_text(title) if title else title), (translate_text(desc) if desc else desc), True
 
@@ -1243,7 +1250,7 @@ def _fast_translate(text):
     """
     if not text or len(text.strip()) < 4:
         return text
-    if is_vietnamese(text[:400]):
+    if is_same_as_target(text[:400]):
         return text
 
     # Bước 1: Tách URL ra, thay bằng placeholder
@@ -4012,7 +4019,7 @@ def process_tg_items(items):
     def do(i, it):
         desc_plain = strip_html(it.get('desc', '').replace('<br>', '\n'))
 
-        if is_vietnamese(desc_plain):
+        if is_same_as_target(desc_plain):
             results[i] = {**it, 'translated': False}
             return
 

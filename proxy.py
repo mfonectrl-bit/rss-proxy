@@ -839,21 +839,15 @@ class BatchPipeline:
                     has_hidden_link = item.get('_tg_has_hidden_link', False)
                     html_text = item.get('_tg_html_text', '')
                     if has_hidden_link and html_text:
-                        # Dịch bảo toàn link ẩn: Gemini HTML → DeepL HTML → Google plain
-                        translated, _eng, _is_html = _translate_with_hidden_links(html_text)
-                        item['_translated_is_html'] = _is_html
-                        # Luôn update _tg_html_text bằng kết quả dịch:
-                        # - Nếu _is_html=True: HTML đã dịch → _expand_hidden_links_to_text dùng đúng
-                        # - Nếu _is_html=False (Google fallback): plain text đã dịch → expand trả None
-                        #   → _do_forward fallback về desc_plain (đã dịch) — vẫn đúng
+                        # Dịch bảo toàn link ẩn: Gemini HTML → DeepL HTML → Google HTML
+                        # Tất cả engine đều trả HTML → _tg_html_text luôn là HTML đã dịch
+                        translated, _eng, _ = _translate_with_hidden_links(html_text)
                         item['_tg_html_text'] = translated
                     else:
                         # Bản tin thường: giữ flow cũ
                         translated = _fast_translate(text)
-                        item['_translated_is_html'] = False
                 else:
                     translated = text  # Không dịch — giữ nguyên bản gốc
-                    item['_translated_is_html'] = False
                 if not item.get('category'):
                     item['category'] = item.get('category') or 'Khác'
                 item['text_translated'] = translated
@@ -1108,17 +1102,6 @@ def _translate_with_hidden_links(html_text):
 
 def strip_html(text):
     return re.sub(r'<[^>]+>', ' ', text).strip()
-
-def _extract_first_hidden_link_url(item):
-    """
-    Giữ lại để tương thích — không còn dùng trực tiếp.
-    Dùng _expand_hidden_links_to_text thay thế.
-    """
-    html_src = item.get('_tg_html_text', '') or ''
-    if not html_src:
-        return None
-    m = re.search(r'<a\s+href=["\']([^"\']+)["\']', html_src, re.I)
-    return m.group(1) if m else None
 
 
 def _expand_hidden_links_to_text(item):
@@ -4319,9 +4302,6 @@ def _do_forward(processed, category, url):
                     desc_plain = re.sub(r'<[^>]+>', '', desc_raw)
                 # Nếu có link ẩn → dùng text đã expand (link ẩn → URL nổi ngay tại chỗ)
                 _expanded = _expand_hidden_links_to_text(it)
-                # Log 1 lần thôi — tránh lặp khi channel có nhiều topics
-                if topic_id == topic_list[0]:
-                    print(f'[DEBUG fwd] guid={it.get("guid","")} has_hidden={it.get("_tg_has_hidden_link")} html_text_len={len(it.get("_tg_html_text",""))} expanded={bool(_expanded)}')
                 if _expanded:
                     caption = _expanded
                 else:
@@ -4493,15 +4473,13 @@ def _run_read_all_bg(url, feed_cfg):
             if do_translate and msg_text:
                 item["text"] = msg_text
                 if _has_hidden_link:
-                    # Dịch bảo toàn link ẩn: Gemini HTML → DeepL HTML → Google plain
-                    translated, _eng, _is_html = _translate_with_hidden_links(_html_text)
-                    item["_translated_is_html"] = _is_html
-                    # Luôn update _tg_html_text — xem giải thích ở BatchPipeline
+                    # Dịch bảo toàn link ẩn: Gemini HTML → DeepL HTML → Google HTML
+                    # Tất cả engine đều trả HTML → _tg_html_text luôn là HTML đã dịch
+                    translated, _eng, _ = _translate_with_hidden_links(_html_text)
                     item["_tg_html_text"] = translated
                 else:
                     # Bản tin thường: giữ flow cũ
                     translated = _fast_translate(msg_text)
-                    item["_translated_is_html"] = False
                 item["desc"] = translated
                 item["title"] = (translated[:80] + "...") if len(translated) > 80 else translated
                 item["translated"] = True

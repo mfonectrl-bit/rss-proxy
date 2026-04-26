@@ -606,15 +606,19 @@ translate_engine      = _default_engine()
 translate_target_lang = 'vi'   # ngôn ngữ đích dịch — có thể đổi qua UI
 # Map code ngôn ngữ → tên để dùng trong Gemini prompt
 _LANG_NAME = {
-    'vi': 'tiếng Việt', 'en': 'English', 'zh': 'Chinese', 'ja': 'Japanese',
+    'vi': 'tiếng Việt', 'en': 'English', 'zh-CN': 'Chinese', 'ja': 'Japanese',
     'ko': 'Korean', 'fr': 'French', 'de': 'German', 'es': 'Spanish',
     'pt': 'Portuguese', 'it': 'Italian', 'ru': 'Russian', 'ar': 'Arabic',
     'hi': 'Hindi', 'th': 'Thai', 'id': 'Indonesian', 'ms': 'Malay',
     'nl': 'Dutch', 'pl': 'Polish', 'sv': 'Swedish', 'tr': 'Turkish',
     'uk': 'Ukrainian', 'cs': 'Czech', 'ro': 'Romanian', 'hu': 'Hungarian',
-    'el': 'Greek', 'da': 'Danish', 'fi': 'Finnish', 'nb': 'Norwegian',
+    'el': 'Greek', 'da': 'Danish', 'fi': 'Finnish', 'no': 'Norwegian',
     'sk': 'Slovak', 'bg': 'Bulgarian', 'hr': 'Croatian', 'lt': 'Lithuanian',
     'lv': 'Latvian', 'et': 'Estonian', 'sl': 'Slovenian',
+}
+# Map code UI → code deep_translator (chỉ những code không khớp)
+_GOOGLE_LANG_CODE = {
+    'zh-CN': 'zh-CN',  # explicit — deep_translator dùng zh-CN không phải zh
 }
 
 
@@ -972,7 +976,8 @@ def _translate_deepl(text):
 def _translate_google(text):
     """Dịch bằng Google Translate (deep_translator) — fallback"""
     try:
-        result = GoogleTranslator(source='auto', target=translate_target_lang).translate(text)
+        _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
+        result = GoogleTranslator(source='auto', target=_gtarget).translate(text)
         return result or text
     except Exception as e:
         err_str = str(e)
@@ -1120,7 +1125,8 @@ def _translate_with_hidden_links(html_text):
                         and inner[0] not in '.,!?:;)】」』"\'':
                     inner = ' ' + inner
                 try:
-                    translated = GoogleTranslator(source='auto', target=translate_target_lang).translate(inner)
+                    _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
+                    translated = GoogleTranslator(source='auto', target=_gtarget).translate(inner)
                     result.append(leading + (translated or inner) + trailing)
                 except Exception:
                     result.append(part)
@@ -2078,7 +2084,7 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
     style="padding:4px 8px;border:1px solid #d1d5db;border-radius:7px;font-size:12px;background:#fff;cursor:pointer">
     <option value="vi">🇻🇳 Tiếng Việt</option>
     <option value="en">🇬🇧 English</option>
-    <option value="zh">🇨🇳 中文 (Chinese)</option>
+    <option value="zh-CN">🇨🇳 中文简体 (Chinese Simplified)</option>
     <option value="ja">🇯🇵 日本語 (Japanese)</option>
     <option value="ko">🇰🇷 한국어 (Korean)</option>
     <option value="fr">🇫🇷 Français (French)</option>
@@ -2103,7 +2109,7 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
     <option value="el">🇬🇷 Ελληνικά (Greek)</option>
     <option value="da">🇩🇰 Dansk (Danish)</option>
     <option value="fi">🇫🇮 Suomi (Finnish)</option>
-    <option value="nb">🇳🇴 Norsk (Norwegian)</option>
+    <option value="no">🇳🇴 Norsk (Norwegian)</option>
     <option value="sk">🇸🇰 Slovenčina (Slovak)</option>
     <option value="bg">🇧🇬 Български (Bulgarian)</option>
     <option value="hr">🇭🇷 Hrvatski (Croatian)</option>

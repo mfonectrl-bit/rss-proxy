@@ -1558,6 +1558,10 @@ _tg_realtime_last_urls = set()  # track URLs đã setup để tránh re-register
 def tg_setup_realtime_sync(feed_urls):
     """Wrapper đồng bộ để gọi từ thread thường — có debounce 120s + URL change check"""
     global _tg_realtime_last_setup, _tg_realtime_last_urls
+    # Chặn ngay tại đây nếu đang có setup chạy — tránh queue 2 lần gọi
+    if _tg_setup_running.is_set():
+        print('[TG] tg_setup_realtime_sync: setup đang chạy, bỏ qua')
+        return
     now = time.time()
     new_url_set = set(feed_urls)
     if now - _tg_realtime_last_setup < 120 and new_url_set == _tg_realtime_last_urls:
@@ -4194,18 +4198,29 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
         elif rss_media:
             # Telegram giới hạn caption kèm media tối đa 1024 ký tự hiển thị (sau strip HTML)
             caption_plain_len = len(re.sub(r'<[^>]+>', '', caption))
-            if caption_plain_len <= 1024:
-                await tg_client.send_file(dest, rss_media, caption=caption,
-                                          parse_mode='html', reply_to=thread_reply,
-                                          link_preview=show_preview)
-            else:
-                # Caption quá dài — gửi media không caption, reply text riêng
-                sent = await tg_client.send_file(dest, rss_media, caption='',
-                                                  parse_mode='html', reply_to=thread_reply)
-                reply_to = sent.id if not isinstance(sent, list) else sent[0].id
-                for chunk in _split_text(caption, 4096):
-                    await tg_client.send_message(dest, chunk, parse_mode='html',
-                                                 reply_to=reply_to, link_preview=show_preview)
+            try:
+                if caption_plain_len <= 1024:
+                    await tg_client.send_file(dest, rss_media, caption=caption,
+                                              parse_mode='html', reply_to=thread_reply,
+                                              link_preview=show_preview)
+                else:
+                    # Caption quá dài — gửi media không caption, reply text riêng
+                    sent = await tg_client.send_file(dest, rss_media, caption='',
+                                                      parse_mode='html', reply_to=thread_reply)
+                    reply_to = sent.id if not isinstance(sent, list) else sent[0].id
+                    for chunk in _split_text(caption, 4096):
+                        await tg_client.send_message(dest, chunk, parse_mode='html',
+                                                     reply_to=reply_to, link_preview=show_preview)
+            except Exception as media_err:
+                err_str = str(media_err)
+                if 'Webpage media empty' in err_str or 'fetching the webpage' in err_str or 'WEBPAGE_MEDIA_EMPTY' in err_str:
+                    # URL preview lỗi → fallback gửi text + link, không kèm media
+                    print(f'[TG Send] RSS media preview lỗi, fallback text: {media_err}')
+                    for chunk in _split_text(caption, 4096):
+                        await tg_client.send_message(dest, chunk, parse_mode='html',
+                                                     reply_to=thread_reply, link_preview=False)
+                else:
+                    raise
             return True
 
         else:

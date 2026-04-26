@@ -1083,6 +1083,9 @@ def _translate_with_hidden_links(html_text):
         result = []
         for part in parts:
             if re.match(r'<[^>]+>', part):
+                # Nếu tag là <a ...> và phần trước không kết thúc bằng space/newline → chèn space
+                if re.match(r'<a[\s>]', part, re.I) and result and result[-1] and not result[-1][-1] in (' ', '\n'):
+                    result.append(' ')
                 result.append(part)  # tag → giữ nguyên
             elif part.strip():
                 leading  = part[:len(part) - len(part.lstrip('\n'))]
@@ -1695,10 +1698,14 @@ def _run_cleanup_scheduler():
                                 # Force refresh Telegram UI sau khi xóa (cả toàn bộ lẫn một phần)
                                 if deleted > 0:
                                     try:
+                                        from telethon.tl.types import InputReplyToMessage
                                         sent = await tg_client.send_message(
                                             entity,
                                             '.',
-                                            reply_to=tid_int,
+                                            reply_to=InputReplyToMessage(
+                                                reply_to_msg_id=tid_int,
+                                                top_msg_id=tid_int,
+                                            ),
                                             silent=True
                                         )
                                         await asyncio.sleep(0.5)
@@ -5545,7 +5552,10 @@ class HttpHandler(BaseHTTPRequestHandler):
                                 sent = await tg_client.send_message(
                                     entity,
                                     '.',
-                                    reply_to=tid_int,
+                                    reply_to=InputReplyToMessage(
+                                        reply_to_msg_id=tid_int,
+                                        top_msg_id=tid_int,
+                                    ),
                                     silent=True
                                 )
                                 await asyncio.sleep(0.5)

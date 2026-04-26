@@ -604,6 +604,19 @@ def _default_engine():
 
 translate_engine      = _default_engine()
 translate_target_lang = 'vi'   # ngôn ngữ đích dịch — có thể đổi qua UI
+# Map code ngôn ngữ → tên để dùng trong Gemini prompt
+_LANG_NAME = {
+    'vi': 'tiếng Việt', 'en': 'English', 'zh': 'Chinese', 'ja': 'Japanese',
+    'ko': 'Korean', 'fr': 'French', 'de': 'German', 'es': 'Spanish',
+    'pt': 'Portuguese', 'it': 'Italian', 'ru': 'Russian', 'ar': 'Arabic',
+    'hi': 'Hindi', 'th': 'Thai', 'id': 'Indonesian', 'ms': 'Malay',
+    'nl': 'Dutch', 'pl': 'Polish', 'sv': 'Swedish', 'tr': 'Turkish',
+    'uk': 'Ukrainian', 'cs': 'Czech', 'ro': 'Romanian', 'hu': 'Hungarian',
+    'el': 'Greek', 'da': 'Danish', 'fi': 'Finnish', 'nb': 'Norwegian',
+    'sk': 'Slovak', 'bg': 'Bulgarian', 'hr': 'Croatian', 'lt': 'Lithuanian',
+    'lv': 'Latvian', 'et': 'Estonian', 'sl': 'Slovenian',
+}
+
 
 class EngineDispatcher:
     """
@@ -675,6 +688,7 @@ class EngineDispatcher:
                 st['cooldown_until'] = time.time() + cooldown
                 reason = 'rate limit' if is_rate_limit else f'{st["fails"]} lỗi liên tiếp'
                 print(f'[Dispatcher] {engine} → cooldown {cooldown}s ({reason})')
+                st['fails'] = 0  # reset sau khi đã tính cooldown — tránh fails tăng mãi
 
     def pick_engine(self, preferred=None):
         """
@@ -975,8 +989,9 @@ def _translate_gemini(text):
         raise ValueError('GEMINI_API_KEY chưa set')
 
 
+    _lang = _LANG_NAME.get(translate_target_lang, translate_target_lang)
     prompt = (
-        'Dịch đoạn văn bản sau sang tiếng Việt tự nhiên, giữ nguyên format xuống dòng, '
+        f'Dịch đoạn văn bản sau sang {_lang} tự nhiên, giữ nguyên format xuống dòng, '
         'emoji và các ký tự đặc biệt. Chỉ trả về bản dịch, không giải thích thêm:\n\n' + text[:3000]
     )
     payload = json.dumps({
@@ -1004,8 +1019,9 @@ def _translate_gemini_html(html_text):
     """
     if not GEMINI_API_KEY:
         raise ValueError('GEMINI_API_KEY chưa set')
+    _lang = _LANG_NAME.get(translate_target_lang, translate_target_lang)
     prompt = (
-        'Dịch đoạn HTML sau sang tiếng Việt tự nhiên, giữ nguyên format xuống dòng, '
+        f'Dịch đoạn HTML sau sang {_lang} tự nhiên, giữ nguyên format xuống dòng, '
         'emoji và các ký tự đặc biệt. '
         'QUAN TRỌNG: Giữ nguyên toàn bộ thẻ HTML <a href="...">...</a> — '
         'chỉ dịch nội dung text bên trong thẻ, KHÔNG xóa, KHÔNG sửa thuộc tính href. '

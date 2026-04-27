@@ -1160,9 +1160,11 @@ def _translate_with_hidden_links(html_text):
     if GEMINI_API_KEY:
         _now = __import__('time').time()
         for _sub in ('gemini-25', 'gemini-20', 'gemini-15'):
-            if not _engine_dispatcher._is_available(_sub, _now):
-                print(f'[Translate] {_sub} HTML skip (cooldown/not ready)')
-                continue
+            with _engine_dispatcher._lock:
+                if not _engine_dispatcher._is_available(_sub, _now):
+                    print(f'[Translate] {_sub} HTML skip (cooldown/not ready)')
+                    continue
+                _engine_dispatcher._record_request(_sub, _now)
             try:
                 _model = _engine_dispatcher.GEMINI_MODELS[_sub]
                 result = _fix_html_spacing(_translate_gemini_html(html_text, model=_model))
@@ -1172,6 +1174,7 @@ def _translate_with_hidden_links(html_text):
                 is_rl = '429' in str(e) or 'quota' in str(e).lower()
                 _engine_dispatcher._record_failure(_sub, is_rate_limit=is_rl)
                 print(f'[Translate] {_sub} HTML lỗi: {e} — thử sub-engine tiếp')
+                _now = __import__('time').time()  # update time cho vòng lặp tiếp
 
     # Thử DeepL
     if DEEPL_API_KEY:
@@ -4525,10 +4528,10 @@ def _do_forward(processed, category, url):
                 # Check từ desc_plain (content gốc, không tính Xem bài gốc + channel name)
                 # t.me links không cần preview, nhưng bbc.com, youtube.com... thì có
                 _raw_for_check = it.get('desc', '') or it.get('text', '') or ''
-                desc_has_link = bool(re.search(r'https?://(?!t\.me)', _raw_for_check))
-                # Nếu expanded có URL nổi → bật web preview
-                if _expanded:
-                    desc_has_link = True
+                # Bật web preview nếu nội dung gốc có bất kỳ link nào (kể cả t.me)
+                # Không check _expanded vì nó có thể chứa link t.me từ channel source
+                # Link "Xem bài gốc" và channel name được append sau → không tính vào đây
+                desc_has_link = bool(re.search(r'https?://', _raw_for_check))
 
                 # Thêm prefix engine dịch vào đầu caption
                 _eng_used = it.get('_translate_engine_used', '')

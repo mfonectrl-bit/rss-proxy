@@ -1160,11 +1160,10 @@ def _translate_with_hidden_links(html_text):
     if GEMINI_API_KEY:
         _now = __import__('time').time()
         for _sub in ('gemini-25', 'gemini-20', 'gemini-15'):
-            with _engine_dispatcher._lock:
-                if not _engine_dispatcher._is_available(_sub, _now):
-                    print(f'[Translate] {_sub} HTML skip (cooldown/not ready)')
-                    continue
-                _engine_dispatcher._record_request(_sub, _now)
+            if not _engine_dispatcher._is_available(_sub, _now):
+                print(f'[Translate] {_sub} HTML skip (cooldown/not ready)')
+                continue
+            _engine_dispatcher._record_request(_sub, _now)
             try:
                 _model = _engine_dispatcher.GEMINI_MODELS[_sub]
                 result = _fix_html_spacing(_translate_gemini_html(html_text, model=_model))
@@ -1174,7 +1173,7 @@ def _translate_with_hidden_links(html_text):
                 is_rl = '429' in str(e) or 'quota' in str(e).lower()
                 _engine_dispatcher._record_failure(_sub, is_rate_limit=is_rl)
                 print(f'[Translate] {_sub} HTML lỗi: {e} — thử sub-engine tiếp')
-                _now = __import__('time').time()  # update time cho vòng lặp tiếp
+                _now = time.time()
 
     # Thử DeepL
     if DEEPL_API_KEY:
@@ -4528,9 +4527,6 @@ def _do_forward(processed, category, url):
                 # Check từ desc_plain (content gốc, không tính Xem bài gốc + channel name)
                 # t.me links không cần preview, nhưng bbc.com, youtube.com... thì có
                 _raw_for_check = it.get('desc', '') or it.get('text', '') or ''
-                # Bật web preview nếu nội dung gốc có bất kỳ link nào (kể cả t.me)
-                # Không check _expanded vì nó có thể chứa link t.me từ channel source
-                # Link "Xem bài gốc" và channel name được append sau → không tính vào đây
                 desc_has_link = bool(re.search(r'https?://', _raw_for_check))
 
                 # Thêm prefix engine dịch vào đầu caption
@@ -5669,7 +5665,7 @@ class HttpHandler(BaseHTTPRequestHandler):
                             imgs, _ = extract_media(it.get('desc',''))
                             send_item['_rss_media_url'] = imgs[0] if imgs else None
                         # desc_has_link: check link thật trong desc, bỏ t.me
-                        desc_has_link = bool(re.search(r'https?://(?!t\.me)', it.get('desc', '') or ''))
+                        desc_has_link = bool(re.search(r'https?://', it.get('desc', '') or ''))
                         try:
                             ok = tg_run(_tg_send_item(dest, send_item, caption, topic_id=topic_id, desc_has_link=desc_has_link))
                             all_results.append({'title': it.get('title',''), 'ok': ok, 'error': '' if ok else 'Gửi thất bại'})

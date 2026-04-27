@@ -604,6 +604,8 @@ def _default_engine():
 
 translate_engine      = _default_engine()
 translate_target_lang = 'vi'   # ngôn ngữ đích dịch — có thể đổi qua UI
+import threading as _threading
+_tl_engine = _threading.local()  # thread-local: lưu engine vừa dùng để gán vào item
 # Map code ngôn ngữ → tên để dùng trong Gemini prompt
 _LANG_NAME = {
     'vi': 'tiếng Việt', 'en': 'English', 'zh-CN': 'Chinese', 'ja': 'Japanese',
@@ -866,9 +868,11 @@ class BatchPipeline:
                         # Tất cả engine đều trả HTML → _tg_html_text luôn là HTML đã dịch
                         translated, _eng, _ = _translate_with_hidden_links(html_text)
                         item['_tg_html_text'] = translated
+                        item['_translate_engine_used'] = _eng
                     else:
                         # Bản tin thường: giữ flow cũ
                         translated = _fast_translate(text)
+                        item['_translate_engine_used'] = getattr(_tl_engine, 'used', '')
                 else:
                     translated = text  # Không dịch — giữ nguyên bản gốc
                 if not item.get('category'):
@@ -1028,8 +1032,10 @@ def _translate_gemini_html(html_text):
     prompt = (
         f'Dịch đoạn HTML sau sang {_lang} tự nhiên, giữ nguyên format xuống dòng, '
         'emoji và các ký tự đặc biệt. '
-        'QUAN TRỌNG: Giữ nguyên toàn bộ thẻ HTML <a href="...">...</a> — '
-        'chỉ dịch nội dung text bên trong thẻ, KHÔNG xóa, KHÔNG sửa thuộc tính href. '
+        'QUAN TRỌNG: Giữ nguyên TOÀN BỘ các thẻ HTML sau đây — '
+        'chỉ dịch nội dung text thuần, KHÔNG xóa, KHÔNG sửa, KHÔNG thêm bất kỳ thẻ nào: '
+        '<a href="...">, <b>, </b>, <i>, </i>, <u>, </u>, <s>, </s>, <code>, </code>. '
+        'Giữ nguyên dấu cách trước và sau mỗi thẻ HTML. '
         'Chỉ trả về bản dịch HTML, không giải thích thêm:\n\n' + html_text[:3000]
     )
     payload = json.dumps({
@@ -1076,6 +1082,26 @@ def _translate_deepl_html(html_text):
     return data['translations'][0]['text'].strip()
 
 
+def _fix_html_spacing(html):
+    """
+    Post-process HTML sau khi dịch (Gemini/DeepL) — đảm bảo có space
+    trước opening tag và sau closing tag, tránh text bị dính vào tag.
+    """
+    if not html:
+        return html
+    # Space trước opening tag nếu ký tự trước không phải space/newline
+    html = re.sub(
+        r'([^ \n])(<(?!/)(?:b|i|u|s|a|code)(?:[\s>]))',
+        r'\1 \2', html, flags=re.I
+    )
+    # Space sau closing tag nếu ký tự sau không phải space/newline/dấu câu
+    html = re.sub(
+        r'(</(?:b|i|u|s|a|code)>)([^ \n.,!?:;)\]])',
+        r'\1 \2', html, flags=re.I
+    )
+    return html
+
+
 def _translate_with_hidden_links(html_text):
     """
     Dịch bản tin có link ẩn (MessageEntityTextUrl).
@@ -1085,7 +1111,7 @@ def _translate_with_hidden_links(html_text):
     # Thử Gemini trước — CHỈ khi Dispatcher cho phép (tránh gọi khi đang cooldown)
     if GEMINI_API_KEY and _engine_dispatcher._is_available('gemini', __import__('time').time()):
         try:
-            result = _translate_gemini_html(html_text)
+            result = _fix_html_spacing(_translate_gemini_html(html_text))
             _engine_dispatcher._record_success('gemini')
             return result, 'gemini', True
         except Exception as e:
@@ -1098,7 +1124,7 @@ def _translate_with_hidden_links(html_text):
     # Thử DeepL
     if DEEPL_API_KEY:
         try:
-            result = _translate_deepl_html(html_text)
+            result = _fix_html_spacing(_translate_deepl_html(html_text))
             return result, 'deepl', True
         except Exception as e:
             print(f'[Translate] DeepL HTML lỗi: {e} — fallback Google HTML')
@@ -1268,6 +1294,7 @@ def _fast_translate(text):
     masked = masked.replace('\n', NL_TOKEN)
 
     translated, _used_engine = _engine_dispatcher.translate(masked, preferred=translate_engine)
+    _tl_engine.used = _used_engine  # lưu để caller có thể lấy
 
     # Bước 3: Khôi phục newlines
     translated = translated.replace(NL_TOKEN, '\n')
@@ -4415,6 +4442,12 @@ def _do_forward(processed, category, url):
                 # Nếu expanded có URL nổi → bật web preview
                 if _expanded:
                     desc_has_link = True
+
+                # Thêm prefix engine dịch vào đầu caption
+                _eng_used = it.get('_translate_engine_used', '')
+                _eng_prefix = {'gemini': 'GM', 'deepl': 'DL', 'google': 'GT'}.get(_eng_used, '')
+                if _eng_prefix and caption.strip():
+                    caption = f'<b>{_eng_prefix}:</b> ' + caption
 
                 if show_link and it.get('link'):
                     caption += f'\n\n<a href="{it["link"]}">Xem bài gốc →</a>'

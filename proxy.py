@@ -663,6 +663,11 @@ class EngineDispatcher:
     def _is_available(self, engine, now):
         """Kiểm tra engine có sẵn sàng nhận request không"""
         st = self._state[engine]
+        # Gemini chỉ available sau khi toàn bộ feed đã load history xong
+        # — tránh dùng quota Gemini cho backlog tin cũ lúc khởi động
+        if engine == 'gemini':
+            if watched_urls and len(_forward_ready_feeds) < len(watched_urls):
+                return False
         # Đang cooldown?
         if now < st['cooldown_until']:
             return False
@@ -1158,7 +1163,7 @@ def _translate_with_hidden_links(html_text):
                     result.append(part)
             else:
                 result.append(part)  # chỉ \n hoặc space → giữ nguyên
-        return ''.join(result), 'google', True
+        return _fix_html_spacing(''.join(result)), 'google', True
     except Exception as e:
         print(f'[Translate] Google HTML lỗi: {e} — giữ nguyên bản gốc')
         return html_text, 'none', True

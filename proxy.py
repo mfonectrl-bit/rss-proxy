@@ -626,39 +626,39 @@ _GOOGLE_LANG_CODE = {
 
 class EngineDispatcher:
     """
-    Dispatcher dịch thuật với cascade: gemini-25 > gemini-20 > gemini-15 > DeepL > Google.
+    Dispatcher dịch thuật với cascade: gemini-2.5 > gemini-2.5-lite > gemini-3.1 > DeepL > Google.
     - Mỗi Gemini sub-engine có state, rate limit, cooldown riêng
     - Khi sub-engine bị rate limit → tự động hạ xuống sub-engine tiếp theo
     - Google luôn là fallback cuối, không bao giờ bị block
     - Thread-safe hoàn toàn
     """
 
-    # Gemini sub-engine cascade: 2.5-flash → 2.0-flash-lite → 1.5-flash
+    # Gemini sub-engine cascade: gemini-2.5 → gemini-2.5-lite → gemini-3.1 → DeepL → Google
     GEMINI_MODELS = {
-        'gemini-25': 'gemini-2.0-flash',           # alias → 2.5 flash trên nhiều account
-        'gemini-20': 'gemini-2.0-flash-lite',      # lite: 30 RPM, 1500 RPD
-        'gemini-15': 'gemini-1.5-flash',           # legacy: 15 RPM, 1500 RPD
+        'gemini-2.5':      'gemini-2.5-flash',               # 5 RPM, 20 RPD free tier
+        'gemini-2.5-lite': 'gemini-2.5-flash-lite',          # 10 RPM, 20 RPD free tier
+        'gemini-3.1':      'gemini-3.1-flash-lite-preview',  # 15 RPM, 500 RPD free tier
     }
     GEMINI_PREFIX = {
-        'gemini-25': 'GM25',
-        'gemini-20': 'GM20',
-        'gemini-15': 'GM15',
+        'gemini-2.5':      'GM2.5',
+        'gemini-2.5-lite': 'GM2.5L',
+        'gemini-3.1':      'GM3.1',
     }
     # Rate limit config (requests/phút)
     LIMITS = {
-        'gemini-25': 5,    # 2.0-flash (alias 2.5): 5 RPM free tier
-        'gemini-20': 25,   # 2.0-flash-lite: 30 RPM — dùng 25 để có buffer
-        'gemini-15': 12,   # 1.5-flash: 15 RPM — dùng 12 để có buffer
-        'deepl'    : 40,
-        'google'   : 999,
+        'gemini-2.5':      5,   # 5 RPM free tier
+        'gemini-2.5-lite': 10,  # 10 RPM free tier
+        'gemini-3.1':      15,  # 15 RPM free tier
+        'deepl'    :       40,
+        'google'   :       999,
     }
     # Minimum interval giữa 2 request liên tiếp (giây)
     MIN_INTERVAL = {
-        'gemini-25': 13.0,  # 5 RPM = 1 req/12s → 13s buffer
-        'gemini-20': 2.5,   # 25 RPM = 1 req/2.4s → 2.5s buffer
-        'gemini-15': 5.5,   # 12 RPM = 1 req/5s → 5.5s buffer
-        'deepl'    : 1.5,
-        'google'   : 0.0,
+        'gemini-2.5':      13.0,  # 5 RPM = 1 req/12s → 13s buffer
+        'gemini-2.5-lite': 6.5,   # 10 RPM = 1 req/6s → 6.5s buffer
+        'gemini-3.1':      4.5,   # 15 RPM = 1 req/4s → 4.5s buffer
+        'deepl'    :       1.5,
+        'google'   :       0.0,
     }
     # Exponential backoff: cooldown tự điều chỉnh theo số lần fail liên tiếp
     # 30s → 60s → 120s → 240s → 480s (cap) — recover nhanh khi chỉ bị burst nhẹ
@@ -670,11 +670,11 @@ class EngineDispatcher:
         self._lock = threading.Lock()
         # Mỗi engine/sub-engine có state riêng
         self._state = {
-            'gemini-25': {'req_times': [], 'fails': 0, 'cooldown_until': 0.0, 'last_req': 0.0},
-            'gemini-20': {'req_times': [], 'fails': 0, 'cooldown_until': 0.0, 'last_req': 0.0},
-            'gemini-15': {'req_times': [], 'fails': 0, 'cooldown_until': 0.0, 'last_req': 0.0},
-            'deepl'    : {'req_times': [], 'fails': 0, 'cooldown_until': 0.0, 'last_req': 0.0},
-            'google'   : {'req_times': [], 'fails': 0, 'cooldown_until': 0.0, 'last_req': 0.0},
+            'gemini-2.5':      {'req_times': [], 'fails': 0, 'cooldown_until': 0.0, 'last_req': 0.0},
+            'gemini-2.5-lite': {'req_times': [], 'fails': 0, 'cooldown_until': 0.0, 'last_req': 0.0},
+            'gemini-3.1':      {'req_times': [], 'fails': 0, 'cooldown_until': 0.0, 'last_req': 0.0},
+            'deepl'    :       {'req_times': [], 'fails': 0, 'cooldown_until': 0.0, 'last_req': 0.0},
+            'google'   :       {'req_times': [], 'fails': 0, 'cooldown_until': 0.0, 'last_req': 0.0},
         }
 
     def _is_available(self, engine, now):
@@ -682,7 +682,7 @@ class EngineDispatcher:
         st = self._state[engine]
         # Gemini chỉ available sau khi toàn bộ feed đã load history xong
         # — tránh dùng quota Gemini cho backlog tin cũ lúc khởi động
-        if engine in ('gemini-25', 'gemini-20', 'gemini-15'):
+        if engine in ('gemini-2.5', 'gemini-2.5-lite', 'gemini-3.1'):
             if not _system_fully_loaded:
                 return False
         # Đang cooldown?
@@ -725,21 +725,21 @@ class EngineDispatcher:
         Google luôn được trả về (không bao giờ bị block hoàn toàn).
         """
         now = time.time()
-        # Cascade: gemini-25 → gemini-20 → gemini-15 → deepl → google
+        # Cascade: gemini-2.5 → gemini-2.5-lite → gemini-3.1 → deepl → google
         # 'gemini' từ UI setting = ưu tiên gemini cascade trước
         if preferred in ('gemini', None):
-            priority = ['gemini-25', 'gemini-20', 'gemini-15', 'deepl', 'google']
-        elif preferred in ('gemini-25', 'gemini-20', 'gemini-15'):
+            priority = ['gemini-2.5', 'gemini-2.5-lite', 'gemini-3.1', 'deepl', 'google']
+        elif preferred in ('gemini-2.5', 'gemini-2.5-lite', 'gemini-3.1'):
             # Nếu user chọn sub-engine cụ thể, vẫn cascade xuống
-            idx = ['gemini-25', 'gemini-20', 'gemini-15'].index(preferred)
-            priority = ['gemini-25', 'gemini-20', 'gemini-15'][idx:] + ['deepl', 'google']
+            idx = ['gemini-2.5', 'gemini-2.5-lite', 'gemini-3.1'].index(preferred)
+            priority = ['gemini-2.5', 'gemini-2.5-lite', 'gemini-3.1'][idx:] + ['deepl', 'google']
         else:
             priority = [preferred, 'deepl', 'google']
 
         with self._lock:
             for engine in priority:
                 # Bỏ qua nếu không có key
-                if engine in ('gemini-25', 'gemini-20', 'gemini-15') and not GEMINI_API_KEY:
+                if engine in ('gemini-2.5', 'gemini-2.5-lite', 'gemini-3.1') and not GEMINI_API_KEY:
                     continue
                 if engine == 'deepl' and not DEEPL_API_KEY:
                     continue
@@ -962,10 +962,10 @@ if DEEPL_API_KEY:  _engines_ready.append('DeepL ✅')
 _engines_ready.append('Google ✅')
 print(f'[i] Engine dịch: {" | ".join(_engines_ready)} — ưu tiên: {_active_engine}')
 _ed = _engine_dispatcher
-_g25_lim = _ed.LIMITS['gemini-25']; _g25_iv = int(_ed.MIN_INTERVAL['gemini-25'])
-_g20_lim = _ed.LIMITS['gemini-20']; _g15_lim = _ed.LIMITS['gemini-15']
+_g25_lim = _ed.LIMITS['gemini-2.5']; _g25_iv = int(_ed.MIN_INTERVAL['gemini-2.5'])
+_g20_lim = _ed.LIMITS['gemini-2.5-lite']; _g15_lim = _ed.LIMITS['gemini-3.1']
 _d_lim = _ed.LIMITS['deepl']
-print(f'[i] EngineDispatcher: GM25={_g25_lim}/min({_g25_iv}s) | GM20={_g20_lim}/min | GM15={_g15_lim}/min | DeepL={_d_lim}/min | Google=unlimited')
+print(f'[i] EngineDispatcher: GM2.5={_g25_lim}/min({_g25_iv}s) | GM2.5L={_g20_lim}/min | GM3.1={_g15_lim}/min | DeepL={_d_lim}/min | Google=unlimited')
 
 try:
     from telethon import TelegramClient, events
@@ -1156,10 +1156,10 @@ def _translate_with_hidden_links(html_text):
     Ưu tiên: Gemini HTML → DeepL HTML → Google plain text (link mất, chấp nhận được).
     Trả về (translated_text, engine_used, is_html).
     """
-    # Thử Gemini cascade: gemini-25 → gemini-20 → gemini-15
+    # Thử Gemini cascade: gemini-2.5 → gemini-2.5-lite → gemini-3.1
     if GEMINI_API_KEY:
         _now = __import__('time').time()
-        for _sub in ('gemini-25', 'gemini-20', 'gemini-15'):
+        for _sub in ('gemini-2.5', 'gemini-2.5-lite', 'gemini-3.1'):
             if not _engine_dispatcher._is_available(_sub, _now):
                 print(f'[Translate] {_sub} HTML skip (cooldown/not ready)')
                 continue
@@ -4532,7 +4532,7 @@ def _do_forward(processed, category, url):
                 # Thêm prefix engine dịch vào đầu caption
                 _eng_used = it.get('_translate_engine_used', '')
                 _eng_prefix = {
-                    'gemini-25': 'GM25', 'gemini-20': 'GM20', 'gemini-15': 'GM15',
+                    'gemini-2.5': 'GM2.5', 'gemini-2.5-lite': 'GM2.5L', 'gemini-3.1': 'GM3.1',
                     'gemini': 'GM', 'deepl': 'DL', 'google': 'GT',
                 }.get(_eng_used, '')
                 if _eng_prefix and caption.strip():

@@ -626,14 +626,14 @@ _GOOGLE_LANG_CODE = {
 
 class EngineDispatcher:
     """
-    Dispatcher dịch thuật với cascade: gemini-2.5 > gemini-2.5-lite > gemini-3.1 > DeepL > Google.
+    Dispatcher dịch thuật với cascade: gemini-3.1 > gemini-2.5 > gemini-2.5-lite > DeepL > Google.
     - Mỗi Gemini sub-engine có state, rate limit, cooldown riêng
     - Khi sub-engine bị rate limit → tự động hạ xuống sub-engine tiếp theo
     - Google luôn là fallback cuối, không bao giờ bị block
     - Thread-safe hoàn toàn
     """
 
-    # Gemini sub-engine cascade: gemini-2.5 → gemini-2.5-lite → gemini-3.1 → DeepL → Google
+    # Gemini sub-engine cascade: gemini-3.1 → gemini-2.5 → gemini-2.5-lite → DeepL → Google
     GEMINI_MODELS = {
         'gemini-2.5':      'gemini-2.5-flash',               # 5 RPM, 20 RPD free tier
         'gemini-2.5-lite': 'gemini-2.5-flash-lite',          # 10 RPM, 20 RPD free tier
@@ -725,14 +725,14 @@ class EngineDispatcher:
         Google luôn được trả về (không bao giờ bị block hoàn toàn).
         """
         now = time.time()
-        # Cascade: gemini-2.5 → gemini-2.5-lite → gemini-3.1 → deepl → google
+        # Cascade: gemini-3.1 → gemini-2.5 → gemini-2.5-lite → deepl → google
         # 'gemini' từ UI setting = ưu tiên gemini cascade trước
         if preferred in ('gemini', None):
-            priority = ['gemini-2.5', 'gemini-2.5-lite', 'gemini-3.1', 'deepl', 'google']
+            priority = ['gemini-3.1', 'gemini-2.5', 'gemini-2.5-lite', 'deepl', 'google']
         elif preferred in ('gemini-2.5', 'gemini-2.5-lite', 'gemini-3.1'):
             # Nếu user chọn sub-engine cụ thể, vẫn cascade xuống
-            idx = ['gemini-2.5', 'gemini-2.5-lite', 'gemini-3.1'].index(preferred)
-            priority = ['gemini-2.5', 'gemini-2.5-lite', 'gemini-3.1'][idx:] + ['deepl', 'google']
+            idx = ['gemini-3.1', 'gemini-2.5', 'gemini-2.5-lite'].index(preferred)
+            priority = ['gemini-3.1', 'gemini-2.5', 'gemini-2.5-lite'][idx:] + ['deepl', 'google']
         else:
             priority = [preferred, 'deepl', 'google']
 
@@ -1156,10 +1156,10 @@ def _translate_with_hidden_links(html_text):
     Ưu tiên: Gemini HTML → DeepL HTML → Google plain text (link mất, chấp nhận được).
     Trả về (translated_text, engine_used, is_html).
     """
-    # Thử Gemini cascade: gemini-2.5 → gemini-2.5-lite → gemini-3.1
+    # Thử Gemini cascade: gemini-3.1 → gemini-2.5 → gemini-2.5-lite
     if GEMINI_API_KEY:
         _now = __import__('time').time()
-        for _sub in ('gemini-2.5', 'gemini-2.5-lite', 'gemini-3.1'):
+        for _sub in ('gemini-3.1', 'gemini-2.5', 'gemini-2.5-lite'):
             if not _engine_dispatcher._is_available(_sub, _now):
                 print(f'[Translate] {_sub} HTML skip (cooldown/not ready)')
                 continue

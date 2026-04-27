@@ -1228,8 +1228,15 @@ def _translate_with_hidden_links(html_text):
                 result.append(part)  # chỉ \n hoặc space → giữ nguyên
         return _fix_html_spacing(''.join(result)), 'google', True
     except Exception as e:
-        print(f'[Translate] Google HTML lỗi: {e} — giữ nguyên bản gốc')
-        return html_text, 'none', True
+        print(f'[Translate] Google HTML lỗi: {e} — fallback plain text')
+        try:
+            plain = re.sub(r'<[^>]+>', ' ', html_text).strip()
+            result = _fast_translate(plain)
+            print(f'[Translate] Fallback plain text thành công')
+            return result, 'google-plain', False
+        except Exception as e2:
+            print(f'[Translate] Fallback plain text cũng lỗi: {e2} — giữ nguyên bản gốc')
+            return html_text, 'none', True
 
 
 def strip_html(text):
@@ -4522,18 +4529,17 @@ def _do_forward(processed, category, url):
                     caption = _expanded
                 else:
                     caption = desc_plain.rstrip()
-                # desc_has_link: chỉ check https link trong nội dung gốc, bỏ qua t.me
-                # Bật web preview chỉ khi nội dung GỐC có external link
-                # Check từ desc_plain (content gốc, không tính Xem bài gốc + channel name)
-                # t.me links không cần preview, nhưng bbc.com, youtube.com... thì có
-                _raw_for_check = it.get('desc', '') or it.get('text', '') or ''
+                # desc_has_link: check https link trong nội dung gốc để bật web preview
+                # Ưu tiên _tg_html_text vì chứa <a href="https://..."> kể cả link t.me ẩn
+                # Fallback desc (plain text đã dịch) và text (plain text gốc)
+                _raw_for_check = it.get('_tg_html_text', '') or it.get('desc', '') or it.get('text', '') or ''
                 desc_has_link = bool(re.search(r'https?://', _raw_for_check))
 
                 # Thêm prefix engine dịch vào đầu caption
                 _eng_used = it.get('_translate_engine_used', '')
                 _eng_prefix = {
                     'gemini-2.5': 'GM2.5', 'gemini-2.5-lite': 'GM2.5L', 'gemini-3.1': 'GM3.1',
-                    'gemini': 'GM', 'deepl': 'DL', 'google': 'GT',
+                    'gemini': 'GM', 'deepl': 'DL', 'google': 'GT', 'google-plain': 'GT',
                 }.get(_eng_used, '')
                 if _eng_prefix and caption.strip():
                     caption = f'<b>{_eng_prefix}:</b> ' + caption
@@ -4655,12 +4661,24 @@ def _run_read_all_bg(url, feed_cfg):
             has_media = bool(msg.media)
             grouped   = getattr(msg, "grouped_id", None)
 
-            # Detect link ẩn
+            # Detect link ẩn và format entities (bold/italic/underline...) — đồng bộ với real-time handler
+            from telethon.tl.types import (
+                MessageEntityBold, MessageEntityItalic, MessageEntityUnderline,
+                MessageEntityStrike, MessageEntityCode, MessageEntityPre,
+            )
+            _FORMAT_ENTITIES = (
+                MessageEntityTextUrl, MessageEntityBold, MessageEntityItalic,
+                MessageEntityUnderline, MessageEntityStrike, MessageEntityCode, MessageEntityPre,
+            )
             _has_hidden_link = bool(
                 msg_text and msg.entities and
                 any(isinstance(e, MessageEntityTextUrl) for e in msg.entities)
             )
-            _html_text = tg_html.unparse(msg_text, msg.entities) if _has_hidden_link else ''
+            _has_format = bool(
+                msg_text and msg.entities and
+                any(isinstance(e, _FORMAT_ENTITIES) for e in msg.entities)
+            )
+            _html_text = tg_html.unparse(msg_text, msg.entities) if (_has_hidden_link or _has_format) else ''
 
             # Atomic check+add: tránh race condition giữa các job song song
             with lock:
@@ -4689,19 +4707,22 @@ def _run_read_all_bg(url, feed_cfg):
                 "_source": "telethon",
                 "do_translate": do_translate,
                 "_tg_has_hidden_link": _has_hidden_link,
+                "_tg_has_format": _has_format,
                 "_tg_html_text": _html_text,
             }
 
             if do_translate and msg_text:
                 item["text"] = msg_text
-                if _has_hidden_link:
-                    # Dịch bảo toàn link ẩn: Gemini HTML → DeepL HTML → Google HTML
-                    # Tất cả engine đều trả HTML → _tg_html_text luôn là HTML đã dịch
+                if _html_text and (_has_hidden_link or _has_format):
+                    # Dịch bảo toàn HTML (link ẩn + format bold/italic/...):
+                    # Gemini HTML → DeepL HTML → Google HTML → fallback plain text
                     translated, _eng, _ = _translate_with_hidden_links(_html_text)
                     item["_tg_html_text"] = translated
+                    item["_translate_engine_used"] = _eng
                 else:
-                    # Bản tin thường: giữ flow cũ
+                    # Bản tin thường plain text
                     translated = _fast_translate(msg_text)
+                    item["_translate_engine_used"] = getattr(_tl_engine, 'used', '')
                 item["desc"] = translated
                 item["title"] = (translated[:80] + "...") if len(translated) > 80 else translated
                 item["translated"] = True

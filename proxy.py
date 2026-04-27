@@ -962,9 +962,10 @@ if DEEPL_API_KEY:  _engines_ready.append('DeepL ✅')
 _engines_ready.append('Google ✅')
 print(f'[i] Engine dịch: {" | ".join(_engines_ready)} — ưu tiên: {_active_engine}')
 _ed = _engine_dispatcher
-_g_lim = _ed.LIMITS['gemini']; _g_iv = int(_ed.MIN_INTERVAL['gemini'])
+_g25_lim = _ed.LIMITS['gemini-25']; _g25_iv = int(_ed.MIN_INTERVAL['gemini-25'])
+_g20_lim = _ed.LIMITS['gemini-20']; _g15_lim = _ed.LIMITS['gemini-15']
 _d_lim = _ed.LIMITS['deepl']
-print(f'[i] EngineDispatcher: Gemini={_g_lim}/min(min {_g_iv}s/req) | DeepL={_d_lim}/min | Google=unlimited')
+print(f'[i] EngineDispatcher: GM25={_g25_lim}/min({_g25_iv}s) | GM20={_g20_lim}/min | GM15={_g15_lim}/min | DeepL={_d_lim}/min | Google=unlimited')
 
 try:
     from telethon import TelegramClient, events

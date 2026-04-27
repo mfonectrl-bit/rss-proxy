@@ -626,24 +626,39 @@ _GOOGLE_LANG_CODE = {
 
 class EngineDispatcher:
     """
-    Dispatcher dịch thuật với 3 engine: Gemini > DeepL > Google.
-    - Mỗi engine có rate limit, cooldown, và health tracking riêng
-    - Tự động chọn engine tốt nhất còn available
+    Dispatcher dịch thuật với cascade: gemini-25 > gemini-20 > gemini-15 > DeepL > Google.
+    - Mỗi Gemini sub-engine có state, rate limit, cooldown riêng
+    - Khi sub-engine bị rate limit → tự động hạ xuống sub-engine tiếp theo
     - Google luôn là fallback cuối, không bao giờ bị block
     - Thread-safe hoàn toàn
     """
 
+    # Gemini sub-engine cascade: 2.5-flash → 2.0-flash-lite → 1.5-flash
+    GEMINI_MODELS = {
+        'gemini-25': 'gemini-2.0-flash',           # alias → 2.5 flash trên nhiều account
+        'gemini-20': 'gemini-2.0-flash-lite',      # lite: 30 RPM, 1500 RPD
+        'gemini-15': 'gemini-1.5-flash',           # legacy: 15 RPM, 1500 RPD
+    }
+    GEMINI_PREFIX = {
+        'gemini-25': 'GM25',
+        'gemini-20': 'GM20',
+        'gemini-15': 'GM15',
+    }
     # Rate limit config (requests/phút)
     LIMITS = {
-        'gemini': 8,    # Gemini free: 10 RPM thực tế — dùng 8 để có buffer, tránh burst
-        'deepl' : 40,   # DeepL free: ~500k ký tự/tháng, không giới hạn/phút cứng
-        'google': 999,  # Google: không giới hạn cứng
+        'gemini-25': 5,    # 2.0-flash (alias 2.5): 5 RPM free tier
+        'gemini-20': 25,   # 2.0-flash-lite: 30 RPM — dùng 25 để có buffer
+        'gemini-15': 12,   # 1.5-flash: 15 RPM — dùng 12 để có buffer
+        'deepl'    : 40,
+        'google'   : 999,
     }
-    # Minimum interval giữa 2 request liên tiếp (giây) — trải đều trong phút
+    # Minimum interval giữa 2 request liên tiếp (giây)
     MIN_INTERVAL = {
-        'gemini': 8.0,  # 8 req/phút = 1 req/7.5s → dùng 8s để chắc không burst
-        'deepl' : 1.5,
-        'google': 0.0,
+        'gemini-25': 13.0,  # 5 RPM = 1 req/12s → 13s buffer
+        'gemini-20': 2.5,   # 25 RPM = 1 req/2.4s → 2.5s buffer
+        'gemini-15': 5.5,   # 12 RPM = 1 req/5s → 5.5s buffer
+        'deepl'    : 1.5,
+        'google'   : 0.0,
     }
     # Exponential backoff: cooldown tự điều chỉnh theo số lần fail liên tiếp
     # 30s → 60s → 120s → 240s → 480s (cap) — recover nhanh khi chỉ bị burst nhẹ
@@ -653,11 +668,13 @@ class EngineDispatcher:
 
     def __init__(self):
         self._lock = threading.Lock()
-        # Mỗi engine có state riêng
+        # Mỗi engine/sub-engine có state riêng
         self._state = {
-            'gemini': {'req_times': [], 'fails': 0, 'cooldown_until': 0.0, 'last_req': 0.0},
-            'deepl' : {'req_times': [], 'fails': 0, 'cooldown_until': 0.0, 'last_req': 0.0},
-            'google': {'req_times': [], 'fails': 0, 'cooldown_until': 0.0, 'last_req': 0.0},
+            'gemini-25': {'req_times': [], 'fails': 0, 'cooldown_until': 0.0, 'last_req': 0.0},
+            'gemini-20': {'req_times': [], 'fails': 0, 'cooldown_until': 0.0, 'last_req': 0.0},
+            'gemini-15': {'req_times': [], 'fails': 0, 'cooldown_until': 0.0, 'last_req': 0.0},
+            'deepl'    : {'req_times': [], 'fails': 0, 'cooldown_until': 0.0, 'last_req': 0.0},
+            'google'   : {'req_times': [], 'fails': 0, 'cooldown_until': 0.0, 'last_req': 0.0},
         }
 
     def _is_available(self, engine, now):
@@ -665,7 +682,7 @@ class EngineDispatcher:
         st = self._state[engine]
         # Gemini chỉ available sau khi toàn bộ feed đã load history xong
         # — tránh dùng quota Gemini cho backlog tin cũ lúc khởi động
-        if engine == 'gemini':
+        if engine in ('gemini-25', 'gemini-20', 'gemini-15'):
             if not _system_fully_loaded:
                 return False
         # Đang cooldown?
@@ -708,24 +725,28 @@ class EngineDispatcher:
         Google luôn được trả về (không bao giờ bị block hoàn toàn).
         """
         now = time.time()
-        priority = []
-        if preferred and preferred != 'google':
-            priority.append(preferred)
-        for e in ['gemini', 'deepl', 'google']:
-            if e not in priority:
-                priority.append(e)
+        # Cascade: gemini-25 → gemini-20 → gemini-15 → deepl → google
+        # 'gemini' từ UI setting = ưu tiên gemini cascade trước
+        if preferred in ('gemini', None):
+            priority = ['gemini-25', 'gemini-20', 'gemini-15', 'deepl', 'google']
+        elif preferred in ('gemini-25', 'gemini-20', 'gemini-15'):
+            # Nếu user chọn sub-engine cụ thể, vẫn cascade xuống
+            idx = ['gemini-25', 'gemini-20', 'gemini-15'].index(preferred)
+            priority = ['gemini-25', 'gemini-20', 'gemini-15'][idx:] + ['deepl', 'google']
+        else:
+            priority = [preferred, 'deepl', 'google']
 
         with self._lock:
             for engine in priority:
                 # Bỏ qua nếu không có key
-                if engine == 'gemini' and not GEMINI_API_KEY:
+                if engine in ('gemini-25', 'gemini-20', 'gemini-15') and not GEMINI_API_KEY:
                     continue
                 if engine == 'deepl' and not DEEPL_API_KEY:
                     continue
                 if self._is_available(engine, now):
                     self._record_request(engine, now)
                     return engine
-            # Fallback cứng: Google dù rate limit (999/phút hiếm khi đạt)
+            # Fallback cứng: Google
             self._record_request('google', now)
             return 'google'
 
@@ -740,8 +761,9 @@ class EngineDispatcher:
         engine = self.pick_engine(preferred)
 
         try:
-            if engine == 'gemini':
-                result = _translate_gemini(text)
+            if engine in self.GEMINI_MODELS:
+                model = self.GEMINI_MODELS[engine]
+                result = _translate_gemini(text, model=model)
             elif engine == 'deepl':
                 result = _translate_deepl(text)
             else:
@@ -752,13 +774,26 @@ class EngineDispatcher:
             err_str = str(e)
             is_rl = '429' in err_str or 'rate' in err_str.lower() or 'quota' in err_str.lower()
             self._record_failure(engine, is_rate_limit=is_rl)
-            # Fallback Google ngay lập tức
-            if engine != 'google':
+            # Thử engine tiếp theo trong cascade thay vì fallback thẳng Google
+            next_eng = self.pick_engine(preferred)
+            if next_eng != engine:
                 try:
-                    result = _translate_google(text)
-                    return result, 'google'
+                    if next_eng in self.GEMINI_MODELS:
+                        result = _translate_gemini(text, model=self.GEMINI_MODELS[next_eng])
+                    elif next_eng == 'deepl':
+                        result = _translate_deepl(text)
+                    else:
+                        result = _translate_google(text)
+                    self._record_success(next_eng)
+                    return result, next_eng
                 except Exception:
                     pass
+            # Fallback cứng: Google
+            try:
+                result = _translate_google(text)
+                return result, 'google'
+            except Exception:
+                pass
             return text, 'error'
 
     def status(self):
@@ -867,15 +902,15 @@ class BatchPipeline:
                 should_translate = item.get('do_translate', True)
                 if should_translate:
                     has_hidden_link = item.get('_tg_has_hidden_link', False)
+                    has_format      = item.get('_tg_has_format', False)
                     html_text = item.get('_tg_html_text', '')
-                    if has_hidden_link and html_text:
-                        # Dịch bảo toàn link ẩn: Gemini HTML → DeepL HTML → Google HTML
-                        # Tất cả engine đều trả HTML → _tg_html_text luôn là HTML đã dịch
+                    if html_text and (has_hidden_link or has_format):
+                        # Dịch bảo toàn HTML (link ẩn + format): Gemini HTML → DeepL → Google
                         translated, _eng, _ = _translate_with_hidden_links(html_text)
                         item['_tg_html_text'] = translated
                         item['_translate_engine_used'] = _eng
                     else:
-                        # Bản tin thường: giữ flow cũ
+                        # Bản tin thường plain text
                         translated = _fast_translate(text)
                         item['_translate_engine_used'] = getattr(_tl_engine, 'used', '')
                 else:
@@ -994,15 +1029,12 @@ def _translate_google(text):
             raise  # ném lại để caller xử lý yên lặng
         raise
 
-def _translate_gemini(text):
+def _translate_gemini(text, model='gemini-2.0-flash'):
     """
-    Dịch bằng Gemini 2.0 Flash (free tier: 1500 req/ngày, 15 req/phút).
-    Tự động fallback Google nếu rate limit hoặc lỗi liên tiếp.
+    Dịch text bằng Gemini. model: gemini-2.0-flash | gemini-2.0-flash-lite | gemini-1.5-flash
     """
     if not GEMINI_API_KEY:
         raise ValueError('GEMINI_API_KEY chưa set')
-
-
     _lang = _LANG_NAME.get(translate_target_lang, translate_target_lang)
     prompt = (
         f'Dịch đoạn văn bản sau sang {_lang} tự nhiên, giữ nguyên format xuống dòng, '
@@ -1012,7 +1044,7 @@ def _translate_gemini(text):
         'contents': [{'parts': [{'text': prompt}]}],
         'generationConfig': {'temperature': 0.1, 'maxOutputTokens': 2048},
     }).encode('utf-8')
-    url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}'
+    url = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}'
     req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
@@ -1026,10 +1058,9 @@ def _translate_gemini(text):
         ra_str = f' retry-after={retry_after}s' if retry_after else ''
         raise RuntimeError(f'Gemini HTTP {e.code}{ra_str}: {body[:200]}')
 
-def _translate_gemini_html(html_text):
+def _translate_gemini_html(html_text, model='gemini-2.0-flash'):
     """
-    Dịch HTML có link ẩn bằng Gemini — yêu cầu model giữ nguyên thẻ <a href=...>.
-    Chỉ gọi khi bản tin có MessageEntityTextUrl.
+    Dịch HTML có link ẩn bằng Gemini — giữ nguyên tất cả thẻ HTML.
     """
     if not GEMINI_API_KEY:
         raise ValueError('GEMINI_API_KEY chưa set')
@@ -1047,7 +1078,7 @@ def _translate_gemini_html(html_text):
         'contents': [{'parts': [{'text': prompt}]}],
         'generationConfig': {'temperature': 0.1, 'maxOutputTokens': 2048},
     }).encode('utf-8')
-    url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}'
+    url = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}'
     req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
@@ -1113,18 +1144,22 @@ def _translate_with_hidden_links(html_text):
     Ưu tiên: Gemini HTML → DeepL HTML → Google plain text (link mất, chấp nhận được).
     Trả về (translated_text, engine_used, is_html).
     """
-    # Thử Gemini trước — CHỈ khi Dispatcher cho phép (tránh gọi khi đang cooldown)
-    if GEMINI_API_KEY and _engine_dispatcher._is_available('gemini', __import__('time').time()):
-        try:
-            result = _fix_html_spacing(_translate_gemini_html(html_text))
-            _engine_dispatcher._record_success('gemini')
-            return result, 'gemini', True
-        except Exception as e:
-            is_rl = '429' in str(e) or 'quota' in str(e).lower()
-            _engine_dispatcher._record_failure('gemini', is_rate_limit=is_rl)
-            print(f'[Translate] Gemini HTML lỗi: {e} — thử DeepL HTML')
-    elif GEMINI_API_KEY:
-        print(f'[Translate] Gemini HTML skip (cooldown) — thử DeepL HTML')
+    # Thử Gemini cascade: gemini-25 → gemini-20 → gemini-15
+    if GEMINI_API_KEY:
+        _now = __import__('time').time()
+        for _sub in ('gemini-25', 'gemini-20', 'gemini-15'):
+            if not _engine_dispatcher._is_available(_sub, _now):
+                print(f'[Translate] {_sub} HTML skip (cooldown/not ready)')
+                continue
+            try:
+                _model = _engine_dispatcher.GEMINI_MODELS[_sub]
+                result = _fix_html_spacing(_translate_gemini_html(html_text, model=_model))
+                _engine_dispatcher._record_success(_sub)
+                return result, _sub, True
+            except Exception as e:
+                is_rl = '429' in str(e) or 'quota' in str(e).lower()
+                _engine_dispatcher._record_failure(_sub, is_rate_limit=is_rl)
+                print(f'[Translate] {_sub} HTML lỗi: {e} — thử sub-engine tiếp')
 
     # Thử DeepL
     if DEEPL_API_KEY:
@@ -1150,6 +1185,9 @@ def _translate_with_hidden_links(html_text):
                 leading  = part[:len(part) - len(part.lstrip('\n'))]
                 trailing = part[len(part.rstrip('\n')):]
                 inner    = part.strip()
+                # Unescape HTML entities trước khi dịch: &amp; → &, &lt; → <
+                import html as _html_mod
+                inner = _html_mod.unescape(inner)
                 # Nếu text này ngay sau closing tag và không có leading space → chèn space
                 # Ngoại trừ dấu câu (., ,, !, ?, :, ;) — không thêm space trước dấu câu
                 if result and re.match(r'</', result[-1]) and inner and inner[0] not in (' ', '\n') \
@@ -1193,6 +1231,9 @@ def _expand_hidden_links_to_text(item):
         return m.group(0) if _allowed.match(m.group(0)) else ''
 
     result = re.sub(r'<[^>]+>', _keep_or_strip, html_src)
+    # Unescape HTML entities: &amp; → &, &lt; → <, etc.
+    import html as _html_mod
+    result = _html_mod.unescape(result)
     return result.strip() or None
 
 def is_same_as_target(text):
@@ -1591,12 +1632,25 @@ async def _register_handler(channels_list):
         pub      = msg.date.isoformat() if msg.date else ''
         has_media = bool(msg.media and isinstance(msg.media, (MessageMediaPhoto, MessageMediaDocument)))
 
-        # Detect link ẩn (MessageEntityTextUrl) — nếu có, lưu HTML để dịch bảo toàn link
+        # Detect link ẩn hoặc format entities (bold/italic/underline...)
+        # → lưu HTML để dịch bảo toàn format
+        from telethon.tl.types import (
+            MessageEntityBold, MessageEntityItalic, MessageEntityUnderline,
+            MessageEntityStrike, MessageEntityCode, MessageEntityPre,
+        )
+        _FORMAT_ENTITIES = (
+            MessageEntityTextUrl, MessageEntityBold, MessageEntityItalic,
+            MessageEntityUnderline, MessageEntityStrike, MessageEntityCode, MessageEntityPre,
+        )
         _has_hidden_link = bool(
             msg_text and msg.entities and
             any(isinstance(e, MessageEntityTextUrl) for e in msg.entities)
         )
-        _html_text = tg_html.unparse(msg_text, msg.entities) if _has_hidden_link else ''
+        _has_format = bool(
+            msg_text and msg.entities and
+            any(isinstance(e, _FORMAT_ENTITIES) for e in msg.entities)
+        )
+        _html_text = tg_html.unparse(msg_text, msg.entities) if (_has_hidden_link or _has_format) else ''
 
         item = {
             'guid': guid, 'title': title, 'desc': desc, 'link': link,
@@ -1606,6 +1660,7 @@ async def _register_handler(channels_list):
             '_tg_grouped_id': msg.grouped_id,
             '_source': 'telethon', '_feed_url': feed_url,
             '_tg_has_hidden_link': _has_hidden_link,
+            '_tg_has_format': _has_format,
             '_tg_html_text': _html_text,
         }
         with tg_new_items_lock:
@@ -4454,7 +4509,10 @@ def _do_forward(processed, category, url):
 
                 # Thêm prefix engine dịch vào đầu caption
                 _eng_used = it.get('_translate_engine_used', '')
-                _eng_prefix = {'gemini': 'GM', 'deepl': 'DL', 'google': 'GT'}.get(_eng_used, '')
+                _eng_prefix = {
+                    'gemini-25': 'GM25', 'gemini-20': 'GM20', 'gemini-15': 'GM15',
+                    'gemini': 'GM', 'deepl': 'DL', 'google': 'GT',
+                }.get(_eng_used, '')
                 if _eng_prefix and caption.strip():
                     caption = f'<b>{_eng_prefix}:</b> ' + caption
 

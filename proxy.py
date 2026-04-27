@@ -666,7 +666,7 @@ class EngineDispatcher:
         # Gemini chỉ available sau khi toàn bộ feed đã load history xong
         # — tránh dùng quota Gemini cho backlog tin cũ lúc khởi động
         if engine == 'gemini':
-            if watched_urls and len(_forward_ready_feeds) < len(watched_urls):
+            if not _system_fully_loaded:
                 return False
         # Đang cooldown?
         if now < st['cooldown_until']:
@@ -1528,6 +1528,9 @@ async def _tg_setup_realtime(feed_urls):
         all_channels = [ch for ch in raw_channels if ch in _resolved_channels_cache]
         if all_channels:
             print(f'[TG] Đăng ký real-time đầy đủ: {len(all_channels)} channels')
+            global _system_fully_loaded
+            _system_fully_loaded = True
+            print('[System] ✅ Fully loaded — Gemini enabled')
             await _register_handler(all_channels)
         else:
             print('[TG] Không có channel nào resolve được')
@@ -1804,6 +1807,7 @@ threading.Thread(target=_run_cleanup_scheduler, daemon=True, name='CleanupSchedu
 
 # Set chứa các feed URL đã init xong known_guids — chỉ feed nào có trong set mới được forward
 _forward_ready_feeds = set()
+_system_fully_loaded = False   # True sau khi toàn bộ TG history load xong
 _watchdog_running = False  # Tránh watchdog chạy trùng
 
 # --- WebSocket thuần RFC 6455 (không cần thư viện websockets) ---

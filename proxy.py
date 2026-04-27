@@ -1022,12 +1022,23 @@ def _translate_google(text):
     """Dịch bằng Google Translate (deep_translator) — fallback"""
     try:
         _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
-        result = GoogleTranslator(source='auto', target=_gtarget).translate(text)
-        return result or text
+        # Mask URLs để Google không bỏ qua dịch text xung quanh
+        _url_ph = {}
+        def _mask(m):
+            t = f'__URL{len(_url_ph)}__'
+            _url_ph[t] = m.group(0)
+            return t
+        masked = re.sub(r'https?://\S+', _mask, text)
+        translated = GoogleTranslator(source='auto', target=_gtarget).translate(masked)
+        if translated:
+            for tok, url in _url_ph.items():
+                translated = translated.replace(tok, url)
+            return translated
+        return text
     except Exception as e:
         err_str = str(e)
         if 'SSL' in err_str or 'EOF' in err_str or 'Max retries' in err_str:
-            raise  # ném lại để caller xử lý yên lặng
+            raise
         raise
 
 def _translate_gemini(text, model='gemini-2.0-flash'):
@@ -1189,15 +1200,26 @@ def _translate_with_hidden_links(html_text):
                 # Unescape HTML entities trước khi dịch: &amp; → &, &lt; → <
                 import html as _html_mod
                 inner = _html_mod.unescape(inner)
+                # Mask URLs tạm thời để Google không bỏ qua việc dịch text xung quanh
+                _url_placeholders = {}
+                def _mask_url(m):
+                    token = f'__URL{len(_url_placeholders)}__'
+                    _url_placeholders[token] = m.group(0)
+                    return token
+                inner_masked = re.sub(r'https?://\S+', _mask_url, inner)
                 # Nếu text này ngay sau closing tag và không có leading space → chèn space
                 # Ngoại trừ dấu câu (., ,, !, ?, :, ;) — không thêm space trước dấu câu
-                if result and re.match(r'</', result[-1]) and inner and inner[0] not in (' ', '\n') \
-                        and inner[0] not in '.,!?:;)】」』"\'':
-                    inner = ' ' + inner
+                if result and re.match(r'</', result[-1]) and inner_masked and inner_masked[0] not in (' ', '\n') \
+                        and inner_masked[0] not in '.,!?:;)】」』"\'':
+                    inner_masked = ' ' + inner_masked
                 try:
                     _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
-                    translated = GoogleTranslator(source='auto', target=_gtarget).translate(inner)
-                    result.append(leading + (translated or inner) + trailing)
+                    translated_masked = GoogleTranslator(source='auto', target=_gtarget).translate(inner_masked)
+                    # Restore URLs
+                    translated_inner = translated_masked or inner_masked
+                    for token, url in _url_placeholders.items():
+                        translated_inner = translated_inner.replace(token, url)
+                    result.append(leading + translated_inner + trailing)
                 except Exception:
                     result.append(part)
             else:

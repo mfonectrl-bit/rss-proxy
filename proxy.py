@@ -906,9 +906,14 @@ class BatchPipeline:
                     html_text = item.get('_tg_html_text', '')
                     if html_text and (has_hidden_link or has_format):
                         # Dịch bảo toàn HTML (link ẩn + format): Gemini HTML → DeepL → Google
-                        translated, _eng, _ = _translate_with_hidden_links(html_text)
-                        item['_tg_html_text'] = translated
+                        translated_html, _eng, _is_html = _translate_with_hidden_links(html_text)
+                        item['_tg_html_text'] = translated_html
                         item['_translate_engine_used'] = _eng
+                        # desc/title luôn là plain text — strip HTML tag khỏi kết quả dịch
+                        if _is_html:
+                            translated = re.sub(r'<[^>]+>', '', translated_html).strip()
+                        else:
+                            translated = translated_html
                     else:
                         # Bản tin thường plain text
                         translated = _fast_translate(text)
@@ -1160,10 +1165,12 @@ def _translate_with_hidden_links(html_text):
     if GEMINI_API_KEY:
         _now = __import__('time').time()
         for _sub in ('gemini-3.1', 'gemini-2.5', 'gemini-2.5-lite'):
-            if not _engine_dispatcher._is_available(_sub, _now):
-                print(f'[Translate] {_sub} HTML skip (cooldown/not ready)')
-                continue
-            _engine_dispatcher._record_request(_sub, _now)
+            # Fix race condition: check + record phải trong cùng 1 lock — giống pick_engine()
+            with _engine_dispatcher._lock:
+                if not _engine_dispatcher._is_available(_sub, _now):
+                    print(f'[Translate] {_sub} HTML skip (cooldown/not ready)')
+                    continue
+                _engine_dispatcher._record_request(_sub, _now)
             try:
                 _model = _engine_dispatcher.GEMINI_MODELS[_sub]
                 result = _fix_html_spacing(_translate_gemini_html(html_text, model=_model))
@@ -1226,7 +1233,14 @@ def _translate_with_hidden_links(html_text):
                     result.append(part)
             else:
                 result.append(part)  # chỉ \n hoặc space → giữ nguyên
-        return _fix_html_spacing(''.join(result)), 'google', True
+        joined = _fix_html_spacing(''.join(result))
+        # Kiểm tra kết quả có text thực sự không (sau khi strip tag)
+        # Nếu rỗng → Google HTML fallback không dịch được gì → thử plain text
+        _joined_plain = re.sub(r'<[^>]+>', '', joined).strip()
+        if _joined_plain:
+            return joined, 'google', True
+        print('[Translate] Google HTML trả về rỗng — fallback plain text')
+        raise Exception('Google HTML result empty')
     except Exception as e:
         print(f'[Translate] Google HTML lỗi: {e} — fallback plain text')
         try:

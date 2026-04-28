@@ -626,73 +626,78 @@ _GOOGLE_LANG_CODE = {
 
 class EngineDispatcher:
     """
-    Dispatcher dịch thuật với cascade: gemini-3.1 > gemini-2.5 > gemini-2.5-lite > DeepL > Google.
-    - Mỗi Gemini sub-engine có state, rate limit, cooldown riêng
-    - Khi sub-engine bị rate limit → tự động hạ xuống sub-engine tiếp theo
-    - Google luôn là fallback cuối, không bao giờ bị block
-    - Thread-safe hoàn toàn
+    WeightedDispatcher — phân phối tin theo weighted round-robin thay vì fallback tuần tự.
+
+    Thay vì: tin 1→GM3.1, tin 2→GM3.1, tin 3→GM3.1 (dễ spike RPM → 429)
+    Nay là:  tin 1→GM3.1, tin 2→GM2.5L, tin 3→GM2.5, tin 4→GM3.1 ... (phân tải đều)
+
+    Trọng số dựa trên RPM:
+      GM3.1 = 15 RPM → weight 3
+      GM2.5L = 10 RPM → weight 2
+      GM2.5  = 5 RPM  → weight 1
+    Cycle 6 request: [GM3.1, GM2.5L, GM3.1, GM2.5, GM3.1, GM2.5L] rồi lặp lại
+
+    Nếu engine được chọn đang cooldown/busy → skip sang engine kế tiếp trong cycle (không retry lại)
+    Nếu tất cả Gemini busy → Google ngay
     """
 
-    # Gemini sub-engine cascade: gemini-3.1 → gemini-2.5 → gemini-2.5-lite → DeepL → Google
     GEMINI_MODELS = {
-        'gemini-2.5':      'gemini-2.5-flash',               # 5 RPM, 20 RPD free tier
-        'gemini-2.5-lite': 'gemini-2.5-flash-lite',          # 10 RPM, 20 RPD free tier
-        'gemini-3.1':      'gemini-3.1-flash-lite-preview',  # 15 RPM, 500 RPD free tier
+        'gemini-2.5':      'gemini-2.5-flash',
+        'gemini-2.5-lite': 'gemini-2.5-flash-lite',
+        'gemini-3.1':      'gemini-3.1-flash-lite-preview',
     }
     GEMINI_PREFIX = {
         'gemini-2.5':      'GM2.5',
         'gemini-2.5-lite': 'GM2.5L',
         'gemini-3.1':      'GM3.1',
     }
-    # Rate limit config (requests/phút)
     LIMITS = {
-        'gemini-2.5':      5,   # 5 RPM free tier
-        'gemini-2.5-lite': 10,  # 10 RPM free tier
-        'gemini-3.1':      15,  # 15 RPM free tier
-        'deepl'    :       40,
-        'google'   :       999,
+        'gemini-2.5':      5,
+        'gemini-2.5-lite': 10,
+        'gemini-3.1':      15,
+        'deepl':           40,
+        'google':          999,
     }
-    # Minimum interval giữa 2 request liên tiếp (giây)
     MIN_INTERVAL = {
-        'gemini-2.5':      13.0,  # 5 RPM = 1 req/12s → 13s buffer
-        'gemini-2.5-lite': 6.5,   # 10 RPM = 1 req/6s → 6.5s buffer
-        'gemini-3.1':      4.5,   # 15 RPM = 1 req/4s → 4.5s buffer
-        'deepl'    :       1.5,
-        'google'   :       0.0,
+        'gemini-2.5':      13.0,
+        'gemini-2.5-lite': 6.5,
+        'gemini-3.1':      4.5,
+        'deepl':           1.5,
+        'google':          0.0,
     }
-    # Exponential backoff: cooldown tự điều chỉnh theo số lần fail liên tiếp
-    # 30s → 60s → 120s → 240s → 480s (cap) — recover nhanh khi chỉ bị burst nhẹ
-    COOLDOWN_BASE = 30    # giây, lần fail đầu tiên
-    COOLDOWN_CAP  = 480   # giây, tối đa
-    MAX_FAILS     = 1     # cooldown ngay sau lần lỗi đầu tiên — fallback DeepL/Google nhanh hơn
+    COOLDOWN_BASE = 30
+    COOLDOWN_CAP  = 480
+    MAX_FAILS     = 1
+
+    # Weighted round-robin cycle: tổng 6 slot theo tỷ lệ RPM 15:10:5
+    # GM3.1(15RPM)=3 slot, GM2.5L(10RPM)=2 slot, GM2.5(5RPM)=1 slot
+    _RR_CYCLE = [
+        'gemini-3.1', 'gemini-2.5-lite',
+        'gemini-3.1', 'gemini-2.5',
+        'gemini-3.1', 'gemini-2.5-lite',
+    ]
 
     def __init__(self):
         self._lock = threading.Lock()
-        # Mỗi engine/sub-engine có state riêng
         self._state = {
             'gemini-2.5':      {'req_times': [], 'fails': 0, 'cooldown_until': 0.0, 'last_req': 0.0},
             'gemini-2.5-lite': {'req_times': [], 'fails': 0, 'cooldown_until': 0.0, 'last_req': 0.0},
             'gemini-3.1':      {'req_times': [], 'fails': 0, 'cooldown_until': 0.0, 'last_req': 0.0},
-            'deepl'    :       {'req_times': [], 'fails': 0, 'cooldown_until': 0.0, 'last_req': 0.0},
-            'google'   :       {'req_times': [], 'fails': 0, 'cooldown_until': 0.0, 'last_req': 0.0},
+            'deepl':           {'req_times': [], 'fails': 0, 'cooldown_until': 0.0, 'last_req': 0.0},
+            'google':          {'req_times': [], 'fails': 0, 'cooldown_until': 0.0, 'last_req': 0.0},
         }
+        self._rr_index = 0  # vị trí hiện tại trong _RR_CYCLE
 
     def _is_available(self, engine, now):
-        """Kiểm tra engine có sẵn sàng nhận request không"""
         st = self._state[engine]
-        # Gemini chỉ available sau khi toàn bộ feed đã load history xong
-        # — tránh dùng quota Gemini cho backlog tin cũ lúc khởi động
         if engine in ('gemini-2.5', 'gemini-2.5-lite', 'gemini-3.1'):
             if not _system_fully_loaded:
                 return False
-        # Đang cooldown?
         if now < st['cooldown_until']:
             return False
-        # Kiểm tra minimum interval giữa 2 request liên tiếp
         min_iv = self.MIN_INTERVAL.get(engine, 0.0)
         if min_iv > 0 and (now - st['last_req']) < min_iv:
             return False
-        # Kiểm tra rate limit: đếm req trong 60s gần nhất (sliding window)
         limit = self.LIMITS[engine]
         cutoff = now - 60.0
         st['req_times'] = [t for t in st['req_times'] if t > cutoff]
@@ -711,59 +716,64 @@ class EngineDispatcher:
             st = self._state[engine]
             st['fails'] += 1
             if is_rate_limit or st['fails'] >= self.MAX_FAILS:
-                # Exponential backoff: 30s * 2^(fails-1), cap ở COOLDOWN_CAP
                 cooldown = min(self.COOLDOWN_BASE * (2 ** (st['fails'] - 1)), self.COOLDOWN_CAP)
                 st['cooldown_until'] = time.time() + cooldown
                 reason = 'rate limit' if is_rate_limit else f'{st["fails"]} lỗi liên tiếp'
                 print(f'[Dispatcher] {engine} → cooldown {cooldown}s ({reason})')
-                st['fails'] = 0  # reset sau khi đã tính cooldown — tránh fails tăng mãi
+                st['fails'] = 0
 
     def pick_engine(self, preferred=None):
         """
-        Chọn engine tốt nhất available theo thứ tự ưu tiên:
-        preferred (nếu có) → gemini → deepl → google
-        Google luôn được trả về (không bao giờ bị block hoàn toàn).
+        Chọn engine theo weighted round-robin.
+        Nếu engine được chọn busy → thử các Gemini engine còn lại → DeepL → Google.
+        Google luôn được trả về như fallback cuối.
         """
         now = time.time()
-        # Cascade: gemini-3.1 → gemini-2.5 → gemini-2.5-lite → deepl → google
-        # 'gemini' từ UI setting = ưu tiên gemini cascade trước
-        if preferred in ('gemini', None):
-            priority = ['gemini-3.1', 'gemini-2.5', 'gemini-2.5-lite', 'deepl', 'google']
-        elif preferred in ('gemini-2.5', 'gemini-2.5-lite', 'gemini-3.1'):
-            # Nếu user chọn sub-engine cụ thể, vẫn cascade xuống
-            idx = ['gemini-3.1', 'gemini-2.5', 'gemini-2.5-lite'].index(preferred)
-            priority = ['gemini-3.1', 'gemini-2.5', 'gemini-2.5-lite'][idx:] + ['deepl', 'google']
-        else:
-            priority = [preferred, 'deepl', 'google']
-
         with self._lock:
-            for engine in priority:
-                # Bỏ qua nếu không có key
-                if engine in ('gemini-2.5', 'gemini-2.5-lite', 'gemini-3.1') and not GEMINI_API_KEY:
-                    continue
-                if engine == 'deepl' and not DEEPL_API_KEY:
-                    continue
-                if self._is_available(engine, now):
-                    self._record_request(engine, now)
-                    return engine
+            if preferred in ('gemini', None) and GEMINI_API_KEY and _system_fully_loaded:
+                # Bước 1: lấy engine từ vị trí hiện tại trong cycle
+                start_idx = self._rr_index
+                for attempt in range(len(self._RR_CYCLE)):
+                    idx = (start_idx + attempt) % len(self._RR_CYCLE)
+                    candidate = self._RR_CYCLE[idx]
+                    if self._is_available(candidate, now):
+                        # Advance index sang vị trí tiếp NGAY KHI pick thành công
+                        self._rr_index = (idx + 1) % len(self._RR_CYCLE)
+                        self._record_request(candidate, now)
+                        return candidate
+                # Tất cả Gemini busy → thử DeepL
+                if DEEPL_API_KEY and self._is_available('deepl', now):
+                    self._record_request('deepl', now)
+                    return 'deepl'
+            elif preferred in ('gemini-2.5', 'gemini-2.5-lite', 'gemini-3.1') and GEMINI_API_KEY:
+                # User chọn sub-engine cụ thể — thử đúng engine đó trước
+                if self._is_available(preferred, now):
+                    self._record_request(preferred, now)
+                    return preferred
+                # Fallback sang các Gemini còn lại
+                others = [e for e in ('gemini-3.1', 'gemini-2.5-lite', 'gemini-2.5') if e != preferred]
+                for eng in others:
+                    if self._is_available(eng, now):
+                        self._record_request(eng, now)
+                        return eng
+                if DEEPL_API_KEY and self._is_available('deepl', now):
+                    self._record_request('deepl', now)
+                    return 'deepl'
+            elif preferred == 'deepl' and DEEPL_API_KEY:
+                if self._is_available('deepl', now):
+                    self._record_request('deepl', now)
+                    return 'deepl'
             # Fallback cứng: Google
             self._record_request('google', now)
             return 'google'
 
     def translate(self, text, preferred=None):
-        """
-        Dịch text với engine tốt nhất available.
-        preferred: engine được ưu tiên (từ UI setting), None = tự chọn.
-        """
         if not text or len(text.strip()) < 4:
             return text, 'none'
-
         engine = self.pick_engine(preferred)
-
         try:
             if engine in self.GEMINI_MODELS:
-                model = self.GEMINI_MODELS[engine]
-                result = _translate_gemini(text, model=model)
+                result = _translate_gemini(text, model=self.GEMINI_MODELS[engine])
             elif engine == 'deepl':
                 result = _translate_deepl(text)
             else:
@@ -774,7 +784,7 @@ class EngineDispatcher:
             err_str = str(e)
             is_rl = '429' in err_str or 'rate' in err_str.lower() or 'quota' in err_str.lower()
             self._record_failure(engine, is_rate_limit=is_rl)
-            # Thử engine tiếp theo trong cascade thay vì fallback thẳng Google
+            # Thử pick lại (engine vừa fail đã bị cooldown nên sẽ skip)
             next_eng = self.pick_engine(preferred)
             if next_eng != engine:
                 try:
@@ -797,7 +807,6 @@ class EngineDispatcher:
             return text, 'error'
 
     def status(self):
-        """Trả về status của tất cả engine — dùng cho log/debug"""
         now = time.time()
         out = {}
         with self._lock:
@@ -915,7 +924,7 @@ class BatchPipeline:
                         item['_translate_engine_used'] = getattr(_tl_engine, 'used', '')
                 else:
                     translated = text  # Không dịch — giữ nguyên bản gốc
-                    item['_translate_engine_used'] = ''  # đảm bảo không gán GT: prefix
+                    item['_translate_engine_used'] = ''  # Không gán prefix engine
                 if not item.get('category'):
                     item['category'] = item.get('category') or 'Khác'
                 item['text_translated'] = translated
@@ -1063,6 +1072,8 @@ def _translate_gemini(text, model='gemini-2.0-flash'):
         with urllib.request.urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read())
         result = data['candidates'][0]['content']['parts'][0]['text'].strip()
+        if _is_error_result(result):
+            raise RuntimeError(f'Gemini trả về error text: {result[:100]}')
         return result
     except urllib.error.HTTPError as e:
         body = e.read().decode('utf-8', errors='ignore')
@@ -1101,6 +1112,9 @@ def _translate_gemini_html(html_text, model='gemini-2.0-flash'):
         result = re.sub(r'^```html\s*', '', result)
         result = re.sub(r'^```\s*', '', result)
         result = re.sub(r'\s*```$', '', result).strip()
+        # Nếu kết quả trông như error message thì raise để caller fallback
+        if _is_error_result(result):
+            raise RuntimeError(f'Gemini trả về error text: {result[:100]}')
         return result
     except urllib.error.HTTPError as e:
         body = e.read().decode('utf-8', errors='ignore')
@@ -1153,32 +1167,39 @@ def _fix_html_spacing(html):
 
 def _translate_with_hidden_links(html_text):
     """
-    Dịch bản tin có link ẩn (MessageEntityTextUrl).
-    Ưu tiên: Gemini HTML → DeepL HTML → Google plain text (link mất, chấp nhận được).
+    Dịch bản tin có link ẩn / format HTML (bold, italic...).
+    Dùng weighted round-robin qua _engine_dispatcher — nhất quán với plain text.
     Trả về (translated_text, engine_used, is_html).
     """
-    # Thử Gemini cascade: gemini-3.1 → gemini-2.5 → gemini-2.5-lite
-    if GEMINI_API_KEY:
-        _now = __import__('time').time()
-        for _sub in ('gemini-3.1', 'gemini-2.5', 'gemini-2.5-lite'):
-            if not _engine_dispatcher._is_available(_sub, _now):
-                print(f'[Translate] {_sub} HTML skip (cooldown/not ready)')
-                continue
-            _engine_dispatcher._record_request(_sub, _now)
+    if GEMINI_API_KEY and _system_fully_loaded:
+        _now = time.time()
+        # Thử tối đa len(_RR_CYCLE) lần — mỗi lần pick engine khác nhau
+        _tried = set()
+        for _ in range(len(_engine_dispatcher._RR_CYCLE) + 1):
+            with _engine_dispatcher._lock:
+                # Tìm engine Gemini available tiếp theo trong cycle
+                start = _engine_dispatcher._rr_index
+                _picked = None
+                for attempt in range(len(_engine_dispatcher._RR_CYCLE)):
+                    idx = (start + attempt) % len(_engine_dispatcher._RR_CYCLE)
+                    candidate = _engine_dispatcher._RR_CYCLE[idx]
+                    if candidate not in _tried and _engine_dispatcher._is_available(candidate, _now):
+                        _engine_dispatcher._rr_index = (idx + 1) % len(_engine_dispatcher._RR_CYCLE)
+                        _engine_dispatcher._record_request(candidate, _now)
+                        _picked = candidate
+                        break
+            if not _picked:
+                break  # không còn Gemini nào available
+            _tried.add(_picked)
             try:
-                _model = _engine_dispatcher.GEMINI_MODELS[_sub]
+                _model = _engine_dispatcher.GEMINI_MODELS[_picked]
                 result = _fix_html_spacing(_translate_gemini_html(html_text, model=_model))
-                if _is_error_result(result):
-                    print(f'[Translate] {_sub} HTML trả về error text — thử sub-engine tiếp')
-                    _engine_dispatcher._record_failure(_sub, is_rate_limit=False)
-                    _now = time.time()
-                    continue
-                _engine_dispatcher._record_success(_sub)
-                return result, _sub, True
+                _engine_dispatcher._record_success(_picked)
+                return result, _picked, True
             except Exception as e:
                 is_rl = '429' in str(e) or 'quota' in str(e).lower()
-                _engine_dispatcher._record_failure(_sub, is_rate_limit=is_rl)
-                print(f'[Translate] {_sub} HTML lỗi: {e} — thử sub-engine tiếp')
+                _engine_dispatcher._record_failure(_picked, is_rate_limit=is_rl)
+                print(f'[Translate] {_picked} HTML lỗi: {e} — thử engine tiếp')
                 _now = time.time()
 
     # Thử DeepL
@@ -1189,15 +1210,13 @@ def _translate_with_hidden_links(html_text):
         except Exception as e:
             print(f'[Translate] DeepL HTML lỗi: {e} — fallback Google HTML')
 
-    # Fallback Google: dịch từng text segment bằng regex — giữ nguyên <a href>, \n và format gốc
+    # Fallback Google: dịch từng text segment, giữ nguyên tag HTML
     try:
         parts = re.split(r'(<[^>]+>)', html_text)
         result = []
         for i, part in enumerate(parts):
             if re.match(r'<[^>]+>', part):
                 is_opening = not part.startswith('</')
-                is_closing = part.startswith('</')
-                # Opening tag (<b>, <i>, <a ...>): nếu text trước không kết thúc bằng space/newline → chèn space
                 if is_opening and result and result[-1] and result[-1][-1] not in (' ', '\n'):
                     result.append(' ')
                 result.append(part)
@@ -1205,25 +1224,20 @@ def _translate_with_hidden_links(html_text):
                 leading  = part[:len(part) - len(part.lstrip('\n'))]
                 trailing = part[len(part.rstrip('\n')):]
                 inner    = part.strip()
-                # Unescape HTML entities trước khi dịch: &amp; → &, &lt; → <
                 import html as _html_mod
                 inner = _html_mod.unescape(inner)
-                # Mask URLs tạm thời để Google không bỏ qua việc dịch text xung quanh
                 _url_placeholders = {}
                 def _mask_url(m):
                     token = f'__URL{len(_url_placeholders)}__'
                     _url_placeholders[token] = m.group(0)
                     return token
                 inner_masked = re.sub(r'https?://\S+', _mask_url, inner)
-                # Nếu text này ngay sau closing tag và không có leading space → chèn space
-                # Ngoại trừ dấu câu (., ,, !, ?, :, ;) — không thêm space trước dấu câu
                 if result and re.match(r'</', result[-1]) and inner_masked and inner_masked[0] not in (' ', '\n') \
                         and inner_masked[0] not in '.,!?:;)】」』"\'':
                     inner_masked = ' ' + inner_masked
                 try:
                     _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
                     translated_masked = GoogleTranslator(source='auto', target=_gtarget).translate(inner_masked)
-                    # Restore URLs
                     translated_inner = translated_masked or inner_masked
                     for token, url in _url_placeholders.items():
                         translated_inner = translated_inner.replace(token, url)
@@ -1231,35 +1245,28 @@ def _translate_with_hidden_links(html_text):
                 except Exception:
                     result.append(part)
             else:
-                result.append(part)  # chỉ \n hoặc space → giữ nguyên
+                result.append(part)
         return _fix_html_spacing(''.join(result)), 'google', True
     except Exception as e:
         print(f'[Translate] Google HTML lỗi: {e} — fallback plain text')
-        # Fallback cuối cùng: strip HTML rồi dịch plain text — đảm bảo luôn có bản dịch
         try:
             _plain = re.sub(r'<[^>]+>', '', html_text).strip()
             _translated_plain = _fast_translate(_plain) if _plain else _plain
             return _translated_plain, 'google', False
         except Exception as e2:
-            print(f'[Translate] Fallback plain text lỗi: {e2} — thử Google trực tiếp')
-            try:
-                _plain = re.sub(r'<[^>]+>', '', html_text).strip()
-                _translated_plain = _translate_google(_plain) if _plain else _plain
-                return _translated_plain, 'google', False
-            except Exception as e3:
-                print(f'[Translate] Google trực tiếp lỗi: {e3} — giữ nguyên bản gốc (strip HTML)')
-                _plain = re.sub(r'<[^>]+>', '', html_text).strip()
-                return _plain, 'none', False
+            print(f'[Translate] Fallback plain text lỗi: {e2} — giữ nguyên bản gốc (strip HTML)')
+            _plain = re.sub(r'<[^>]+>', '', html_text).strip()
+            return _plain if _plain else html_text, 'none', False
 
 
 def strip_html(text):
     return re.sub(r'<[^>]+>', ' ', text).strip()
 
-# Patterns lỗi HTTP/server thường bị lẫn vào kết quả dịch từ Gemini/DeepL
-_ERROR_PATTERNS = re.compile(
-    r'(Error\s+\d{3}\s+\(.*?Error\)|Server Error|Internal Server Error|'
-    r'That\'s an error|Please try again later|HTTP \d{3}|'
-    r'{"error":|"code":\s*[45]\d\d)',
+# Patterns lỗi HTTP/server thường bị lẫn vào kết quả dịch
+_ERROR_RESULT_RE = re.compile(
+    r'(Error\s*\d{3}|Server Error|Internal Server Error|'
+    r'That\'s an error|Please try again later|'
+    r'HTTP\s+\d{3}|\{"error":|"code":\s*[45]\d\d)',
     re.I
 )
 
@@ -1267,7 +1274,7 @@ def _is_error_result(text):
     """Trả về True nếu text trông như error message từ server, không phải bản dịch."""
     if not text:
         return False
-    return bool(_ERROR_PATTERNS.search(text[:300]))
+    return bool(_ERROR_RESULT_RE.search(text[:400]))
 
 
 def _expand_hidden_links_to_text(item):
@@ -1408,19 +1415,6 @@ def _fast_translate(text):
     for placeholder, url in placeholders.items():
         translated = translated.replace(placeholder, url)
         translated = translated.replace(placeholder.replace('URLTOKEN', ' URLTOKEN ').strip(), url)
-
-    # Lọc kết quả dịch chứa error text từ server (lỗi 7)
-    if _is_error_result(translated):
-        print(f'[Translate] Kết quả dịch có vẻ là error text — fallback Google')
-        try:
-            _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
-            _translated_fallback = GoogleTranslator(source='auto', target=_gtarget).translate(text)
-            if _translated_fallback and not _is_error_result(_translated_fallback):
-                _tl_engine.used = 'google'
-                return _translated_fallback
-        except Exception:
-            pass
-        return text  # giữ nguyên bản gốc nếu cả fallback cũng fail
 
     return translated
 
@@ -4129,11 +4123,9 @@ def parse_items(xml_bytes, category_hint='', limit=None):
     root = ET.fromstring(xml_bytes)
     is_atom = 'feed' in root.tag
     ns = '{http://www.w3.org/2005/Atom}'
-    # Namespace cho media RSS (VnExpress và các feed chuẩn MediaRSS)
-    ns_media   = '{http://search.yahoo.com/mrss/}'
-    ns_media2  = '{http://www.rssboard.org/media-rss}'
+    # Namespaces cho MediaRSS (VnExpress và các feed chuẩn MediaRSS)
+    _NS_MEDIA = ['{http://search.yahoo.com/mrss/}', '{http://www.rssboard.org/media-rss}']
     entries = (root.findall(f'.//{ns}entry') or root.findall('.//entry')) if is_atom else root.findall('.//item')
-    # Giới hạn số bài lấy về theo history_limit
     if limit and limit > 0:
         entries = entries[:limit]
     items = []
@@ -4161,40 +4153,39 @@ def parse_items(xml_bytes, category_hint='', limit=None):
             desc = d.text.strip() if d is not None and d.text else ''
 
         # --- Trích xuất media URL từ enclosure / media:content / media:thumbnail ---
-        # (VnExpress và các feed MediaRSS dùng các tag này thay vì <img> trong <description>)
+        # VnExpress RSS để ảnh trong các tag này thay vì <img> trong <description>
         media_url = None
+
         # 1. <enclosure url="..." type="image/...">
         enc = e.find('enclosure')
         if enc is not None:
-            enc_type = enc.get('type', '')
             enc_url  = enc.get('url', '')
-            if enc_url and ('image' in enc_type or enc_url.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif'))):
+            enc_type = enc.get('type', '')
+            if enc_url and ('image' in enc_type or enc_url.lower().split('?')[0].endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif'))):
                 media_url = enc_url
-        # 2. <media:content url="..." medium="image">
+
+        # 2. <media:content url="..."> (thử tất cả namespace variants)
         if not media_url:
-            for mc_ns in (ns_media, ns_media2, ''):
-                mc = e.find(f'{mc_ns}content') if mc_ns else None
-                # Tìm tất cả media:content, ưu tiên loại image
-                for mc_tag in (f'{ns_media}content', f'{ns_media2}content'):
-                    mc_el = e.find(mc_tag)
-                    if mc_el is not None:
-                        mc_medium = mc_el.get('medium', '')
-                        mc_url    = mc_el.get('url', '')
-                        if mc_url and ('image' in mc_medium or not mc_medium):
-                            media_url = mc_url
-                            break
-                if media_url:
-                    break
+            for _ns_m in _NS_MEDIA:
+                mc = e.find(f'{_ns_m}content')
+                if mc is not None:
+                    mc_url    = mc.get('url', '')
+                    mc_medium = mc.get('medium', '')
+                    if mc_url and ('image' in mc_medium or not mc_medium):
+                        media_url = mc_url
+                        break
+
         # 3. <media:thumbnail url="...">
         if not media_url:
-            for mt_tag in (f'{ns_media}thumbnail', f'{ns_media2}thumbnail'):
-                mt_el = e.find(mt_tag)
-                if mt_el is not None:
-                    mt_url = mt_el.get('url', '')
+            for _ns_m in _NS_MEDIA:
+                mt = e.find(f'{_ns_m}thumbnail')
+                if mt is not None:
+                    mt_url = mt.get('url', '')
                     if mt_url:
                         media_url = mt_url
                         break
-        # 4. Nếu media_url tìm được, nhúng vào <img> trong desc để extract_media() hoạt động
+
+        # 4. Nhúng media_url vào desc để extract_media() hoạt động bình thường
         if media_url and f'src="{media_url}"' not in desc and f"src='{media_url}'" not in desc:
             desc = f'<img src="{media_url}"/>' + ('\n' if desc else '') + desc
 
@@ -4617,9 +4608,8 @@ def _do_forward(processed, category, url):
                 # t.me links không cần preview, nhưng bbc.com, youtube.com... thì có
                 # Check link trong tất cả các field có thể chứa URL gốc
                 _raw_for_check = (it.get('text', '') or it.get('_tg_html_text', '') or it.get('desc', '') or '')
-                # Bài có link ẩn (MessageEntityTextUrl) luôn có link → bật preview
-                _has_hidden_link_flag = it.get('_tg_has_hidden_link', False)
-                desc_has_link = _has_hidden_link_flag or bool(re.search(r'https?://', _raw_for_check))
+                # Bài có link ẩn (MessageEntityTextUrl) luôn coi là có link → bật web preview
+                desc_has_link = it.get('_tg_has_hidden_link', False) or bool(re.search(r'https?://', _raw_for_check))
 
                 # Thêm prefix engine dịch vào đầu caption
                 _eng_used = it.get('_translate_engine_used', '')
@@ -4797,20 +4787,17 @@ def _run_read_all_bg(url, feed_cfg):
             if do_translate and msg_text:
                 item["text"] = msg_text
                 if _has_hidden_link or _has_format:
-                    # Dịch bảo toàn link ẩn + format: Gemini HTML → DeepL HTML → Google HTML
-                    # Tất cả engine đều trả HTML → _tg_html_text luôn là HTML đã dịch
                     translated, _eng, _ = _translate_with_hidden_links(_html_text)
                     item["_tg_html_text"] = translated
                     item["_translate_engine_used"] = _eng
                 else:
-                    # Bản tin thường: giữ flow cũ
                     translated = _fast_translate(msg_text)
                     item["_translate_engine_used"] = getattr(_tl_engine, 'used', '')
                 item["desc"] = translated
                 item["title"] = (translated[:80] + "...") if len(translated) > 80 else translated
                 item["translated"] = True
             else:
-                item["_translate_engine_used"] = ''  # không dịch → không gán GT: prefix
+                item["_translate_engine_used"] = ''  # Không gán prefix engine
 
             # Đánh dấu grouped_id đã xử lý (guid đã được ghi atomic ở trên)
             if grouped:
@@ -4960,15 +4947,6 @@ def _poll_one(url_obj):
             with lock:
                 known_guids[url] = {it['guid'] for it in items if it['guid']}
             _forward_ready_feeds.add(url)
-            # Nếu không có TG feed nào, _system_fully_loaded sẽ không được set từ TG setup
-            # → set tại đây để Gemini được enable sau khi RSS feed init xong
-            global _system_fully_loaded
-            if not _system_fully_loaded:
-                with lock:
-                    _has_tg_feeds = any(is_tg_source(u.get('url', '')) for u in watched_urls)
-                if not _has_tg_feeds:
-                    _system_fully_loaded = True
-                    print('[System] ✅ Fully loaded (RSS-only) — Gemini enabled')
             print(f'[INIT] known_guids khởi tạo lần đầu cho: {url} ({len(items)} items)')
             # Broadcast lên UI để hiển thị ngay — không dịch, không forward
             ws_items = []

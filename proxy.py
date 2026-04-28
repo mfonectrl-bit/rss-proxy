@@ -909,11 +909,8 @@ class BatchPipeline:
                         translated_html, _eng, _is_html = _translate_with_hidden_links(html_text)
                         item['_tg_html_text'] = translated_html
                         item['_translate_engine_used'] = _eng
-                        # desc/title luôn là plain text — strip HTML tag khỏi kết quả dịch
-                        if _is_html:
-                            translated = re.sub(r'<[^>]+>', '', translated_html).strip()
-                        else:
-                            translated = translated_html
+                        # desc/title luôn là plain text — strip HTML tag
+                        translated = re.sub(r'<[^>]+>', '', translated_html).strip() if _is_html else translated_html
                     else:
                         # Bản tin thường plain text
                         translated = _fast_translate(text)
@@ -1137,19 +1134,19 @@ def _translate_deepl_html(html_text):
 
 def _fix_html_spacing(html):
     """
-    Post-process HTML sau khi dịch (Gemini/DeepL) — đảm bảo có space
-    trước opening tag và sau closing tag, tránh text bị dính vào tag.
+    Post-process HTML sau khi dịch — đảm bảo có space trước opening tag và sau closing tag
+    khi ký tự liền kề là chữ cái (không thêm space nếu liền với số hoặc ký tự đặc biệt).
     """
     if not html:
         return html
-    # Space trước opening tag nếu ký tự trước không phải space/newline
+    # Space trước opening tag chỉ khi ký tự trước là chữ cái (a-z, unicode letters)
     html = re.sub(
-        r'([^ \n])(<(?!/)(?:b|i|u|s|a|code)(?:[\s>]))',
+        r'([a-zA-Z\u00C0-\u024F\u1E00-\u1EFF])(<(?!/)(?:b|i|u|s|a|code)(?:[\s>]))',
         r'\1 \2', html, flags=re.I
     )
-    # Space sau closing tag nếu ký tự sau không phải space/newline/dấu câu
+    # Space sau closing tag chỉ khi ký tự sau là chữ cái
     html = re.sub(
-        r'(</(?:b|i|u|s|a|code)>)([^ \n.,!?:;)\]])',
+        r'(</(?:b|i|u|s|a|code)>)([a-zA-Z\u00C0-\u024F\u1E00-\u1EFF])',
         r'\1 \2', html, flags=re.I
     )
     return html
@@ -1234,10 +1231,8 @@ def _translate_with_hidden_links(html_text):
             else:
                 result.append(part)  # chỉ \n hoặc space → giữ nguyên
         joined = _fix_html_spacing(''.join(result))
-        # Kiểm tra kết quả có text thực sự không (sau khi strip tag)
-        # Nếu rỗng → Google HTML fallback không dịch được gì → thử plain text
-        _joined_plain = re.sub(r'<[^>]+>', '', joined).strip()
-        if _joined_plain:
+        # Kiểm tra kết quả có text thực sự không — nếu rỗng sau strip tag → fallback plain text
+        if re.sub(r'<[^>]+>', '', joined).strip():
             return joined, 'google', True
         print('[Translate] Google HTML trả về rỗng — fallback plain text')
         raise Exception('Google HTML result empty')
@@ -4557,6 +4552,10 @@ def _do_forward(processed, category, url):
                 }.get(_eng_used, '')
                 if _eng_prefix and caption.strip():
                     caption = f'<b>{_eng_prefix}:</b> ' + caption
+
+                # Debug log: in caption thực tế trước khi gửi (chỉ khi có format)
+                if it.get('_tg_has_format') or it.get('_tg_has_hidden_link'):
+                    print(f'[Caption debug] eng={_eng_used} | html={repr(caption[:200])}')
 
                 if show_link and it.get('link'):
                     caption += f'\n\n<a href="{it["link"]}">Xem bài gốc →</a>'

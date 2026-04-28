@@ -906,11 +906,9 @@ class BatchPipeline:
                     html_text = item.get('_tg_html_text', '')
                     if html_text and (has_hidden_link or has_format):
                         # Dịch bảo toàn HTML (link ẩn + format): Gemini HTML → DeepL → Google
-                        translated_html, _eng, _is_html = _translate_with_hidden_links(html_text)
-                        item['_tg_html_text'] = translated_html
+                        translated, _eng, _ = _translate_with_hidden_links(html_text)
+                        item['_tg_html_text'] = translated
                         item['_translate_engine_used'] = _eng
-                        # desc/title luôn là plain text — strip HTML tag
-                        translated = re.sub(r'<[^>]+>', '', translated_html).strip() if _is_html else translated_html
                     else:
                         # Bản tin thường plain text
                         translated = _fast_translate(text)
@@ -1134,19 +1132,19 @@ def _translate_deepl_html(html_text):
 
 def _fix_html_spacing(html):
     """
-    Post-process HTML sau khi dịch — thêm space trước/sau tag chỉ khi ký tự liền kề là chữ cái.
-    Không thêm space khi liền với số hoặc ký tự đặc biệt (tránh '1ABCD' → '1 ABCD').
+    Post-process HTML sau khi dịch (Gemini/DeepL) — đảm bảo có space
+    trước opening tag và sau closing tag, tránh text bị dính vào tag.
     """
     if not html:
         return html
-    # Space trước opening tag chỉ khi ký tự trước là chữ cái
+    # Space trước opening tag nếu ký tự trước không phải space/newline
     html = re.sub(
-        r'([a-zA-Z\u00C0-\u024F\u1E00-\u1EFF])(<(?!/)(?:b|i|u|s|a|code)(?:[\s>]))',
+        r'([^ \n])(<(?!/)(?:b|i|u|s|a|code)(?:[\s>]))',
         r'\1 \2', html, flags=re.I
     )
-    # Space sau closing tag chỉ khi ký tự sau là chữ cái
+    # Space sau closing tag nếu ký tự sau không phải space/newline/dấu câu
     html = re.sub(
-        r'(</(?:b|i|u|s|a|code)>)([a-zA-Z\u00C0-\u024F\u1E00-\u1EFF])',
+        r'(</(?:b|i|u|s|a|code)>)([^ \n.,!?:;)\]])',
         r'\1 \2', html, flags=re.I
     )
     return html
@@ -1162,11 +1160,10 @@ def _translate_with_hidden_links(html_text):
     if GEMINI_API_KEY:
         _now = __import__('time').time()
         for _sub in ('gemini-3.1', 'gemini-2.5', 'gemini-2.5-lite'):
-            with _engine_dispatcher._lock:
-                if not _engine_dispatcher._is_available(_sub, _now):
-                    print(f'[Translate] {_sub} HTML skip (cooldown/not ready)')
-                    continue
-                _engine_dispatcher._record_request(_sub, _now)
+            if not _engine_dispatcher._is_available(_sub, _now):
+                print(f'[Translate] {_sub} HTML skip (cooldown/not ready)')
+                continue
+            _engine_dispatcher._record_request(_sub, _now)
             try:
                 _model = _engine_dispatcher.GEMINI_MODELS[_sub]
                 result = _fix_html_spacing(_translate_gemini_html(html_text, model=_model))
@@ -1229,20 +1226,16 @@ def _translate_with_hidden_links(html_text):
                     result.append(part)
             else:
                 result.append(part)  # chỉ \n hoặc space → giữ nguyên
-        joined = _fix_html_spacing(''.join(result))
-        if re.sub(r'<[^>]+>', '', joined).strip():
-            return joined, 'google', True
-        print('[Translate] Google HTML trả về rỗng — fallback plain text')
-        raise Exception('Google HTML result empty')
+        return _fix_html_spacing(''.join(result)), 'google', True
     except Exception as e:
         print(f'[Translate] Google HTML lỗi: {e} — fallback plain text')
+        # Fallback cuối cùng: strip HTML rồi dịch plain text — đảm bảo luôn có bản dịch
         try:
-            plain = re.sub(r'<[^>]+>', ' ', html_text).strip()
-            result = _fast_translate(plain)
-            print(f'[Translate] Fallback plain text thành công')
-            return result, 'google-plain', False
+            _plain = re.sub(r'<[^>]+>', '', html_text).strip()
+            _translated_plain = _fast_translate(_plain) if _plain else _plain
+            return _translated_plain, 'google', False
         except Exception as e2:
-            print(f'[Translate] Fallback plain text cũng lỗi: {e2} — giữ nguyên bản gốc')
+            print(f'[Translate] Fallback plain text lỗi: {e2} — giữ nguyên bản gốc')
             return html_text, 'none', True
 
 
@@ -4540,7 +4533,8 @@ def _do_forward(processed, category, url):
                 # Bật web preview chỉ khi nội dung GỐC có external link
                 # Check từ desc_plain (content gốc, không tính Xem bài gốc + channel name)
                 # t.me links không cần preview, nhưng bbc.com, youtube.com... thì có
-                _raw_for_check = it.get('desc', '') or it.get('text', '') or ''
+                # Check link trong tất cả các field có thể chứa URL gốc
+                _raw_for_check = (it.get('text', '') or it.get('_tg_html_text', '') or it.get('desc', '') or '')
                 desc_has_link = bool(re.search(r'https?://', _raw_for_check))
 
                 # Thêm prefix engine dịch vào đầu caption
@@ -4551,10 +4545,6 @@ def _do_forward(processed, category, url):
                 }.get(_eng_used, '')
                 if _eng_prefix and caption.strip():
                     caption = f'<b>{_eng_prefix}:</b> ' + caption
-
-                # Debug: log caption thực tế khi tin có format/hidden link
-                if it.get('_tg_has_format') or it.get('_tg_has_hidden_link'):
-                    print(f'[Caption debug] eng={_eng_used} | html={repr(caption[:200])}')
 
                 if show_link and it.get('link'):
                     caption += f'\n\n<a href="{it["link"]}">Xem bài gốc →</a>'
@@ -4668,17 +4658,26 @@ def _run_read_all_bg(url, feed_cfg):
             chat_username = channel.lstrip("@")
             guid  = f"tg_@{chat_username}_{msg.id}"
             link  = f"https://t.me/{chat_username}/{msg.id}"
+            from telethon.tl.types import (
+                MessageEntityTextUrl, MessageEntityBold, MessageEntityItalic,
+                MessageEntityUnderline, MessageEntityStrike, MessageEntityCode, MessageEntityPre,
+            )
             desc  = msg_text  # giữ nguyên newline, KHÔNG replace thành <br>
             title = (msg_text[:80] + "...") if len(msg_text) > 80 else (msg_text or f"[Media] @{chat_username}")
             has_media = bool(msg.media)
             grouped   = getattr(msg, "grouped_id", None)
 
-            # Detect link ẩn
+            # Detect link ẩn và format entities (bold/italic/underline...)
             _has_hidden_link = bool(
                 msg_text and msg.entities and
                 any(isinstance(e, MessageEntityTextUrl) for e in msg.entities)
             )
-            _html_text = tg_html.unparse(msg_text, msg.entities) if _has_hidden_link else ''
+            _has_format = bool(
+                msg_text and msg.entities and
+                any(isinstance(e, (MessageEntityBold, MessageEntityItalic, MessageEntityUnderline,
+                                   MessageEntityStrike, MessageEntityCode, MessageEntityPre)) for e in msg.entities)
+            )
+            _html_text = tg_html.unparse(msg_text, msg.entities) if (_has_hidden_link or _has_format) else ''
 
             # Atomic check+add: tránh race condition giữa các job song song
             with lock:
@@ -4707,13 +4706,14 @@ def _run_read_all_bg(url, feed_cfg):
                 "_source": "telethon",
                 "do_translate": do_translate,
                 "_tg_has_hidden_link": _has_hidden_link,
+                "_tg_has_format": _has_format,
                 "_tg_html_text": _html_text,
             }
 
             if do_translate and msg_text:
                 item["text"] = msg_text
-                if _has_hidden_link:
-                    # Dịch bảo toàn link ẩn: Gemini HTML → DeepL HTML → Google HTML
+                if _has_hidden_link or _has_format:
+                    # Dịch bảo toàn link ẩn + format: Gemini HTML → DeepL HTML → Google HTML
                     # Tất cả engine đều trả HTML → _tg_html_text luôn là HTML đã dịch
                     translated, _eng, _ = _translate_with_hidden_links(_html_text)
                     item["_tg_html_text"] = translated

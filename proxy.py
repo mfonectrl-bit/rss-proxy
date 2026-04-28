@@ -915,6 +915,7 @@ class BatchPipeline:
                         item['_translate_engine_used'] = getattr(_tl_engine, 'used', '')
                 else:
                     translated = text  # Không dịch — giữ nguyên bản gốc
+                    item['_translate_engine_used'] = ''  # đảm bảo không gán GT: prefix
                 if not item.get('category'):
                     item['category'] = item.get('category') or 'Khác'
                 item['text_translated'] = translated
@@ -1167,6 +1168,11 @@ def _translate_with_hidden_links(html_text):
             try:
                 _model = _engine_dispatcher.GEMINI_MODELS[_sub]
                 result = _fix_html_spacing(_translate_gemini_html(html_text, model=_model))
+                if _is_error_result(result):
+                    print(f'[Translate] {_sub} HTML trả về error text — thử sub-engine tiếp')
+                    _engine_dispatcher._record_failure(_sub, is_rate_limit=False)
+                    _now = time.time()
+                    continue
                 _engine_dispatcher._record_success(_sub)
                 return result, _sub, True
             except Exception as e:
@@ -1235,12 +1241,33 @@ def _translate_with_hidden_links(html_text):
             _translated_plain = _fast_translate(_plain) if _plain else _plain
             return _translated_plain, 'google', False
         except Exception as e2:
-            print(f'[Translate] Fallback plain text lỗi: {e2} — giữ nguyên bản gốc')
-            return html_text, 'none', True
+            print(f'[Translate] Fallback plain text lỗi: {e2} — thử Google trực tiếp')
+            try:
+                _plain = re.sub(r'<[^>]+>', '', html_text).strip()
+                _translated_plain = _translate_google(_plain) if _plain else _plain
+                return _translated_plain, 'google', False
+            except Exception as e3:
+                print(f'[Translate] Google trực tiếp lỗi: {e3} — giữ nguyên bản gốc (strip HTML)')
+                _plain = re.sub(r'<[^>]+>', '', html_text).strip()
+                return _plain, 'none', False
 
 
 def strip_html(text):
     return re.sub(r'<[^>]+>', ' ', text).strip()
+
+# Patterns lỗi HTTP/server thường bị lẫn vào kết quả dịch từ Gemini/DeepL
+_ERROR_PATTERNS = re.compile(
+    r'(Error\s+\d{3}\s+\(.*?Error\)|Server Error|Internal Server Error|'
+    r'That\'s an error|Please try again later|HTTP \d{3}|'
+    r'{"error":|"code":\s*[45]\d\d)',
+    re.I
+)
+
+def _is_error_result(text):
+    """Trả về True nếu text trông như error message từ server, không phải bản dịch."""
+    if not text:
+        return False
+    return bool(_ERROR_PATTERNS.search(text[:300]))
 
 
 def _expand_hidden_links_to_text(item):
@@ -1381,6 +1408,19 @@ def _fast_translate(text):
     for placeholder, url in placeholders.items():
         translated = translated.replace(placeholder, url)
         translated = translated.replace(placeholder.replace('URLTOKEN', ' URLTOKEN ').strip(), url)
+
+    # Lọc kết quả dịch chứa error text từ server (lỗi 7)
+    if _is_error_result(translated):
+        print(f'[Translate] Kết quả dịch có vẻ là error text — fallback Google')
+        try:
+            _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
+            _translated_fallback = GoogleTranslator(source='auto', target=_gtarget).translate(text)
+            if _translated_fallback and not _is_error_result(_translated_fallback):
+                _tl_engine.used = 'google'
+                return _translated_fallback
+        except Exception:
+            pass
+        return text  # giữ nguyên bản gốc nếu cả fallback cũng fail
 
     return translated
 
@@ -4089,6 +4129,9 @@ def parse_items(xml_bytes, category_hint='', limit=None):
     root = ET.fromstring(xml_bytes)
     is_atom = 'feed' in root.tag
     ns = '{http://www.w3.org/2005/Atom}'
+    # Namespace cho media RSS (VnExpress và các feed chuẩn MediaRSS)
+    ns_media   = '{http://search.yahoo.com/mrss/}'
+    ns_media2  = '{http://www.rssboard.org/media-rss}'
     entries = (root.findall(f'.//{ns}entry') or root.findall('.//entry')) if is_atom else root.findall('.//item')
     # Giới hạn số bài lấy về theo history_limit
     if limit and limit > 0:
@@ -4116,6 +4159,45 @@ def parse_items(xml_bytes, category_hint='', limit=None):
             pub = g('pubDate')
             d = e.find('description')
             desc = d.text.strip() if d is not None and d.text else ''
+
+        # --- Trích xuất media URL từ enclosure / media:content / media:thumbnail ---
+        # (VnExpress và các feed MediaRSS dùng các tag này thay vì <img> trong <description>)
+        media_url = None
+        # 1. <enclosure url="..." type="image/...">
+        enc = e.find('enclosure')
+        if enc is not None:
+            enc_type = enc.get('type', '')
+            enc_url  = enc.get('url', '')
+            if enc_url and ('image' in enc_type or enc_url.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif'))):
+                media_url = enc_url
+        # 2. <media:content url="..." medium="image">
+        if not media_url:
+            for mc_ns in (ns_media, ns_media2, ''):
+                mc = e.find(f'{mc_ns}content') if mc_ns else None
+                # Tìm tất cả media:content, ưu tiên loại image
+                for mc_tag in (f'{ns_media}content', f'{ns_media2}content'):
+                    mc_el = e.find(mc_tag)
+                    if mc_el is not None:
+                        mc_medium = mc_el.get('medium', '')
+                        mc_url    = mc_el.get('url', '')
+                        if mc_url and ('image' in mc_medium or not mc_medium):
+                            media_url = mc_url
+                            break
+                if media_url:
+                    break
+        # 3. <media:thumbnail url="...">
+        if not media_url:
+            for mt_tag in (f'{ns_media}thumbnail', f'{ns_media2}thumbnail'):
+                mt_el = e.find(mt_tag)
+                if mt_el is not None:
+                    mt_url = mt_el.get('url', '')
+                    if mt_url:
+                        media_url = mt_url
+                        break
+        # 4. Nếu media_url tìm được, nhúng vào <img> trong desc để extract_media() hoạt động
+        if media_url and f'src="{media_url}"' not in desc and f"src='{media_url}'" not in desc:
+            desc = f'<img src="{media_url}"/>' + ('\n' if desc else '') + desc
+
         items.append({'guid': guid, 'title': title, 'link': link, 'pubDate': pub, 'desc': desc, 'translated': False, 'category': category_hint})
     return items
 
@@ -4535,7 +4617,9 @@ def _do_forward(processed, category, url):
                 # t.me links không cần preview, nhưng bbc.com, youtube.com... thì có
                 # Check link trong tất cả các field có thể chứa URL gốc
                 _raw_for_check = (it.get('text', '') or it.get('_tg_html_text', '') or it.get('desc', '') or '')
-                desc_has_link = bool(re.search(r'https?://', _raw_for_check))
+                # Bài có link ẩn (MessageEntityTextUrl) luôn có link → bật preview
+                _has_hidden_link_flag = it.get('_tg_has_hidden_link', False)
+                desc_has_link = _has_hidden_link_flag or bool(re.search(r'https?://', _raw_for_check))
 
                 # Thêm prefix engine dịch vào đầu caption
                 _eng_used = it.get('_translate_engine_used', '')
@@ -4717,12 +4801,16 @@ def _run_read_all_bg(url, feed_cfg):
                     # Tất cả engine đều trả HTML → _tg_html_text luôn là HTML đã dịch
                     translated, _eng, _ = _translate_with_hidden_links(_html_text)
                     item["_tg_html_text"] = translated
+                    item["_translate_engine_used"] = _eng
                 else:
                     # Bản tin thường: giữ flow cũ
                     translated = _fast_translate(msg_text)
+                    item["_translate_engine_used"] = getattr(_tl_engine, 'used', '')
                 item["desc"] = translated
                 item["title"] = (translated[:80] + "...") if len(translated) > 80 else translated
                 item["translated"] = True
+            else:
+                item["_translate_engine_used"] = ''  # không dịch → không gán GT: prefix
 
             # Đánh dấu grouped_id đã xử lý (guid đã được ghi atomic ở trên)
             if grouped:
@@ -4872,6 +4960,15 @@ def _poll_one(url_obj):
             with lock:
                 known_guids[url] = {it['guid'] for it in items if it['guid']}
             _forward_ready_feeds.add(url)
+            # Nếu không có TG feed nào, _system_fully_loaded sẽ không được set từ TG setup
+            # → set tại đây để Gemini được enable sau khi RSS feed init xong
+            global _system_fully_loaded
+            if not _system_fully_loaded:
+                with lock:
+                    _has_tg_feeds = any(is_tg_source(u.get('url', '')) for u in watched_urls)
+                if not _has_tg_feeds:
+                    _system_fully_loaded = True
+                    print('[System] ✅ Fully loaded (RSS-only) — Gemini enabled')
             print(f'[INIT] known_guids khởi tạo lần đầu cho: {url} ({len(items)} items)')
             # Broadcast lên UI để hiển thị ngay — không dịch, không forward
             ws_items = []
@@ -5065,6 +5162,7 @@ def _process_tg_queue():
                 '_tg_grouped_id': it.get('_tg_grouped_id'),
                 '_source': 'telethon',
                 '_tg_has_hidden_link': it.get('_tg_has_hidden_link', False),
+                '_tg_has_format': it.get('_tg_has_format', False),
                 '_tg_html_text': it.get('_tg_html_text', ''),
             }
             _pipeline.put(pipeline_item)

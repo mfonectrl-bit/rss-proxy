@@ -914,13 +914,24 @@ class BatchPipeline:
                     has_format      = item.get('_tg_has_format', False)
                     html_text = item.get('_tg_html_text', '')
                     if html_text and (has_hidden_link or has_format):
-                        # Dịch bảo toàn HTML (link ẩn + format): Gemini HTML → DeepL → Google
                         translated, _eng, _ = _translate_with_hidden_links(html_text)
+                        # Nếu kết quả rỗng → fallback Google plain text
+                        if not translated or not translated.strip():
+                            _plain = re.sub(r'<[^>]+>', '', html_text).strip()
+                            translated = _fast_translate(_plain) if _plain else text
+                            _eng = 'google'
                         item['_tg_html_text'] = translated
                         item['_translate_engine_used'] = _eng
                     else:
-                        # Bản tin thường plain text
                         translated = _fast_translate(text)
+                        # Nếu kết quả rỗng → fallback Google trực tiếp
+                        if not translated or not translated.strip():
+                            try:
+                                _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
+                                translated = GoogleTranslator(source='auto', target=_gtarget).translate(text) or text
+                            except Exception:
+                                translated = text
+                            _tl_engine.used = 'google'
                         item['_translate_engine_used'] = getattr(_tl_engine, 'used', '')
                 else:
                     translated = text  # Không dịch — giữ nguyên bản gốc
@@ -1060,11 +1071,11 @@ def _translate_gemini(text, model='gemini-2.0-flash'):
     _lang = _LANG_NAME.get(translate_target_lang, translate_target_lang)
     prompt = (
         f'Dịch đoạn văn bản sau sang {_lang} tự nhiên, giữ nguyên format xuống dòng, '
-        'emoji và các ký tự đặc biệt. Chỉ trả về bản dịch, không giải thích thêm:\n\n' + text[:3000]
+        'emoji và các ký tự đặc biệt. Chỉ trả về bản dịch, không giải thích thêm:\n\n' + text[:15000]
     )
     payload = json.dumps({
         'contents': [{'parts': [{'text': prompt}]}],
-        'generationConfig': {'temperature': 0.1, 'maxOutputTokens': 2048},
+        'generationConfig': {'temperature': 0.1, 'maxOutputTokens': 8192},
     }).encode('utf-8')
     url = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}'
     req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
@@ -1096,11 +1107,11 @@ def _translate_gemini_html(html_text, model='gemini-2.0-flash'):
         'chỉ dịch nội dung text thuần, KHÔNG xóa, KHÔNG sửa, KHÔNG thêm bất kỳ thẻ nào: '
         '<a href="...">, <b>, </b>, <i>, </i>, <u>, </u>, <s>, </s>, <code>, </code>. '
         'Giữ nguyên dấu cách trước và sau mỗi thẻ HTML. '
-        'Chỉ trả về bản dịch HTML, không giải thích thêm:\n\n' + html_text[:3000]
+        'Chỉ trả về bản dịch HTML, không giải thích thêm:\n\n' + html_text[:15000]
     )
     payload = json.dumps({
         'contents': [{'parts': [{'text': prompt}]}],
-        'generationConfig': {'temperature': 0.1, 'maxOutputTokens': 2048},
+        'generationConfig': {'temperature': 0.1, 'maxOutputTokens': 8192},
     }).encode('utf-8')
     url = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}'
     req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
@@ -4487,14 +4498,34 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
         elif rss_media:
             # Telegram giới hạn caption kèm media tối đa 1024 ký tự hiển thị (sau strip HTML)
             caption_plain_len = len(re.sub(r'<[^>]+>', '', caption))
+
+            # Download ảnh về bytes trước — tránh Telegram không fetch được URL từ CDN
+            # (VnExpress và một số CDN block Telegram server IP)
+            _media_to_send = rss_media  # default: dùng URL trực tiếp
+            if rss_media.lower().split('?')[0].endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')):
+                try:
+                    import io
+                    _img_req = urllib.request.Request(
+                        rss_media,
+                        headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+                    )
+                    with urllib.request.urlopen(_img_req, timeout=10) as _img_resp:
+                        _img_bytes = _img_resp.read()
+                    if _img_bytes:
+                        _media_to_send = io.BytesIO(_img_bytes)
+                        _media_to_send.name = rss_media.split('/')[-1].split('?')[0] or 'image.jpg'
+                except Exception as _dl_err:
+                    print(f'[TG Send] Download ảnh lỗi ({_dl_err}) — thử URL trực tiếp')
+                    _media_to_send = rss_media
+
             try:
                 if caption_plain_len <= 1024:
-                    await tg_client.send_file(dest, rss_media, caption=caption,
+                    await tg_client.send_file(dest, _media_to_send, caption=caption,
                                               parse_mode='html', reply_to=thread_reply,
                                               link_preview=show_preview)
                 else:
                     # Caption quá dài — gửi media không caption, reply text riêng
-                    sent = await tg_client.send_file(dest, rss_media, caption='',
+                    sent = await tg_client.send_file(dest, _media_to_send, caption='',
                                                       parse_mode='html', reply_to=thread_reply)
                     reply_to = sent.id if not isinstance(sent, list) else sent[0].id
                     for chunk in _split_text(caption, 4096):
@@ -4788,10 +4819,23 @@ def _run_read_all_bg(url, feed_cfg):
                 item["text"] = msg_text
                 if _has_hidden_link or _has_format:
                     translated, _eng, _ = _translate_with_hidden_links(_html_text)
+                    # Nếu kết quả rỗng → fallback Google plain text
+                    if not translated or not translated.strip():
+                        _plain = re.sub(r'<[^>]+>', '', _html_text).strip()
+                        translated = _fast_translate(_plain) if _plain else msg_text
+                        _eng = 'google'
                     item["_tg_html_text"] = translated
                     item["_translate_engine_used"] = _eng
                 else:
                     translated = _fast_translate(msg_text)
+                    # Nếu kết quả rỗng → fallback Google trực tiếp
+                    if not translated or not translated.strip():
+                        try:
+                            _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
+                            translated = GoogleTranslator(source='auto', target=_gtarget).translate(msg_text) or msg_text
+                        except Exception:
+                            translated = msg_text
+                        _tl_engine.used = 'google'
                     item["_translate_engine_used"] = getattr(_tl_engine, 'used', '')
                 item["desc"] = translated
                 item["title"] = (translated[:80] + "...") if len(translated) > 80 else translated
@@ -5078,13 +5122,15 @@ def _process_tg_queue():
         by_feed.setdefault(fu, []).append(item)
 
     for feed_url, items in by_feed.items():
-        category  = ''
-        show_link = True
+        category     = ''
+        show_link    = True
+        do_translate = True
         with lock:
             for u in watched_urls:
                 if u['url'] == feed_url:
-                    category  = u.get('category', '')
-                    show_link = u.get('show_link', True)
+                    category     = u.get('category', '')
+                    show_link    = u.get('show_link', True)
+                    do_translate = u.get('do_translate', True)
                     break
             prev = known_guids.get(feed_url)
 
@@ -5112,17 +5158,12 @@ def _process_tg_queue():
 
         # Đẩy vào BatchPipeline thay vì xử lý sync
         for it in new_items:
-            feed_cfg_tg = next((u for u in watched_urls if u['url'] == feed_url), {})
             # Khôi phục newline từ <br> trước khi dịch — strip_html thay <br> bằng space
-            # Dùng desc gốc (msg_text có \n) làm input cho translate
-            # desc = msg_text đã có \n thật — không cần xử lý thêm
             _raw_desc = it.get('desc', '') or ''
             if '<br' in _raw_desc.lower():
-                # Fallback nếu desc vẫn còn <br> cũ
                 _raw_text = re.sub(r'<br\s*/?>', '\n', _raw_desc, flags=re.I)
                 _raw_text = re.sub(r'<[^>]+>', '', _raw_text)
             else:
-                # desc là plain text với \n thật — giữ nguyên, không strip
                 _raw_text = _raw_desc
             _raw_text = _raw_text or it.get('title', '')
             pipeline_item = {
@@ -5130,7 +5171,7 @@ def _process_tg_queue():
                 'feed_url': feed_url,
                 'category': category,
                 'show_link': show_link,
-                'do_translate': feed_cfg_tg.get('do_translate', True),
+                'do_translate': do_translate,  # lấy từ lock ở trên, không lookup lại
                 'guid': it.get('guid', ''),
                 'link': it.get('link', ''),
                 'pubDate': it.get('pubDate', ''),

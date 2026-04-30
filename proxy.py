@@ -1461,10 +1461,11 @@ def _expand_hidden_links_to_text(item):
     def _keep_or_strip(m):
         return m.group(0) if _allowed.match(m.group(0)) else ''
 
-    result = re.sub(r'<[^>]+>', _keep_or_strip, html_src)
-    # Unescape HTML entities: &amp; → &, &lt; → <, etc.
+    # Unescape trước để &lt;b&gt; → <b> trước khi regex chạy
+    # Nếu unescape sau thì &lt;b&gt; không match pattern → bị strip → mất bold/italic
     import html as _html_mod
-    result = _html_mod.unescape(result)
+    html_src = _html_mod.unescape(html_src)
+    result = re.sub(r'<[^>]+>', _keep_or_strip, html_src)
     return result.strip() or None
 
 def is_same_as_target(text):
@@ -3246,7 +3247,11 @@ async function forwardSelected(){
         const feedCfg=feeds.find(f=>f.url===it.feedUrl)||{};
         return {guid:it.guid,title:it.title,desc:it.desc,link:it.link,
                 category:it.category,feedUrl:it.feedUrl,
-                show_link:feedCfg.show_link!==false};
+                show_link:feedCfg.show_link!==false,
+                _tg_html_text:it._tg_html_text||'',
+                _tg_has_hidden_link:it._tg_has_hidden_link||false,
+                _tg_has_format:it._tg_has_format||false,
+                _translate_engine_used:it._translate_engine_used||''};
     });
     try{
         const r=await fetch('/tg_forward',{method:'POST',headers:{'Content-Type':'application/json'},

@@ -1822,6 +1822,23 @@
         }
       ],
       "history_limit": 5
+    },
+    {
+      "url": "https://t.me/dailyexpose",
+      "name": "The Exposé News (Official)",
+      "show_link": true,
+      "auto_fwd": true,
+      "destinations": [
+        {
+          "ch_idx": 0,
+          "topic_ids": ""
+        },
+        {
+          "ch_idx": 3,
+          "topic_ids": "3, 5663"
+        }
+      ],
+      "history_limit": 5
     }
   ],
   "auto_fwd": true,

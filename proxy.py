@@ -693,6 +693,12 @@ class EngineDispatcher:
         self._rr_cycle = self._build_cycle()
         self._rr_index = 0
 
+        # Log phân phối để dễ debug
+        if self._rr_cycle:
+            from collections import Counter
+            _kc = Counter(ki for _, ki in self._rr_cycle)
+            print(f'[Dispatcher] Cycle={len(self._rr_cycle)} slots | Key distribution: { {f"key{k}": v for k, v in sorted(_kc.items())} }')
+
         # State per (model, key_index) cho Gemini
         self._state = {}
         for ki in range(max(len(self._keys), 1)):
@@ -706,14 +712,24 @@ class EngineDispatcher:
         self._state['google'] = {'req_times': [], 'fails': 0, 'cooldown_until': 0.0, 'last_req': 0.0}
 
     def _build_cycle(self):
-        """Build weighted cycle cho tất cả (model, key_index) combinations."""
+        """
+        Build weighted cycle cho tất cả (model, key_index) combinations.
+        Mỗi key được phân phối đều: lặp BASE_CYCLE đủ số lần để cover tất cả keys.
+        Ví dụ 5 keys + BASE_CYCLE 6 phần tử → lặp 5 lần = 30 slot, mỗi key xuất hiện 6 lần.
+        """
         if not self._keys:
             return []
         n = len(self._keys)
         cycle = []
-        for i, model in enumerate(self._BASE_CYCLE):
-            cycle.append((model, i % n))
-        # Đảm bảo mỗi key xuất hiện ít nhất 1 lần
+        # Lặp BASE_CYCLE đủ lcm(len(BASE_CYCLE), n) lần để mỗi key xuất hiện đều
+        import math
+        base_len = len(self._BASE_CYCLE)
+        repeat = math.lcm(base_len, n) // base_len if base_len else 1
+        for rep in range(repeat):
+            for i, model in enumerate(self._BASE_CYCLE):
+                global_i = rep * base_len + i
+                cycle.append((model, global_i % n))
+        # Đảm bảo mỗi key xuất hiện ít nhất 1 lần (safety)
         covered = {ki for _, ki in cycle}
         for ki in range(n):
             if ki not in covered:
@@ -1002,6 +1018,7 @@ class BatchPipeline:
                     has_format      = item.get('_tg_has_format', False)
                     html_text = item.get('_tg_html_text', '')
                     if html_text and (has_hidden_link or has_format):
+                        # Bản tin có link ẩn / format HTML → dịch HTML để giữ nguyên thẻ
                         translated, _eng, _ = _translate_with_hidden_links(html_text)
                         # Nếu kết quả rỗng → fallback Google plain text
                         if not translated or not translated.strip():
@@ -1017,16 +1034,46 @@ class BatchPipeline:
                             item['_tg_html_text'] = translated
                         item['_translate_engine_used'] = _eng
                     else:
-                        translated = _fast_translate(text)
-                        # Nếu kết quả rỗng → fallback Google trực tiếp
+                        # Bản tin plain text (không có hidden link / format):
+                        # Ưu tiên Gemini cho TẤT CẢ bản tin, chỉ fallback Google khi Gemini hết quota/lỗi
+                        translated = None
+                        _eng = ''
+                        if GEMINI_API_KEYS and _system_fully_loaded:
+                            _tried_slots = set()
+                            for _attempt in range(len(_engine_dispatcher._rr_cycle) + 1):
+                                with _engine_dispatcher._lock:
+                                    _slot = _engine_dispatcher.pick_gemini_slot()
+                                if not _slot:
+                                    break
+                                _gmodel, _gki, _gkey = _slot
+                                _slot_id = (_gmodel, _gki)
+                                if _slot_id in _tried_slots:
+                                    break
+                                _tried_slots.add(_slot_id)
+                                try:
+                                    translated = _fast_translate_with_key(text, _gmodel, _gkey)
+                                    _engine_dispatcher._record_success(_gmodel, _gki)
+                                    _eng = _gmodel
+                                    break
+                                except Exception as _ge:
+                                    _is_rl = '429' in str(_ge) or 'quota' in str(_ge).lower()
+                                    _engine_dispatcher._record_failure(_gmodel, _gki, is_rate_limit=_is_rl)
+                                    print(f'[Translate] {_gmodel}[key{_gki}] plain lỗi: {_ge} — thử slot tiếp')
+                        # Fallback: _fast_translate (sẽ dùng dispatcher → DeepL → Google)
+                        if not translated or not translated.strip():
+                            translated = _fast_translate(text)
+                            _eng = getattr(_tl_engine, 'used', 'google')
+                        # Nếu vẫn rỗng → Google trực tiếp
                         if not translated or not translated.strip():
                             try:
                                 _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
                                 translated = GoogleTranslator(source='auto', target=_gtarget).translate(text) or text
                             except Exception:
                                 translated = text
-                            _tl_engine.used = 'google'
-                        item['_translate_engine_used'] = getattr(_tl_engine, 'used', '')
+                            _eng = 'google'
+                        # Xóa _tg_html_text để _do_forward không dùng text gốc chưa dịch
+                        item['_tg_html_text'] = ''
+                        item['_translate_engine_used'] = _eng
                 else:
                     translated = text  # Không dịch — giữ nguyên bản gốc
                     item['_translate_engine_used'] = ''  # Không gán prefix engine
@@ -1370,7 +1417,8 @@ def strip_html(text):
 _ERROR_RESULT_RE = re.compile(
     r'(Error\s*\d{3}|Server Error|Internal Server Error|'
     r'That\'s an error|Please try again later|'
-    r'HTTP\s+\d{3}|\{"error":|"code":\s*[45]\d\d)',
+    r'HTTP\s+\d{3}|\{"error":|"code":\s*[45]\d\d|'
+    r'!+1[45]\d\d|ServiceUnavailable|Bad Gateway|Gateway Timeout)',
     re.I
 )
 
@@ -1521,6 +1569,39 @@ def _fast_translate(text):
         translated = translated.replace(placeholder.replace('URLTOKEN', ' URLTOKEN ').strip(), url)
 
     return translated
+
+def _fast_translate_with_key(text, model_alias, api_key):
+    """
+    Dịch plain text bằng Gemini key cụ thể — dùng cho _process_batch.
+    Tái dụng logic URL masking / NL_TOKEN từ _fast_translate.
+    Raise exception để caller xử lý retry / fallback.
+    """
+    if not text or len(text.strip()) < 4:
+        return text
+    if is_same_as_target(text[:200]):
+        return text
+
+    url_pattern = re.compile(r'https?://[^\s\)<>]+')
+    urls = url_pattern.findall(text)
+    placeholders = {}
+    masked = text
+    for i, url in enumerate(urls):
+        ph = f'URLTOKEN{i}URLTOKEN'
+        placeholders[ph] = url
+        masked = masked.replace(url, ph, 1)
+
+    NL_TOKEN = '⏎'
+    masked = masked.replace('\n', NL_TOKEN)
+
+    model_name = _engine_dispatcher.GEMINI_MODELS.get(model_alias, model_alias)
+    result = _translate_gemini(masked, model=model_name, api_key=api_key)
+
+    result = result.replace(NL_TOKEN, '\n')
+    for ph, url in placeholders.items():
+        result = result.replace(ph, url)
+
+    return result
+
 
 def extract_media(desc_html):
     if not desc_html:

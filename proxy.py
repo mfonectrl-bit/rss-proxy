@@ -720,33 +720,29 @@ class EngineDispatcher:
     def _build_cycle(self):
         """
         Build weighted cycle cho tất cả (model, key_index) combinations.
-        Mỗi key được phân phối đều: lặp BASE_CYCLE đủ số lần để cover tất cả keys.
-        Ví dụ 5 keys + BASE_CYCLE 6 phần tử → lặp 5 lần = 30 slot, mỗi key xuất hiện 6 lần.
+        Mỗi model xuất hiện N lần trong BASE_CYCLE → nhân rộng sang tất cả keys.
+        Kết quả: mỗi (model, key) xuất hiện đúng weight lần trong cycle.
+
+        Với 5 keys + BASE_CYCLE 8 phần tử:
+        → 40 slot, mỗi key xuất hiện đúng 8 lần (1 lần/model-slot trong BASE_CYCLE).
+        Key distribution đồng đều theo model.
         """
         if not self._keys:
             return []
         n = len(self._keys)
         cycle = []
-        # Lặp BASE_CYCLE đủ lcm(len(BASE_CYCLE), n) lần để mỗi key xuất hiện đều
-        import math
-        base_len = len(self._BASE_CYCLE)
-        repeat = math.lcm(base_len, n) // base_len if base_len else 1
-        for rep in range(repeat):
-            for i, model in enumerate(self._BASE_CYCLE):
-                global_i = rep * base_len + i
-                cycle.append((model, global_i % n))
-        # Đảm bảo mỗi key xuất hiện ít nhất 1 lần (safety)
-        covered = {ki for _, ki in cycle}
-        for ki in range(n):
-            if ki not in covered:
-                cycle.append(('gemini-3.1', ki))
+        # Mỗi slot trong BASE_CYCLE → expand ra n key variants, interleaved
+        for model in self._BASE_CYCLE:
+            for ki in range(n):
+                cycle.append((model, ki))
         return cycle
 
     def _effective_min_interval(self, model):
-        """MIN_INTERVAL thực tế = base / số keys — nhiều keys thì interval ngắn hơn."""
-        base = self.MIN_INTERVAL.get(model, 0.0)
-        n = max(len(self._keys), 1)
-        return base / n if n > 1 else base
+        """
+        MIN_INTERVAL per-key per-model — KHÔNG chia theo số keys.
+        Mỗi key là quota độc lập, throttle riêng.
+        """
+        return self.MIN_INTERVAL.get(model, 0.0)
 
     def _is_available_slot(self, model, ki, now):
         """Kiểm tra slot (model, key_index) có sẵn sàng không."""
@@ -766,8 +762,8 @@ class EngineDispatcher:
         return len(st['req_times']) < limit
 
     def _is_available(self, engine, now):
-        """Check backward-compat: bất kỳ slot nào của engine available không."""
-        if engine in ('gemini-2.5', 'gemini-2.5-lite', 'gemini-3.1'):
+        """Check: bất kỳ slot nào của engine available không."""
+        if engine in ('gemini-2.5', 'gemini-2.5-lite', 'gemini-3.0', 'gemini-3.1'):
             return any(self._is_available_slot(engine, ki, now)
                        for ki in range(len(self._keys)))
         st = self._state.get(engine)
@@ -789,7 +785,6 @@ class EngineDispatcher:
         st['last_req'] = now
 
     def _record_request(self, engine, now):
-        """Record request cho non-Gemini engines."""
         st = self._state.get(engine)
         if st:
             st['req_times'].append(now)
@@ -821,6 +816,10 @@ class EngineDispatcher:
         """
         Pick (model, key_index, api_key) theo weighted round-robin.
         Phải được gọi trong lock. Trả về tuple hoặc None.
+
+        QUAN TRỌNG: _record_request_slot được gọi tại đây (optimistic) để
+        cập nhật last_req và req_times ngay — tránh nhiều worker pick cùng slot.
+        Nếu request thực tế lỗi, caller gọi _record_failure để điều chỉnh.
         """
         if not self._keys or not _system_fully_loaded or not self._rr_cycle:
             return None
@@ -1077,25 +1076,17 @@ class BatchPipeline:
                             except Exception:
                                 translated = text
                             _eng = 'google'
-                        # Xóa _tg_html_text để _do_forward không dùng text gốc chưa dịch
+                        # Reset html_text: plain text branch không cần, tránh _do_forward nhầm dùng
                         item['_tg_html_text'] = ''
                         item['_translate_engine_used'] = _eng
                 else:
-                    translated = text  # Không dịch — giữ nguyên bản gốc
-                    item['_translate_engine_used'] = ''  # Không gán prefix engine
+                    translated = text
+                    item['_translate_engine_used'] = ''
                 if not item.get('category'):
-                    item['category'] = item.get('category') or 'Khác'
+                    item['category'] = 'Khác'
                 item['text_translated'] = translated
-                # desc luôn là plain text — _tg_html_text giữ HTML đầy đủ cho _build_caption
-                # _tg_html_text chỉ có giá trị khi đã qua HTML path, plain text path đã clear ở trên
-                _html_result = item.get('_tg_html_text', '')
-                if _html_result:
-                    _desc_plain = re.sub(r'<[^>]+>', ' ', _html_result).strip()
-                    _desc_plain = re.sub(r' +', ' ', _desc_plain)
-                else:
-                    _desc_plain = translated or ''
-                title = (_desc_plain[:80] + '...') if len(_desc_plain) > 80 else _desc_plain
-                item['desc']       = _desc_plain
+                title              = (translated[:80] + '...') if len(translated) > 80 else translated
+                item['desc']       = translated
                 item['title']      = title
                 item['translated'] = should_translate
                 item['show_link']  = item.get('show_link', True)
@@ -1461,11 +1452,10 @@ def _expand_hidden_links_to_text(item):
     def _keep_or_strip(m):
         return m.group(0) if _allowed.match(m.group(0)) else ''
 
-    # Unescape trước để &lt;b&gt; → <b> trước khi regex chạy
-    # Nếu unescape sau thì &lt;b&gt; không match pattern → bị strip → mất bold/italic
-    import html as _html_mod
-    html_src = _html_mod.unescape(html_src)
     result = re.sub(r'<[^>]+>', _keep_or_strip, html_src)
+    # Unescape HTML entities: &amp; → &, &lt; → <, etc.
+    import html as _html_mod
+    result = _html_mod.unescape(result)
     return result.strip() or None
 
 def is_same_as_target(text):
@@ -2039,7 +2029,7 @@ def _run_cleanup_scheduler():
                     print(f'[Cleanup] Auto-run: {s["channel"]} topic={s["topic_id"]} count={s["count"]}')
                     _cleanup_schedules[key]['last_run'] = today
                     _persist_cleanup_schedules()
-                    # Tái dụng _run_cleanup_bg đã có sẵn
+                    # Chạy cleanup ngầm
                     ch  = s['channel']
                     tid = s['topic_id']
                     cnt = s['count']
@@ -2092,27 +2082,8 @@ def _run_cleanup_scheduler():
                                 _cleanup_status[ch_].update({'status': 'done', 'deleted': deleted, 'remaining': remaining})
                                 print(f'[Cleanup] Auto ✅ {ch_} topic={tid_}: xóa {deleted} tin, còn lại {remaining} tin')
 
-                                # Force refresh Telegram UI sau khi xóa
                                 if deleted > 0:
-                                    try:
-                                        await asyncio.sleep(2)
-                                        await tg_client.send_read_acknowledge(entity, max_id=max(msg_ids))
-                                        await asyncio.sleep(1)
-                                        from telethon.tl.types import InputReplyToMessage
-                                        sent = await tg_client.send_message(
-                                            entity,
-                                            '.',
-                                            reply_to=InputReplyToMessage(
-                                                reply_to_msg_id=tid_int,
-                                                top_msg_id=tid_int,
-                                            ),
-                                            silent=True
-                                        )
-                                        await asyncio.sleep(1)
-                                        await tg_client.delete_messages(entity, [sent.id], revoke=True)
-                                        print(f'[Cleanup] 🔄 Auto force UI refresh topic={tid_} OK')
-                                    except Exception as rf_err:
-                                        print(f'[Cleanup] Auto force refresh warning: {rf_err}')
+                                    await _force_topic_ui_refresh(entity, tid_int)
                             except Exception as e:
                                 _cleanup_status[ch_].update({'status': 'error', 'error': str(e)})
                                 print(f'[Cleanup] Auto ❌ {ch_} topic={tid_}: {e}')
@@ -3247,11 +3218,7 @@ async function forwardSelected(){
         const feedCfg=feeds.find(f=>f.url===it.feedUrl)||{};
         return {guid:it.guid,title:it.title,desc:it.desc,link:it.link,
                 category:it.category,feedUrl:it.feedUrl,
-                show_link:feedCfg.show_link!==false,
-                _tg_html_text:it._tg_html_text||'',
-                _tg_has_hidden_link:it._tg_has_hidden_link||false,
-                _tg_has_format:it._tg_has_format||false,
-                _translate_engine_used:it._translate_engine_used||''};
+                show_link:feedCfg.show_link!==false};
     });
     try{
         const r=await fetch('/tg_forward',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -4511,7 +4478,34 @@ async def _resolve_dest(dest_channel):
     return dest
 
 
-async def _collect_topic_ids(entity, input_entity, tid_int):
+async def _force_topic_ui_refresh(entity, tid_int):
+    """
+    Gửi + xóa ngay 1 tin dummy vào topic để force Telegram UI cập nhật số bài.
+    Dùng chung cho cả manual cleanup và auto-scheduled cleanup.
+    """
+    from telethon.tl.types import InputReplyToMessage
+    try:
+        sent = await tg_client.send_message(
+            entity,
+            '.',
+            reply_to=InputReplyToMessage(
+                reply_to_msg_id=tid_int,
+                top_msg_id=tid_int,
+            ),
+            silent=True
+        )
+        # Đợi đủ lâu để Telegram server xác nhận tin dummy trước khi xóa
+        await asyncio.sleep(2.0)
+        if sent and sent.id:
+            await tg_client.delete_messages(entity, [sent.id], revoke=True)
+        print(f'[Cleanup] 🔄 Force UI refresh topic={tid_int} OK')
+        return True
+    except Exception as rf_err:
+        print(f'[Cleanup] Force UI refresh warning (không ảnh hưởng xóa): {rf_err}')
+        return False
+
+
+
     """
     Thu thap TẤT CA msg_id trong forum topic dung GetRepliesRequest.
     Tra ve list[int] sort tang dan (cu -> moi).
@@ -4552,7 +4546,101 @@ async def _collect_topic_ids(entity, input_entity, tid_int):
     print(f'[Cleanup] Tong thu thap: {len(all_ids)} msgs trong topic={tid_int}')
     return all_ids
 
-async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_link=False):
+async def _fetch_and_enrich_tg_item(item):
+    """
+    Fetch lại message gốc từ Telethon để lấy đủ entities (bold/italic/link ẩn...).
+    Sau đó dịch nếu cần và gán các field chuẩn như pipeline auto-forward.
+    Trả về item đã được enrich in-place.
+    """
+    from telethon.tl.types import (
+        MessageEntityTextUrl, MessageEntityBold, MessageEntityItalic,
+        MessageEntityUnderline, MessageEntityStrike, MessageEntityCode, MessageEntityPre,
+        MessageMediaPhoto, MessageMediaDocument,
+    )
+
+    feed_url = item.get('feedUrl', '')
+    link     = item.get('link', '')
+
+    if not is_tg_source(feed_url) or not link:
+        return item
+
+    # Parse msg_id và chat từ t.me/channel/msg_id
+    try:
+        parts = link.rstrip('/').split('/')
+        msg_id = int(parts[-1])
+        chat   = parts[-2]
+    except (ValueError, IndexError):
+        return item
+
+    try:
+        async with tg_semaphore:
+            msg = await tg_client.get_messages(chat, ids=msg_id)
+        if not msg:
+            return item
+    except Exception as e:
+        print(f'[ManualFwd] Fetch msg {link} lỗi: {e}')
+        return item
+
+    msg_text  = msg.message or ''
+    has_media = bool(msg.media and isinstance(msg.media, (MessageMediaPhoto, MessageMediaDocument)))
+
+    _FORMAT_ENTITIES = (
+        MessageEntityTextUrl, MessageEntityBold, MessageEntityItalic,
+        MessageEntityUnderline, MessageEntityStrike, MessageEntityCode, MessageEntityPre,
+    )
+    _has_hidden_link = bool(
+        msg_text and msg.entities and
+        any(isinstance(e, MessageEntityTextUrl) for e in msg.entities)
+    )
+    _has_format = bool(
+        msg_text and msg.entities and
+        any(isinstance(e, _FORMAT_ENTITIES) for e in msg.entities)
+    )
+    _html_text = tg_html.unparse(msg_text, msg.entities) if (_has_hidden_link or _has_format) else ''
+
+    item['_tg_msg_id']       = msg_id
+    item['_tg_chat']         = chat
+    item['_tg_grouped_id']   = getattr(msg, 'grouped_id', None)
+    item['_tg_has_media']    = has_media
+    item['_tg_has_hidden_link'] = _has_hidden_link
+    item['_tg_has_format']   = _has_format
+    item['_tg_html_text']    = _html_text
+    item['_source']          = 'telethon'
+
+    # Dịch nếu cần — giống hệt logic trong _process_batch
+    feed_cfg = {}
+    with lock:
+        feed_cfg = next((u for u in watched_urls if u['url'] == feed_url), {})
+    do_translate = feed_cfg.get('do_translate', True)
+
+    if do_translate and msg_text and not is_same_as_target(msg_text[:200]):
+        if _html_text and (_has_hidden_link or _has_format):
+            translated, _eng, _ = _translate_with_hidden_links(_html_text)
+            if not translated or not translated.strip():
+                _plain = re.sub(r'<[^>]+>', '', _html_text).strip()
+                translated = _fast_translate(_plain) if _plain else msg_text
+                _eng = getattr(_tl_engine, 'used', 'google')
+            item['_tg_html_text']         = translated
+            item['_translate_engine_used'] = _eng
+        else:
+            translated = _fast_translate(msg_text)
+            if not translated or not translated.strip():
+                try:
+                    _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
+                    translated = GoogleTranslator(source='auto', target=_gtarget).translate(msg_text) or msg_text
+                except Exception:
+                    translated = msg_text
+                _tl_engine.used = 'google'
+            item['_translate_engine_used'] = getattr(_tl_engine, 'used', '')
+            item['desc']  = translated
+            item['title'] = (translated[:80] + '...') if len(translated) > 80 else translated
+    else:
+        item.setdefault('_translate_engine_used', '')
+
+    return item
+
+
+
     """
     Gửi 1 item lên kênh/group đích qua Telethon (không dùng Bot API).
 
@@ -4619,8 +4707,10 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
             if group_msgs:
                 media_list = [m.media for m in group_msgs[:10]]
 
-                # Nếu caption truyền vào rỗng (media-only), thử lấy text từ msg nguồn
-                if not caption.strip():
+                # Fallback caption chỉ khi item thực sự media-only (không có text gốc lẫn đã dịch).
+                # KHÔNG override khi caption rỗng do lỗi build — tránh hiển thị text chưa dịch.
+                _item_has_text = bool(item.get('_tg_html_text') or item.get('desc', '').strip())
+                if not caption.strip() and not _item_has_text:
                     for gm in group_msgs:
                         if gm and gm.message and gm.message.strip():
                             caption = gm.message
@@ -4752,13 +4842,18 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
 # Semaphore giới hạn số lượng Telethon send đồng thời — tránh flood MTProto
 _send_semaphore = threading.Semaphore(3)  # tối đa 3 send song song
 
-def _build_caption(it, channel_name, show_link):
+def _build_forward_caption(it, channel_name, show_link):
     """
-    Xây dựng caption chuẩn cho một item — dùng chung cho auto forward và manual forward.
-    Giữ nguyên format HTML (bold, italic, link ẩn), thêm prefix engine và footer.
+    Build caption chuẩn cho 1 item để gửi lên Telegram.
+    Dùng chung cho _do_forward (auto) và /tg_forward (manual) — đảm bảo output giống hệt nhau.
+
+    Thứ tự ưu tiên lấy nội dung:
+    1. _tg_html_text: HTML đã dịch với entities (bold/italic/link ẩn) → dùng _expand_hidden_links_to_text
+    2. desc plain text (đã dịch)
+
     Trả về (caption_str, desc_has_link).
     """
-    # Ưu tiên HTML đã dịch (giữ bold/italic/link ẩn)
+    # Lấy caption từ HTML (có format/link ẩn) nếu có
     _expanded = _expand_hidden_links_to_text(it)
     if _expanded:
         caption = _expanded
@@ -4772,21 +4867,20 @@ def _build_caption(it, channel_name, show_link):
             desc_plain = re.sub(r'<[^>]+>', '', desc_raw)
         caption = desc_plain.rstrip()
 
-    # Web preview: bài có link ẩn hoặc link nổi trong nội dung gốc
-    _raw_for_check = it.get('text', '') or it.get('_tg_html_text', '') or it.get('desc', '') or ''
-    desc_has_link = it.get('_tg_has_hidden_link', False) or bool(re.search(r'https?://', _raw_for_check))
+    # Kiểm tra có link thật trong nội dung không (để bật web preview)
+    _raw_for_check = (it.get('_tg_html_text', '') or it.get('desc', '') or '')
+    desc_has_link  = it.get('_tg_has_hidden_link', False) or bool(re.search(r'https?://', _raw_for_check))
 
     # Prefix engine dịch
-    _eng_used = it.get('_translate_engine_used', '')
+    _eng_used   = it.get('_translate_engine_used', '')
     _eng_prefix = {
         'gemini-2.5': 'GM2.5', 'gemini-2.5-lite': 'GM2.5L',
         'gemini-3.0': 'GM3.0', 'gemini-3.1': 'GM3.1',
-        'gemini': 'GM', 'deepl': 'DL', 'google': 'GT', 'google-plain': 'GT',
+        'gemini': 'GM', 'deepl': 'DL', 'google': 'GT',
     }.get(_eng_used, '')
     if _eng_prefix and caption.strip():
         caption = f'<b>{_eng_prefix}:</b> ' + caption
 
-    # Footer: link bài gốc + tên kênh nguồn
     if show_link and it.get('link'):
         caption += f'\n\n<a href="{it["link"]}">Xem bài gốc →</a>'
     if channel_name:
@@ -4795,7 +4889,7 @@ def _build_caption(it, channel_name, show_link):
     return caption, desc_has_link
 
 
-def _do_forward(processed, category, url):
+
     """
     Gửi tin lên các kênh đích qua Telethon.
     Đọc feed.destinations = [{ch_idx, topic_ids}] — topic_ids là string phân cách bằng dấu phẩy.
@@ -4819,16 +4913,15 @@ def _do_forward(processed, category, url):
 
     show_link = feed_cfg.get('show_link', True)
 
-    # --- Resolve destinations từ feed config ---
-    # Format mới: destinations = [{ch_idx, topic_ids}, ...]
-    # Format cũ:  target_channels = [0, 1, 2, ...]  (chỉ index, không topic)
+    # Resolve destinations từ feed config
+    # Format: destinations = [{ch_idx, topic_ids}, ...]
+    # Fallback: target_channels = [0, 1, 2, ...] (index only, legacy)
     destinations = feed_cfg.get('destinations') or []
     if not destinations:
-        # fallback tương thích ngược
         old = feed_cfg.get('target_channels', [])
         destinations = [{'ch_idx': i, 'topic_ids': ''} for i in old] if old else []
 
-    # Nếu feed không cấu hình đích nào → gửi tới tất cả kênh (hành vi cũ)
+    # Không cấu hình đích → gửi tới tất cả kênh
     if not destinations:
         destinations = [{'ch_idx': i, 'topic_ids': ''} for i in range(len(cfgs))]
 
@@ -4854,7 +4947,7 @@ def _do_forward(processed, category, url):
 
         for topic_id in topic_list:
             for it in reversed(processed):
-                caption, desc_has_link = _build_caption(it, channel_name, show_link)
+                caption, desc_has_link = _build_forward_caption(it, channel_name, show_link)
 
                 # Dedup per guid+dest+topic — tránh gửi trùng khi nhiều job song song
                 _fwd_key = f'{it.get("guid","")}|{dest}|{topic_id}'
@@ -5946,8 +6039,6 @@ class HttpHandler(BaseHTTPRequestHandler):
         elif p.path == '/tg_forward':
             # Forward thủ công từ UI — dùng Telethon, không Bot API, không download
             body = self._read_json()
-            # Format mới: destinations = [{username, name, is_group, topic_ids}, ...]
-            # Format cũ:  channels = [{username, name, type, topic_id}, ...]
             destinations = body.get('destinations') or body.get('channels', [])
             items_raw    = body.get('items', [])
             if not destinations:
@@ -5955,56 +6046,58 @@ class HttpHandler(BaseHTTPRequestHandler):
             if not TELETHON_AVAILABLE or tg_client is None:
                 self._json({'error': 'Telethon chưa kết nối'}, 503); return
 
-            all_results = []
-            for dest_cfg in destinations:
-                dest = dest_cfg.get('username') or dest_cfg.get('channel_id', '')
-                if not dest:
-                    all_results.append({'title': dest_cfg.get('name','?'), 'ok': False, 'error': 'Thiếu username kênh đích'})
-                    continue
-                channel_name = dest_cfg.get('name', dest)
+            async def _do_manual_forward():
+                all_results = []
+                for dest_cfg in destinations:
+                    dest = dest_cfg.get('username') or dest_cfg.get('channel_id', '')
+                    if not dest:
+                        all_results.append({'title': dest_cfg.get('name', '?'), 'ok': False,
+                                            'error': 'Thiếu username kênh đích'})
+                        continue
+                    channel_name = dest_cfg.get('name', dest)
 
-                # Hỗ trợ cả topic_ids string mới lẫn topic_id int cũ
-                topic_ids_str = dest_cfg.get('topic_ids', '') or ''
-                raw_topics = [t.strip() for t in topic_ids_str.split(',') if t.strip()] if topic_ids_str else []
-                topic_list = [int(t) for t in raw_topics if t.isdigit()]
-                if not topic_list:
-                    # fallback topic_id cũ (int)
-                    old_tid = dest_cfg.get('topic_id')
-                    topic_list = [int(old_tid)] if old_tid else [None]
+                    topic_ids_str = dest_cfg.get('topic_ids', '') or ''
+                    raw_topics = [t.strip() for t in topic_ids_str.split(',') if t.strip()] if topic_ids_str else []
+                    topic_list = [int(t) for t in raw_topics if t.isdigit()]
+                    if not topic_list:
+                        old_tid = dest_cfg.get('topic_id')
+                        topic_list = [int(old_tid)] if old_tid else [None]
 
-                for topic_id in topic_list:
-                    for it in items_raw:
-                        feed_url  = it.get('feedUrl', '') or it.get('feed_url', '')
-                        show_link = it.get('show_link', True)
+                    for topic_id in topic_list:
+                        for it_raw in items_raw:
+                            feed_url  = it_raw.get('feedUrl', '')
+                            show_link = it_raw.get('show_link', True)
 
-                        # Dùng _build_caption chung — giống hệt auto forward
-                        # (item từ UI đã qua pipeline: đã dịch, có _tg_html_text, _translate_engine_used)
-                        caption, desc_has_link = _build_caption(it, channel_name, show_link)
+                            # Enrich item: fetch lại từ Telethon để có đủ entities + dịch
+                            it = dict(it_raw)
+                            if is_tg_source(feed_url):
+                                it = await _fetch_and_enrich_tg_item(it)
+                            else:
+                                # RSS: extract media URL cho _tg_send_item
+                                imgs, _ = extract_media(it.get('desc', ''))
+                                it['_rss_media_url'] = imgs[0] if imgs else None
+                                it['_source'] = 'rss'
 
-                        send_item = {**it, '_source': 'telethon' if is_tg_source(feed_url) else 'rss'}
-                        if is_tg_source(feed_url):
+                            caption, desc_has_link = _build_forward_caption(it, channel_name, show_link)
+
                             try:
-                                link   = it.get('link', '')
-                                msg_id = int(link.rstrip('/').split('/')[-1])
-                                chat   = normalize_tg_channel(feed_url).lstrip('@')
-                                send_item['_tg_msg_id']    = msg_id
-                                send_item['_tg_chat']      = chat
-                                send_item['_tg_has_media'] = True
-                            except Exception:
-                                send_item['_tg_has_media'] = False
-                        else:
-                            imgs, _ = extract_media(it.get('desc', ''))
-                            send_item['_rss_media_url'] = imgs[0] if imgs else None
-                        try:
-                            ok = tg_run(_tg_send_item(dest, send_item, caption, topic_id=topic_id, desc_has_link=desc_has_link))
-                            all_results.append({'title': it.get('title', ''), 'ok': ok, 'error': '' if ok else 'Gửi thất bại'})
-                        except RuntimeError as e:
-                            all_results.append({'title': it.get('title', ''), 'ok': False, 'error': str(e)})
-                        except Exception as e:
-                            all_results.append({'title': it.get('title', ''), 'ok': False, 'error': str(e)})
-                        time.sleep(0.3)
+                                ok = await _tg_send_item(dest, it, caption,
+                                                         topic_id=topic_id,
+                                                         desc_has_link=desc_has_link)
+                                all_results.append({'title': it.get('title', ''), 'ok': ok,
+                                                    'error': '' if ok else 'Gửi thất bại'})
+                            except Exception as e:
+                                all_results.append({'title': it.get('title', ''), 'ok': False,
+                                                    'error': str(e)})
+                            await asyncio.sleep(0.3)
+                return all_results
 
-            resp = json.dumps({'results': all_results}, ensure_ascii=False).encode('utf-8')
+            try:
+                results = tg_run_long(_do_manual_forward(), timeout=120)
+            except Exception as e:
+                results = [{'title': '', 'ok': False, 'error': str(e)}]
+
+            resp = json.dumps({'results': results}, ensure_ascii=False).encode('utf-8')
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
             self.end_headers()
@@ -6098,31 +6191,8 @@ class HttpHandler(BaseHTTPRequestHandler):
                         _cleanup_status[ch_str].update({'status': 'done', 'deleted': deleted, 'remaining': remaining})
                         print(f'[Cleanup] ✅ {ch_str} topic={tid}: xóa {deleted} tin, còn lại {remaining} tin')
 
-                        # Force refresh Telegram UI sau khi xóa
-                        # Cần đủ thời gian để Telegram server xử lý xong các delete request
                         if deleted > 0:
-                            try:
-                                # Cho server xử lý xong toàn bộ delete trước
-                                await asyncio.sleep(2)
-                                # Mark as read để Telegram client sync lại unread count
-                                await tg_client.send_read_acknowledge(entity, max_id=max(msg_ids))
-                                await asyncio.sleep(1)
-                                # Gửi + xóa ngay 1 tin dummy để trigger UI recount topic
-                                from telethon.tl.types import InputReplyToMessage
-                                sent = await tg_client.send_message(
-                                    entity,
-                                    '.',
-                                    reply_to=InputReplyToMessage(
-                                        reply_to_msg_id=tid_int,
-                                        top_msg_id=tid_int,
-                                    ),
-                                    silent=True
-                                )
-                                await asyncio.sleep(1)
-                                await tg_client.delete_messages(entity, [sent.id], revoke=True)
-                                print(f'[Cleanup] 🔄 Force UI refresh topic={tid} OK')
-                            except Exception as rf_err:
-                                print(f'[Cleanup] Force refresh warning (không ảnh hưởng xóa): {rf_err}')
+                            await _force_topic_ui_refresh(entity, tid_int)
                     except Exception as e:
                         _cleanup_status[ch_str].update({'status': 'error', 'error': str(e)})
                         print(f'[Cleanup] ❌ {ch_str} topic={tid}: {e}')
@@ -6197,7 +6267,7 @@ class HttpHandler(BaseHTTPRequestHandler):
                 elif req_url:
                     job = None
                 else:
-                    # Không có url → trả về job running đầu tiên (backward compat)
+                    # Không có url → trả về job running đầu tiên
                     running = [v for v in _read_all_jobs.values() if v.get('status') == 'running']
                     job = dict(running[0]) if running else (dict(list(_read_all_jobs.values())[-1]) if _read_all_jobs else None)
             self._json({'job': job, 'jobs': {k: dict(v) for k, v in _read_all_jobs.items()}})

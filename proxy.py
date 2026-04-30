@@ -645,7 +645,7 @@ class EngineDispatcher:
     Round-robin qua tất cả (model, key_index) combinations theo weighted cycle.
 
     Ví dụ 2 keys:
-      Cycle: (GM3.1,k0),(GM2.5L,k0),(GM3.1,k1),(GM2.5,k0),(GM3.1,k0),(GM2.5L,k1),...
+      Cycle: (GM3.1,k0),(GM3.0,k1),(GM3.1,k0),(GM2.5L,k1),...
 
     Thêm key mới: chỉ cần update env var GEMINI_API_KEYS=k1,k2,k3 rồi restart.
     """
@@ -653,16 +653,19 @@ class EngineDispatcher:
     GEMINI_MODELS = {
         'gemini-2.5':      'gemini-2.5-flash',
         'gemini-2.5-lite': 'gemini-2.5-flash-lite',
+        'gemini-3.0':      'gemini-3-flash-preview',
         'gemini-3.1':      'gemini-3.1-flash-lite-preview',
     }
     GEMINI_PREFIX = {
         'gemini-2.5':      'GM2.5',
         'gemini-2.5-lite': 'GM2.5L',
+        'gemini-3.0':      'GM3.0',
         'gemini-3.1':      'GM3.1',
     }
     LIMITS = {
         'gemini-2.5':      5,
         'gemini-2.5-lite': 10,
+        'gemini-3.0':      5,    # gemini-3-flash-preview — 5 RPM, 20 RPD (AI Studio confirmed)
         'gemini-3.1':      15,
         'deepl':           40,
         'google':          999,
@@ -670,6 +673,7 @@ class EngineDispatcher:
     MIN_INTERVAL = {
         'gemini-2.5':      13.0,
         'gemini-2.5-lite': 6.5,
+        'gemini-3.0':      13.0, # 5 RPM → 60/5 = 12s, +1s buffer
         'gemini-3.1':      4.5,
         'deepl':           1.5,
         'google':          0.0,
@@ -678,11 +682,13 @@ class EngineDispatcher:
     COOLDOWN_CAP  = 480
     MAX_FAILS     = 1
 
-    # Weighted base cycle: GM3.1(15RPM)=3 slot, GM2.5L(10RPM)=2, GM2.5(5RPM)=1
+    # Weighted base cycle theo RPM: GM3.1(15)=3, GM2.5L(10)=2, GM2.5(5)=1, GM3.0(5)=1
+    # GM3.0 chỉ 1 slot vì RPD=20/key rất thấp — tránh hết quota sớm
     _BASE_CYCLE = [
         'gemini-3.1', 'gemini-2.5-lite',
         'gemini-3.1', 'gemini-2.5',
         'gemini-3.1', 'gemini-2.5-lite',
+        'gemini-3.0', 'gemini-2.5-lite',
     ]
 
     def __init__(self):
@@ -702,7 +708,7 @@ class EngineDispatcher:
         # State per (model, key_index) cho Gemini
         self._state = {}
         for ki in range(max(len(self._keys), 1)):
-            for model in ('gemini-2.5', 'gemini-2.5-lite', 'gemini-3.1'):
+            for model in ('gemini-2.5', 'gemini-2.5-lite', 'gemini-3.0', 'gemini-3.1'):
                 self._state[(model, ki)] = {
                     'req_times': [], 'fails': 0,
                     'cooldown_until': 0.0, 'last_req': 0.0,
@@ -896,7 +902,7 @@ class EngineDispatcher:
         now = time.time()
         out = {}
         with self._lock:
-            for model in ('gemini-2.5', 'gemini-2.5-lite', 'gemini-3.1'):
+            for model in ('gemini-2.5', 'gemini-2.5-lite', 'gemini-3.0', 'gemini-3.1'):
                 for ki in range(len(self._keys)):
                     st = self._state.get((model, ki))
                     if not st:
@@ -1125,9 +1131,9 @@ _engines_ready.append('Google ✅')
 print(f'[i] Engine dịch: {" | ".join(_engines_ready)} — ưu tiên: {_active_engine}')
 _ed = _engine_dispatcher
 _g25_lim = _ed.LIMITS['gemini-2.5']; _g25_iv = int(_ed.MIN_INTERVAL['gemini-2.5'])
-_g20_lim = _ed.LIMITS['gemini-2.5-lite']; _g15_lim = _ed.LIMITS['gemini-3.1']
+_g20_lim = _ed.LIMITS['gemini-2.5-lite']; _g30_lim = _ed.LIMITS['gemini-3.0']; _g15_lim = _ed.LIMITS['gemini-3.1']
 _d_lim = _ed.LIMITS['deepl']
-print(f'[i] EngineDispatcher: GM2.5={_g25_lim}/min({_g25_iv}s) | GM2.5L={_g20_lim}/min | GM3.1={_g15_lim}/min | DeepL={_d_lim}/min | Google=unlimited')
+print(f'[i] EngineDispatcher: GM2.5={_g25_lim}/min({_g25_iv}s) | GM2.5L={_g20_lim}/min | GM3.0={_g30_lim}/min | GM3.1={_g15_lim}/min | DeepL={_d_lim}/min | Google=unlimited')
 
 try:
     from telethon import TelegramClient, events
@@ -4819,7 +4825,7 @@ def _do_forward(processed, category, url):
                 # Thêm prefix engine dịch vào đầu caption
                 _eng_used = it.get('_translate_engine_used', '')
                 _eng_prefix = {
-                    'gemini-2.5': 'GM2.5', 'gemini-2.5-lite': 'GM2.5L', 'gemini-3.1': 'GM3.1',
+                    'gemini-2.5': 'GM2.5', 'gemini-2.5-lite': 'GM2.5L', 'gemini-3.0': 'GM3.0', 'gemini-3.1': 'GM3.1',
                     'gemini': 'GM', 'deepl': 'DL', 'google': 'GT',
                 }.get(_eng_used, '')
                 if _eng_prefix and caption.strip():

@@ -1086,10 +1086,10 @@ class BatchPipeline:
                 if not item.get('category'):
                     item['category'] = item.get('category') or 'Khác'
                 item['text_translated'] = translated
-                # HTML path: _tg_html_text giữ HTML đầy đủ, desc luôn là plain text
-                # để _build_caption fallback an toàn nếu _tg_html_text không parse được
+                # desc luôn là plain text — _tg_html_text giữ HTML đầy đủ cho _build_caption
+                # _tg_html_text chỉ có giá trị khi đã qua HTML path, plain text path đã clear ở trên
                 _html_result = item.get('_tg_html_text', '')
-                if _html_result and (has_hidden_link or has_format if should_translate else False):
+                if _html_result:
                     _desc_plain = re.sub(r'<[^>]+>', ' ', _html_result).strip()
                     _desc_plain = re.sub(r' +', ' ', _desc_plain)
                 else:

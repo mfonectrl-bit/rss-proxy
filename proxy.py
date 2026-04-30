@@ -7,17 +7,20 @@ import time
 import re
 import os
 import asyncio
+import math
 import queue as _queue
 import base64
 import hashlib
 import struct
 import socket
+import html as _html_mod
 import xml.etree.ElementTree as ET
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from urllib.parse import urlparse, parse_qs, urlunparse
 from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
+from collections import Counter
 
 FEEDS_FILE = 'feeds.json'
 
@@ -701,7 +704,6 @@ class EngineDispatcher:
 
         # Log phân phối để dễ debug
         if self._rr_cycle:
-            from collections import Counter
             _kc = Counter(ki for _, ki in self._rr_cycle)
             print(f'[Dispatcher] Cycle={len(self._rr_cycle)} slots | Key distribution: { {f"key{k}": v for k, v in sorted(_kc.items())} }')
 
@@ -728,7 +730,6 @@ class EngineDispatcher:
         n = len(self._keys)
         cycle = []
         # Lặp BASE_CYCLE đủ lcm(len(BASE_CYCLE), n) lần để mỗi key xuất hiện đều
-        import math
         base_len = len(self._BASE_CYCLE)
         repeat = math.lcm(base_len, n) // base_len if base_len else 1
         for rep in range(repeat):
@@ -1016,7 +1017,6 @@ class BatchPipeline:
             for item in items:
                 text = item.get('text', '')
                 should_translate = item.get('do_translate', True)
-                # Auto-skip nếu text đã là ngôn ngữ đích — tránh dịch thừa
                 if should_translate and text and is_same_as_target(text[:200]):
                     should_translate = False
                 if should_translate:
@@ -1024,9 +1024,8 @@ class BatchPipeline:
                     has_format      = item.get('_tg_has_format', False)
                     html_text = item.get('_tg_html_text', '')
                     if html_text and (has_hidden_link or has_format):
-                        # Bản tin có link ẩn / format HTML → dịch HTML để giữ nguyên thẻ
+                        # HTML với link ẩn / format → dịch giữ nguyên thẻ
                         translated, _eng, _ = _translate_with_hidden_links(html_text)
-                        # Nếu kết quả rỗng → fallback Google plain text
                         if not translated or not translated.strip():
                             _plain = re.sub(r'<[^>]+>', '', html_text).strip()
                             try:
@@ -1035,13 +1034,11 @@ class BatchPipeline:
                             except Exception:
                                 translated = _plain or text
                             _eng = 'google'
-                        # Chỉ update nếu có kết quả hợp lệ
                         if translated and translated.strip():
                             item['_tg_html_text'] = translated
                         item['_translate_engine_used'] = _eng
                     else:
-                        # Bản tin plain text (không có hidden link / format):
-                        # Ưu tiên Gemini cho TẤT CẢ bản tin, chỉ fallback Google khi Gemini hết quota/lỗi
+                        # Plain text: Gemini trước, fallback DeepL → Google
                         translated = None
                         _eng = ''
                         if GEMINI_API_KEYS and _system_fully_loaded:
@@ -1065,11 +1062,9 @@ class BatchPipeline:
                                     _is_rl = '429' in str(_ge) or 'quota' in str(_ge).lower()
                                     _engine_dispatcher._record_failure(_gmodel, _gki, is_rate_limit=_is_rl)
                                     print(f'[Translate] {_gmodel}[key{_gki}] plain lỗi: {_ge} — thử slot tiếp')
-                        # Fallback: _fast_translate (sẽ dùng dispatcher → DeepL → Google)
                         if not translated or not translated.strip():
                             translated = _fast_translate(text)
                             _eng = getattr(_tl_engine, 'used', 'google')
-                        # Nếu vẫn rỗng → Google trực tiếp
                         if not translated or not translated.strip():
                             try:
                                 _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
@@ -1077,16 +1072,14 @@ class BatchPipeline:
                             except Exception:
                                 translated = text
                             _eng = 'google'
-                        # Xóa _tg_html_text để _do_forward không dùng text gốc chưa dịch
                         item['_tg_html_text'] = ''
                         item['_translate_engine_used'] = _eng
                 else:
-                    translated = text  # Không dịch — giữ nguyên bản gốc
-                    item['_translate_engine_used'] = ''  # Không gán prefix engine
+                    translated = text
+                    item['_translate_engine_used'] = ''
                 if not item.get('category'):
                     item['category'] = item.get('category') or 'Khác'
                 item['text_translated'] = translated
-                # Giữ \n thật — không convert thành <br>, _do_forward xử lý plain text
                 title     = (translated[:80] + '...') if len(translated) > 80 else translated
                 item['desc']       = translated
                 item['title']      = title
@@ -1381,7 +1374,6 @@ def _translate_with_hidden_links(html_text):
                 leading  = part[:len(part) - len(part.lstrip('\n'))]
                 trailing = part[len(part.rstrip('\n')):]
                 inner    = part.strip()
-                import html as _html_mod
                 inner = _html_mod.unescape(inner)
                 _url_placeholders = {}
                 def _mask_url(m):
@@ -1456,7 +1448,6 @@ def _expand_hidden_links_to_text(item):
 
     result = re.sub(r'<[^>]+>', _keep_or_strip, html_src)
     # Unescape HTML entities: &amp; → &, &lt; → <, etc.
-    import html as _html_mod
     result = _html_mod.unescape(result)
     return result.strip() or None
 
@@ -2066,8 +2057,7 @@ def _run_cleanup_scheduler():
                                     except Exception as del_err:
                                         err_str = str(del_err)
                                         if 'FLOOD_WAIT' in err_str:
-                                            import re as _re
-                                            m = _re.search(r'FLOOD_WAIT_(\d+)', err_str)
+                                            m = re.search(r'FLOOD_WAIT_(\d+)', err_str)
                                             wait_sec = int(m.group(1)) if m else 30
                                             await asyncio.sleep(wait_sec + 2)
                                             if is_ch:
@@ -2084,24 +2074,23 @@ def _run_cleanup_scheduler():
                                 _cleanup_status[ch_].update({'status': 'done', 'deleted': deleted, 'remaining': remaining})
                                 print(f'[Cleanup] Auto ✅ {ch_} topic={tid_}: xóa {deleted} tin, còn lại {remaining} tin')
 
-                                # Force refresh Telegram UI sau khi xóa (cả toàn bộ lẫn một phần)
+                                # Force sync Telegram client state sau khi xóa
                                 if deleted > 0:
                                     try:
-                                        from telethon.tl.types import InputReplyToMessage
-                                        sent = await tg_client.send_message(
-                                            entity,
-                                            '.',
-                                            reply_to=InputReplyToMessage(
-                                                reply_to_msg_id=tid_int,
-                                                top_msg_id=tid_int,
-                                            ),
-                                            silent=True
-                                        )
-                                        await asyncio.sleep(0.5)
-                                        await tg_client.delete_messages(entity, [sent.id], revoke=True)
-                                        print(f'[Cleanup] 🔄 Auto force UI refresh topic={tid_} OK')
+                                        from telethon.tl.functions.messages import GetHistoryRequest
+                                        await tg_client(GetHistoryRequest(
+                                            peer=input_entity,
+                                            limit=1,
+                                            offset_id=0,
+                                            offset_date=None,
+                                            add_offset=0,
+                                            max_id=0,
+                                            min_id=0,
+                                            hash=0,
+                                        ))
+                                        print(f'[Cleanup] 🔄 Auto force UI sync topic={tid_} OK')
                                     except Exception as rf_err:
-                                        print(f'[Cleanup] Auto force refresh warning: {rf_err}')
+                                        print(f'[Cleanup] Auto force sync warning: {rf_err}')
                             except Exception as e:
                                 _cleanup_status[ch_].update({'status': 'error', 'error': str(e)})
                                 print(f'[Cleanup] Auto ❌ {ch_} topic={tid_}: {e}')
@@ -4737,6 +4726,53 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
 # Semaphore giới hạn số lượng Telethon send đồng thời — tránh flood MTProto
 _send_semaphore = threading.Semaphore(3)  # tối đa 3 send song song
 
+def _build_item_caption(it, show_link, channel_name):
+    """
+    Build caption chuẩn cho 1 item — dùng chung cho auto forward (_do_forward)
+    và manual forward (/tg_forward handler).
+
+    Thứ tự xử lý:
+    1. Nếu có _tg_html_text (link ẩn / format) → expand hidden links → dùng làm caption
+    2. Ngược lại → dùng desc đã dịch (plain text)
+    3. Thêm prefix engine dịch (GM3.1, GT...) nếu có
+    4. Thêm 'Xem bài gốc →' nếu show_link
+    5. Thêm tên kênh italic
+
+    Trả về (caption_str, desc_has_link)
+    """
+    desc_raw = it.get('desc', '') or ''
+    if '<br' in desc_raw.lower():
+        desc_plain = re.sub(r'(<br\s*/?>){2,}', '\n\n', desc_raw, flags=re.I)
+        desc_plain = re.sub(r'<br\s*/?>', '\n', desc_plain, flags=re.I)
+        desc_plain = re.sub(r'<[^>]+>', '', desc_plain)
+    else:
+        desc_plain = re.sub(r'<[^>]+>', '', desc_raw)
+
+    _expanded = _expand_hidden_links_to_text(it)
+    caption   = _expanded if _expanded else desc_plain.rstrip()
+
+    # desc_has_link: check hidden link flag + URL thật trong nội dung gốc
+    _raw_for_check = (it.get('text', '') or it.get('_tg_html_text', '') or desc_raw or '')
+    desc_has_link  = it.get('_tg_has_hidden_link', False) or bool(re.search(r'https?://', _raw_for_check))
+
+    # Prefix engine dịch
+    _eng_used = it.get('_translate_engine_used', '')
+    _eng_prefix = {
+        'gemini-2.5': 'GM2.5', 'gemini-2.5-lite': 'GM2.5L',
+        'gemini-3.0': 'GM3.0', 'gemini-3.1': 'GM3.1',
+        'gemini': 'GM', 'deepl': 'DL', 'google': 'GT',
+    }.get(_eng_used, '')
+    if _eng_prefix and caption.strip():
+        caption = f'<b>{_eng_prefix}:</b> ' + caption
+
+    if show_link and it.get('link'):
+        caption += f'\n\n<a href="{it["link"]}">Xem bài gốc →</a>'
+    if channel_name:
+        caption += f'\n\n<i>{channel_name}</i>'
+
+    return caption, desc_has_link
+
+
 def _do_forward(processed, category, url):
     """
     Gửi tin lên các kênh đích qua Telethon.
@@ -4796,45 +4832,7 @@ def _do_forward(processed, category, url):
 
         for topic_id in topic_list:
             for it in reversed(processed):
-                # Chuyển <br> → \n trước, rồi strip các HTML tag còn lại
-                # (strip_html thay tag bằng space nên phải xử lý <br> riêng trước)
-                desc_raw = it.get('desc', '') or ''
-                # desc luôn là plain text với \n thật (cả TG realtime lẫn read_all)
-                # Chỉ convert <br> nếu là RSS feed còn sót lại
-                if '<br' in desc_raw.lower():
-                    desc_plain = re.sub(r'(<br\s*/?>){2,}', '\n\n', desc_raw, flags=re.I)
-                    desc_plain = re.sub(r'<br\s*/?>', '\n', desc_plain, flags=re.I)
-                    desc_plain = re.sub(r'<[^>]+>', '', desc_plain)
-                else:
-                    desc_plain = re.sub(r'<[^>]+>', '', desc_raw)
-                # Nếu có link ẩn → dùng text đã expand (link ẩn → URL nổi ngay tại chỗ)
-                _expanded = _expand_hidden_links_to_text(it)
-                if _expanded:
-                    caption = _expanded
-                else:
-                    caption = desc_plain.rstrip()
-                # desc_has_link: chỉ check https link trong nội dung gốc, bỏ qua t.me
-                # Bật web preview chỉ khi nội dung GỐC có external link
-                # Check từ desc_plain (content gốc, không tính Xem bài gốc + channel name)
-                # t.me links không cần preview, nhưng bbc.com, youtube.com... thì có
-                # Check link trong tất cả các field có thể chứa URL gốc
-                _raw_for_check = (it.get('text', '') or it.get('_tg_html_text', '') or it.get('desc', '') or '')
-                # Bài có link ẩn (MessageEntityTextUrl) luôn coi là có link → bật web preview
-                desc_has_link = it.get('_tg_has_hidden_link', False) or bool(re.search(r'https?://', _raw_for_check))
-
-                # Thêm prefix engine dịch vào đầu caption
-                _eng_used = it.get('_translate_engine_used', '')
-                _eng_prefix = {
-                    'gemini-2.5': 'GM2.5', 'gemini-2.5-lite': 'GM2.5L', 'gemini-3.0': 'GM3.0', 'gemini-3.1': 'GM3.1',
-                    'gemini': 'GM', 'deepl': 'DL', 'google': 'GT',
-                }.get(_eng_used, '')
-                if _eng_prefix and caption.strip():
-                    caption = f'<b>{_eng_prefix}:</b> ' + caption
-
-                if show_link and it.get('link'):
-                    caption += f'\n\n<a href="{it["link"]}">Xem bài gốc →</a>'
-                if channel_name:
-                    caption += f'\n\n<i>{channel_name}</i>'
+                caption, desc_has_link = _build_item_caption(it, show_link, channel_name)
 
                 # Dedup per guid+dest+topic — tránh gửi trùng khi nhiều job song song
                 _fwd_key = f'{it.get("guid","")}|{dest}|{topic_id}'
@@ -5002,7 +5000,6 @@ def _run_read_all_bg(url, feed_cfg):
                 item["text"] = msg_text
                 if _has_hidden_link or _has_format:
                     translated, _eng, _ = _translate_with_hidden_links(_html_text)
-                    # Nếu kết quả rỗng → fallback Google plain text
                     if not translated or not translated.strip():
                         _plain = re.sub(r'<[^>]+>', '', _html_text).strip()
                         translated = _fast_translate(_plain) if _plain else msg_text
@@ -5011,7 +5008,6 @@ def _run_read_all_bg(url, feed_cfg):
                     item["_translate_engine_used"] = _eng
                 else:
                     translated = _fast_translate(msg_text)
-                    # Nếu kết quả rỗng → fallback Google trực tiếp
                     if not translated or not translated.strip():
                         try:
                             _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
@@ -5024,7 +5020,7 @@ def _run_read_all_bg(url, feed_cfg):
                 item["title"] = (translated[:80] + "...") if len(translated) > 80 else translated
                 item["translated"] = True
             else:
-                item["_translate_engine_used"] = ''  # Không gán prefix engine
+                item["_translate_engine_used"] = ''
 
             # Đánh dấu grouped_id đã xử lý (guid đã được ghi atomic ở trên)
             if grouped:
@@ -5957,16 +5953,7 @@ class HttpHandler(BaseHTTPRequestHandler):
                         feed_url  = it.get('feedUrl', '')
                         show_link = it.get('show_link', True)
 
-                        desc_raw   = it.get('desc', '') or ''
-                        desc_plain = re.sub(r'<br\s*/?>', '\n', desc_raw, flags=re.I)
-                        desc_plain = re.sub(r'<[^>]+>', '', desc_plain).strip()
-                        # Nếu có link ẩn → dùng text đã expand
-                        _expanded = _expand_hidden_links_to_text(it)
-                        caption   = _expanded if _expanded else desc_plain
-                        if show_link and it.get('link'):
-                            caption += f'\n\n<a href="{it["link"]}">Xem bài gốc →</a>'
-                        if channel_name:
-                            caption += f'\n\n<i>{channel_name}</i>'
+                        caption, desc_has_link = _build_item_caption(it, show_link, channel_name)
 
                         send_item = {**it, '_source': 'telethon' if is_tg_source(feed_url) else 'rss'}
                         if is_tg_source(feed_url):
@@ -5982,8 +5969,6 @@ class HttpHandler(BaseHTTPRequestHandler):
                         else:
                             imgs, _ = extract_media(it.get('desc',''))
                             send_item['_rss_media_url'] = imgs[0] if imgs else None
-                        # desc_has_link: check link thật trong desc, bỏ t.me
-                        desc_has_link = bool(re.search(r'https?://', it.get('desc', '') or ''))
                         try:
                             ok = tg_run(_tg_send_item(dest, send_item, caption, topic_id=topic_id, desc_has_link=desc_has_link))
                             all_results.append({'title': it.get('title',''), 'ok': ok, 'error': '' if ok else 'Gửi thất bại'})
@@ -6071,8 +6056,7 @@ class HttpHandler(BaseHTTPRequestHandler):
                             except Exception as del_err:
                                 err_str = str(del_err)
                                 if 'FLOOD_WAIT' in err_str:
-                                    import re as _re
-                                    m = _re.search(r'FLOOD_WAIT_(\d+)', err_str)
+                                    m = re.search(r'FLOOD_WAIT_(\d+)', err_str)
                                     wait_sec = int(m.group(1)) if m else 30
                                     print(f'[Cleanup] FloodWait {wait_sec}s - doi...')                                    
                                     await asyncio.sleep(wait_sec + 2)
@@ -6087,25 +6071,24 @@ class HttpHandler(BaseHTTPRequestHandler):
                         _cleanup_status[ch_str].update({'status': 'done', 'deleted': deleted, 'remaining': remaining})
                         print(f'[Cleanup] ✅ {ch_str} topic={tid}: xóa {deleted} tin, còn lại {remaining} tin')
 
-                        # Force refresh Telegram UI: gửi + xóa ngay 1 tin dummy
-                        # Chạy mọi lúc khi deleted > 0 — topic forum không tự refresh dù xóa toàn bộ
+                        # Force sync Telegram client state sau khi xóa
+                        # GetHistoryRequest(limit=1) ép client refresh topic state ngay
                         if deleted > 0:
                             try:
-                                from telethon.tl.types import InputReplyToMessage
-                                sent = await tg_client.send_message(
-                                    entity,
-                                    '.',
-                                    reply_to=InputReplyToMessage(
-                                        reply_to_msg_id=tid_int,
-                                        top_msg_id=tid_int,
-                                    ),
-                                    silent=True
-                                )
-                                await asyncio.sleep(0.5)
-                                await tg_client.delete_messages(entity, [sent.id], revoke=True)
-                                print(f'[Cleanup] 🔄 Force UI refresh topic={tid} OK')
+                                from telethon.tl.functions.messages import GetHistoryRequest
+                                await tg_client(GetHistoryRequest(
+                                    peer=input_entity,
+                                    limit=1,
+                                    offset_id=0,
+                                    offset_date=None,
+                                    add_offset=0,
+                                    max_id=0,
+                                    min_id=0,
+                                    hash=0,
+                                ))
+                                print(f'[Cleanup] 🔄 Force UI sync topic={tid} OK')
                             except Exception as rf_err:
-                                print(f'[Cleanup] Force refresh warning (không ảnh hưởng xóa): {rf_err}')
+                                print(f'[Cleanup] Force sync warning (không ảnh hưởng xóa): {rf_err}')
                     except Exception as e:
                         _cleanup_status[ch_str].update({'status': 'error', 'error': str(e)})
                         print(f'[Cleanup] ❌ {ch_str} topic={tid}: {e}')

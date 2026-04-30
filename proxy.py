@@ -1021,64 +1021,17 @@ class BatchPipeline:
                 if should_translate:
                     has_hidden_link = item.get('_tg_has_hidden_link', False)
                     has_format      = item.get('_tg_has_format', False)
-                    html_text = item.get('_tg_html_text', '')
-                    if html_text and (has_hidden_link or has_format):
-                        # Bản tin có link ẩn / format HTML → dịch HTML để giữ nguyên thẻ
-                        translated, _eng, _ = _translate_with_hidden_links(html_text)
-                        # Nếu kết quả rỗng → fallback Google plain text
-                        if not translated or not translated.strip():
-                            _plain = re.sub(r'<[^>]+>', '', html_text).strip()
-                            try:
-                                _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
-                                translated = GoogleTranslator(source='auto', target=_gtarget).translate(_plain) or _plain
-                            except Exception:
-                                translated = _plain or text
-                            _eng = 'google'
-                        # Chỉ update nếu có kết quả hợp lệ
-                        if translated and translated.strip():
-                            item['_tg_html_text'] = translated
-                        item['_translate_engine_used'] = _eng
+                    html_text       = item.get('_tg_html_text', '')
+                    translated, _eng, _is_html = _translate_item(
+                        text, html_text, has_hidden_link, has_format
+                    )
+                    if not translated or not translated.strip():
+                        translated = text  # last resort: giữ nguyên bản gốc
+                    if _is_html and translated:
+                        item['_tg_html_text'] = translated
                     else:
-                        # Bản tin plain text (không có hidden link / format):
-                        # Ưu tiên Gemini cho TẤT CẢ bản tin, chỉ fallback Google khi Gemini hết quota/lỗi
-                        translated = None
-                        _eng = ''
-                        if GEMINI_API_KEYS and _system_fully_loaded:
-                            _tried_slots = set()
-                            for _attempt in range(len(_engine_dispatcher._rr_cycle) + 1):
-                                with _engine_dispatcher._lock:
-                                    _slot = _engine_dispatcher.pick_gemini_slot()
-                                if not _slot:
-                                    break
-                                _gmodel, _gki, _gkey = _slot
-                                _slot_id = (_gmodel, _gki)
-                                if _slot_id in _tried_slots:
-                                    break
-                                _tried_slots.add(_slot_id)
-                                try:
-                                    translated = _fast_translate_with_key(text, _gmodel, _gkey)
-                                    _engine_dispatcher._record_success(_gmodel, _gki)
-                                    _eng = _gmodel
-                                    break
-                                except Exception as _ge:
-                                    _is_rl = '429' in str(_ge) or 'quota' in str(_ge).lower()
-                                    _engine_dispatcher._record_failure(_gmodel, _gki, is_rate_limit=_is_rl)
-                                    print(f'[Translate] {_gmodel}[key{_gki}] plain lỗi: {_ge} — thử slot tiếp')
-                        # Fallback: _fast_translate (sẽ dùng dispatcher → DeepL → Google)
-                        if not translated or not translated.strip():
-                            translated = _fast_translate(text)
-                            _eng = getattr(_tl_engine, 'used', 'google')
-                        # Nếu vẫn rỗng → Google trực tiếp
-                        if not translated or not translated.strip():
-                            try:
-                                _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
-                                translated = GoogleTranslator(source='auto', target=_gtarget).translate(text) or text
-                            except Exception:
-                                translated = text
-                            _eng = 'google'
-                        # Reset html_text: plain text branch không cần, tránh _do_forward nhầm dùng
                         item['_tg_html_text'] = ''
-                        item['_translate_engine_used'] = _eng
+                    item['_translate_engine_used'] = _eng
                 else:
                     translated = text
                     item['_translate_engine_used'] = ''
@@ -1324,12 +1277,27 @@ def _fix_html_spacing(html):
     return html
 
 
-def _translate_with_hidden_links(html_text):
+def _translate_item(text, html_text='', has_hidden_link=False, has_format=False):
     """
-    Dịch bản tin có link ẩn / format HTML (bold, italic...).
-    Dùng weighted round-robin multi-key qua _engine_dispatcher.
+    Entry point duy nhất để dịch 1 bản tin — dùng cho mọi call site.
+    Đảm bảo dispatcher chỉ bị pick 1 lần/bản tin, tránh double-count quota.
+
+    Logic:
+    - Có html_text + (link ẩn hoặc format) → dịch HTML (giữ <b>/<i>/<a>) qua Gemini HTML API
+    - Plain text → dịch qua Gemini plain API
+    - Fallback: DeepL → Google nếu mọi Gemini slot hết quota/lỗi
+
     Trả về (translated_text, engine_used, is_html).
+    - translated_text: kết quả dịch
+    - engine_used: tên engine thực tế đã dùng (để gán prefix tag)
+    - is_html: True nếu kết quả vẫn là HTML (giữ tags), False nếu plain text
     """
+    if not text and not html_text:
+        return text or '', '', False
+
+    use_html = bool(html_text and (has_hidden_link or has_format))
+
+    # --- Thử Gemini (chọn slot 1 lần duy nhất cho cả bản tin) ---
     if GEMINI_API_KEYS and _system_fully_loaded:
         _tried = set()
         for _ in range(len(_engine_dispatcher._rr_cycle) + 1):
@@ -1343,78 +1311,86 @@ def _translate_with_hidden_links(html_text):
                 break
             _tried.add(slot_id)
             try:
-                result = _fix_html_spacing(
-                    _translate_gemini_html(
-                        html_text,
-                        model=_engine_dispatcher.GEMINI_MODELS[model],
-                        api_key=api_key
+                if use_html:
+                    result = _fix_html_spacing(
+                        _translate_gemini_html(
+                            html_text,
+                            model=_engine_dispatcher.GEMINI_MODELS[model],
+                            api_key=api_key,
+                        )
                     )
-                )
+                else:
+                    result = _fast_translate_with_key(text, model, api_key)
                 _engine_dispatcher._record_success(model, ki)
-                return result, model, True
+                return result, model, use_html
             except Exception as e:
                 is_rl = '429' in str(e) or 'quota' in str(e).lower()
                 _engine_dispatcher._record_failure(model, ki, is_rate_limit=is_rl)
-                print(f'[Translate] {model}[key{ki}] HTML lỗi: {e} — thử engine tiếp')
+                print(f'[Translate] {model}[key{ki}] {"HTML" if use_html else "plain"} lỗi: {e} — thử slot tiếp')
 
-    # Thử DeepL
+    # --- Fallback DeepL ---
     if DEEPL_API_KEY:
         try:
-            result = _fix_html_spacing(_translate_deepl_html(html_text))
-            return result, 'deepl', True
-        except Exception as e:
-            print(f'[Translate] DeepL HTML lỗi: {e} — fallback Google HTML')
-
-    # Fallback Google: dịch từng text segment, giữ nguyên tag HTML
-    try:
-        parts = re.split(r'(<[^>]+>)', html_text)
-        result = []
-        for i, part in enumerate(parts):
-            if re.match(r'<[^>]+>', part):
-                is_opening = not part.startswith('</')
-                if is_opening and result and result[-1] and result[-1][-1] not in (' ', '\n'):
-                    result.append(' ')
-                result.append(part)
-            elif part.strip():
-                leading  = part[:len(part) - len(part.lstrip('\n'))]
-                trailing = part[len(part.rstrip('\n')):]
-                inner    = part.strip()
-                import html as _html_mod
-                inner = _html_mod.unescape(inner)
-                _url_placeholders = {}
-                def _mask_url(m):
-                    token = f'__URL{len(_url_placeholders)}__'
-                    _url_placeholders[token] = m.group(0)
-                    return token
-                inner_masked = re.sub(r'https?://\S+', _mask_url, inner)
-                if result and re.match(r'</', result[-1]) and inner_masked and inner_masked[0] not in (' ', '\n') \
-                        and inner_masked[0] not in '.,!?:;)】」』"\'':
-                    inner_masked = ' ' + inner_masked
-                try:
-                    _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
-                    translated_masked = GoogleTranslator(source='auto', target=_gtarget).translate(inner_masked)
-                    translated_inner = translated_masked or inner_masked
-                    for token, url in _url_placeholders.items():
-                        translated_inner = translated_inner.replace(token, url)
-                    result.append(leading + translated_inner + trailing)
-                except Exception:
-                    result.append(part)
+            if use_html:
+                result = _fix_html_spacing(_translate_deepl_html(html_text))
             else:
-                result.append(part)
-        return _fix_html_spacing(''.join(result)), 'google', True
+                result = _translate_deepl(text)
+            return result, 'deepl', use_html
+        except Exception as e:
+            print(f'[Translate] DeepL {"HTML" if use_html else "plain"} lỗi: {e} — fallback Google')
+
+    # --- Fallback Google ---
+    try:
+        if use_html:
+            # Dịch từng text segment, giữ nguyên tags HTML
+            parts = re.split(r'(<[^>]+>)', html_text)
+            out = []
+            import html as _html_mod
+            for part in parts:
+                if re.match(r'<[^>]+>', part):
+                    if not part.startswith('</') and out and out[-1] and out[-1][-1] not in (' ', '\n'):
+                        out.append(' ')
+                    out.append(part)
+                elif part.strip():
+                    leading  = part[:len(part) - len(part.lstrip('\n'))]
+                    trailing = part[len(part.rstrip('\n')):]
+                    inner    = _html_mod.unescape(part.strip())
+                    _ph = {}
+                    def _mask(m, _ph=_ph):
+                        t = f'__URL{len(_ph)}__'
+                        _ph[t] = m.group(0)
+                        return t
+                    inner_masked = re.sub(r'https?://\S+', _mask, inner)
+                    if out and re.match(r'</', out[-1]) and inner_masked \
+                            and inner_masked[0] not in (' ', '\n', '.', ',', '!', '?', ':', ';', ')', '】', '」', '』', '"', "'"):
+                        inner_masked = ' ' + inner_masked
+                    try:
+                        _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
+                        t_inner = GoogleTranslator(source='auto', target=_gtarget).translate(inner_masked) or inner_masked
+                        for tok, url in _ph.items():
+                            t_inner = t_inner.replace(tok, url)
+                        out.append(leading + t_inner + trailing)
+                    except Exception:
+                        out.append(part)
+                else:
+                    out.append(part)
+            result = _fix_html_spacing(''.join(out))
+            return result, 'google', True
+        else:
+            result = _fast_translate(text)
+            if not result or not result.strip():
+                _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
+                result = GoogleTranslator(source='auto', target=_gtarget).translate(text) or text
+            return result, 'google', False
     except Exception as e:
-        print(f'[Translate] Google HTML lỗi: {e} — fallback plain text')
-        try:
+        print(f'[Translate] Google fallback lỗi: {e} — giữ nguyên bản gốc')
+        if use_html:
             _plain = re.sub(r'<[^>]+>', '', html_text).strip()
-            _translated_plain = _fast_translate(_plain) if _plain else _plain
-            return _translated_plain, 'google', False
-        except Exception as e2:
-            print(f'[Translate] Fallback plain text lỗi: {e2} — giữ nguyên bản gốc (strip HTML)')
-            _plain = re.sub(r'<[^>]+>', '', html_text).strip()
-            return _plain if _plain else html_text, 'none', False
+            return _plain or text, 'none', False
+        return text, 'none', False
 
 
-def strip_html(text):
+
     return re.sub(r'<[^>]+>', ' ', text).strip()
 
 # Patterns lỗi HTTP/server thường bị lẫn vào kết quả dịch
@@ -4614,33 +4590,25 @@ async def _fetch_and_enrich_tg_item(item):
     do_translate = feed_cfg.get('do_translate', True)
 
     if do_translate and msg_text and not is_same_as_target(msg_text[:200]):
-        if _html_text and (_has_hidden_link or _has_format):
-            translated, _eng, _ = _translate_with_hidden_links(_html_text)
-            if not translated or not translated.strip():
-                _plain = re.sub(r'<[^>]+>', '', _html_text).strip()
-                translated = _fast_translate(_plain) if _plain else msg_text
-                _eng = getattr(_tl_engine, 'used', 'google')
-            item['_tg_html_text']         = translated
-            item['_translate_engine_used'] = _eng
+        translated, _eng, _is_html = _translate_item(
+            msg_text, _html_text, _has_hidden_link, _has_format
+        )
+        if not translated or not translated.strip():
+            translated = msg_text
+        if _is_html and translated:
+            item['_tg_html_text'] = translated
         else:
-            translated = _fast_translate(msg_text)
-            if not translated or not translated.strip():
-                try:
-                    _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
-                    translated = GoogleTranslator(source='auto', target=_gtarget).translate(msg_text) or msg_text
-                except Exception:
-                    translated = msg_text
-                _tl_engine.used = 'google'
-            item['_translate_engine_used'] = getattr(_tl_engine, 'used', '')
-            item['desc']  = translated
-            item['title'] = (translated[:80] + '...') if len(translated) > 80 else translated
+            item['_tg_html_text'] = ''
+        item['_translate_engine_used'] = _eng
+        item['desc']  = re.sub(r'<[^>]+>', '', translated).strip() if _is_html else translated
+        item['title'] = (translated[:80] + '...') if len(translated) > 80 else translated
     else:
         item.setdefault('_translate_engine_used', '')
 
     return item
 
 
-
+async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_link=False):
     """
     Gửi 1 item lên kênh/group đích qua Telethon (không dùng Bot API).
 
@@ -5113,32 +5081,21 @@ def _run_read_all_bg(url, feed_cfg):
 
             if _effective_translate:
                 item["text"] = msg_text
-                if _has_hidden_link or _has_format:
-                    translated, _eng, _ = _translate_with_hidden_links(_html_text)
-                    # Nếu kết quả rỗng → fallback Google plain text
-                    if not translated or not translated.strip():
-                        _plain = re.sub(r'<[^>]+>', '', _html_text).strip()
-                        translated = _fast_translate(_plain) if _plain else msg_text
-                        _eng = 'google'
+                translated, _eng, _is_html = _translate_item(
+                    msg_text, _html_text, _has_hidden_link, _has_format
+                )
+                if not translated or not translated.strip():
+                    translated = msg_text
+                if _is_html and translated:
                     item["_tg_html_text"] = translated
-                    item["_translate_engine_used"] = _eng
                 else:
-                    translated = _fast_translate(msg_text)
-                    # Nếu kết quả rỗng → fallback Google trực tiếp
-                    if not translated or not translated.strip():
-                        try:
-                            _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
-                            translated = GoogleTranslator(source='auto', target=_gtarget).translate(msg_text) or msg_text
-                        except Exception:
-                            translated = msg_text
-                        _tl_engine.used = 'google'
-                    item["_translate_engine_used"] = getattr(_tl_engine, 'used', '')
-                item["desc"] = translated
-                item["title"] = (translated[:80] + "...") if len(translated) > 80 else translated
+                    item["_tg_html_text"] = ''
+                item["_translate_engine_used"] = _eng
+                item["desc"]       = translated
+                item["title"]      = (translated[:80] + "...") if len(translated) > 80 else translated
                 item["translated"] = True
             else:
-                item["_translate_engine_used"] = ''  # Không gán prefix engine
-
+                item["_translate_engine_used"] = ''
             # Đánh dấu grouped_id đã xử lý (guid đã được ghi atomic ở trên)
             if grouped:
                 _sent_groups.add(grouped)

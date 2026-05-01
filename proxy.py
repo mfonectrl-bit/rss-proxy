@@ -1575,10 +1575,12 @@ async def _tg_setup_realtime(feed_urls):
         all_channels = [ch for ch in raw_channels if ch in _resolved_channels_cache]
         if all_channels:
             print(f'[TG] Đăng ký real-time đầy đủ: {len(all_channels)} channels')
+            await _register_handler(all_channels)
+            print('[System] Chờ 120s để RPM window instance cũ clear trước khi enable Gemini...')
+            await asyncio.sleep(120)
             global _system_fully_loaded
             _system_fully_loaded = True
             print('[System] ✅ Fully loaded — Gemini enabled')
-            await _register_handler(all_channels)
         else:
             print('[TG] Không có channel nào resolve được')
     finally:

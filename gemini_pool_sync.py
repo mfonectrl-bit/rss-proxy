@@ -1,5 +1,5 @@
 """
-GeminiPool Sync v1 — Drop-in replacement cho EngineDispatcher trong proxy5.
+GeminiPool Sync v1.1 — Drop-in replacement cho EngineDispatcher trong proxy5.
 
 Ported từ gemini_pool_v4 (async) sang sync threading để tương thích
 với proxy5's ThreadPoolExecutor architecture.
@@ -13,13 +13,16 @@ Cải tiến so với EngineDispatcher cũ:
   - MAX_FAILS = 2 (ít nhạy cảm hơn với timeout mạng thoáng qua)
   - Fix gemini-3.0 missing trong _is_available()
   - Weighted cycle giữ nguyên từ proxy5 (GM3.1×3, GM2.5L×2, ...)
+  - Semaphore burst guard: giới hạn MAX_CONCURRENT_TRANSLATES đồng thời
+    → chặn 429 tức thời do burst sau restart/flood real-time feeds
 
 Interface giữ nguyên 100% để không đổi caller:
   dispatcher = GeminiPool(keys, system_loaded_fn)
-  slot = dispatcher.pick_gemini_slot()        # (model_alias, ki, api_key) | None
+  slot = dispatcher.pick_slot()               # (model_alias, ki, api_key) | None
   dispatcher.record_success(model, ki)
   dispatcher.record_failure(model, ki, is_rate_limit=bool)
   dispatcher.status()                          # dict cho /stats endpoint
+  dispatcher.translate_context()               # context manager cho semaphore
 
 Không import google-genai — dùng urllib.request như proxy5.
 """
@@ -74,6 +77,12 @@ MAX_FAILS     = 2       # lỗi liên tiếp trước khi vào cooldown (tăng t
 
 # Prune background interval
 PRUNE_INTERVAL = 60     # giây
+
+# Burst guard: số translate Gemini được chạy đồng thời tối đa.
+# Dù RPM tracking chặn theo phút, nhiều thread vẫn có thể pick slot
+# hợp lệ cùng lúc và gửi burst → Google trả 429 tức thời dù quota còn.
+# Công thức an toàn: min_rpm × n_keys / 2 = 5 × 5 / 2 = 12 → chọn 4 conservative.
+MAX_CONCURRENT_TRANSLATES = 4
 
 
 # ──────────────────────────────────────────────
@@ -157,6 +166,10 @@ class GeminiPool:
         self._is_loaded = system_loaded_fn
         self._lock = threading.Lock()
 
+        # Burst guard semaphore — giới hạn số translate đồng thời
+        # Chặn 429 tức thời do nhiều thread pick slot cùng lúc sau restart/flood
+        self._sem = threading.Semaphore(MAX_CONCURRENT_TRANSLATES)
+
         # Build cycle + state
         self._cycle: List[Tuple[str, int]] = self._build_cycle()
         self._cycle_idx: int = 0
@@ -179,8 +192,21 @@ class GeminiPool:
         dist_str = ", ".join(f"key{k}:{v}" for k, v in sorted(dist.items()))
         print(
             f"[GeminiPool] Init: {len(self._keys)} keys | "
-            f"cycle={len(self._cycle)} slots | {dist_str}"
+            f"cycle={len(self._cycle)} slots | {dist_str} | "
+            f"max_concurrent={MAX_CONCURRENT_TRANSLATES}"
         )
+
+    # ── burst guard context manager ────────────
+    def translate_context(self):
+        """
+        Context manager bao quanh toàn bộ 1 lần translate (bao gồm cả HTTP call).
+        Dùng như:
+            with _gemini_pool.translate_context():
+                result = _translate_gemini(...)
+        Semaphore giới hạn MAX_CONCURRENT_TRANSLATES thread đồng thời,
+        ngăn burst gửi quá nhiều request trong cùng 1 giây.
+        """
+        return self._sem
 
     # ── cycle builder ──────────────────────────
     def _build_cycle(self) -> List[Tuple[str, int]]:

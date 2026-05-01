@@ -656,30 +656,33 @@ except ImportError:
 def _gemini_translate_inner(text, is_html=False):
     """
     Core retry loop dùng GeminiPool — dùng chung cho plain text và HTML.
+    Semaphore giới hạn MAX_CONCURRENT_TRANSLATES thread đồng thời,
+    ngăn burst 429 khi nhiều tin dồn cùng lúc (real-time flood / restart).
     Trả về (result, alias) hoặc raise RuntimeError khi hết slot.
     """
     tried = set()
-    while True:
-        slot = _gemini_pool.pick_slot()
-        if not slot:
-            raise RuntimeError('GeminiPool: tất cả slots exhausted')
-        alias, ki, api_key = slot
-        slot_key = (alias, ki)
-        if slot_key in tried:
-            raise RuntimeError('GeminiPool: đã thử hết slots')
-        tried.add(slot_key)
-        model_name = _GPOOL_MODELS[alias]
-        try:
-            if is_html:
-                result = _fix_html_spacing(_translate_gemini_html(text, model=model_name, api_key=api_key))
-            else:
-                result = _translate_gemini(text, model=model_name, api_key=api_key)
-            _gemini_pool.record_success(alias, ki)
-            return result, alias
-        except Exception as e:
-            is_rl = '429' in str(e) or 'quota' in str(e).lower()
-            _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl)
-            print(f'[Translate] {alias}[key{ki}] loi: {e} — thu slot tiep')
+    with _gemini_pool.translate_context():
+        while True:
+            slot = _gemini_pool.pick_slot()
+            if not slot:
+                raise RuntimeError('GeminiPool: tất cả slots exhausted')
+            alias, ki, api_key = slot
+            slot_key = (alias, ki)
+            if slot_key in tried:
+                raise RuntimeError('GeminiPool: đã thử hết slots')
+            tried.add(slot_key)
+            model_name = _GPOOL_MODELS[alias]
+            try:
+                if is_html:
+                    result = _fix_html_spacing(_translate_gemini_html(text, model=model_name, api_key=api_key))
+                else:
+                    result = _translate_gemini(text, model=model_name, api_key=api_key)
+                _gemini_pool.record_success(alias, ki)
+                return result, alias
+            except Exception as e:
+                is_rl = '429' in str(e) or 'quota' in str(e).lower()
+                _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl)
+                print(f'[Translate] {alias}[key{ki}] loi: {e} — thu slot tiep')
 
 
 def _dispatcher_translate(text, preferred=None):

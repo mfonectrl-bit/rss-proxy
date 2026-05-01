@@ -1576,11 +1576,9 @@ async def _tg_setup_realtime(feed_urls):
         if all_channels:
             print(f'[TG] Đăng ký real-time đầy đủ: {len(all_channels)} channels')
             await _register_handler(all_channels)
-            print('[System] Chờ 120s để RPM window instance cũ clear trước khi enable Gemini...')
-            await asyncio.sleep(120)
-            global _system_fully_loaded
-            _system_fully_loaded = True
-            print('[System] ✅ Fully loaded — Gemini enabled')
+            if not _system_fully_loaded:
+                _enable_gemini_after_delay(120.0)
+                print('[System] GeminiWarmup thread started — Gemini enable sau 120s')
         else:
             print('[TG] Không có channel nào resolve được')
     finally:
@@ -1871,6 +1869,15 @@ threading.Thread(target=_run_cleanup_scheduler, daemon=True, name='CleanupSchedu
 # Set chứa các feed URL đã init xong known_guids — chỉ feed nào có trong set mới được forward
 _forward_ready_feeds = set()
 _system_fully_loaded = False   # True sau khi toàn bộ TG history load xong
+
+def _enable_gemini_after_delay(delay: float = 120.0):
+    """Enable Gemini sau delay giây — chạy trên thread riêng, độc lập với setup flow."""
+    def _run():
+        global _system_fully_loaded
+        time.sleep(delay)
+        _system_fully_loaded = True
+        print(f'[System] ✅ Fully loaded — Gemini enabled (sau {int(delay)}s warmup)')
+    threading.Thread(target=_run, daemon=True, name='GeminiWarmup').start()
 _watchdog_running = False  # Tránh watchdog chạy trùng
 
 # --- WebSocket thuần RFC 6455 (không cần thư viện websockets) ---

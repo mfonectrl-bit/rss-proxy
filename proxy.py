@@ -663,31 +663,30 @@ def _gemini_translate_inner(text, is_html=False):
     Trả về (result, alias) hoặc raise RuntimeError khi hết slot.
     """
     tried = set()
-    with _gemini_pool.translate_context():
-        while True:
-            slot = _gemini_pool.pick_slot()
-            if not slot:
-                raise RuntimeError('GeminiPool: tất cả slots exhausted')
-            alias, ki, api_key = slot
-            slot_key = (alias, ki)
-            if slot_key in tried:
-                raise RuntimeError('GeminiPool: đã thử hết slots')
-            tried.add(slot_key)
-            model_name = _GPOOL_MODELS[alias]
-            try:
-                _gemini_pool.wait_rate_limit()  # token bucket — enforce min interval
-                if is_html:
-                    result = _fix_html_spacing(_translate_gemini_html(text, model=model_name, api_key=api_key))
-                else:
-                    result = _translate_gemini(text, model=model_name, api_key=api_key)
-                _gemini_pool.record_success(alias, ki)
-                return result, alias
-            except Exception as e:
-                err = str(e)
-                is_rl = '429' in err or 'quota' in err.lower()
-                is_nf = '404' in err or 'not found' in err.lower()
-                _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl, is_not_found=is_nf)
-                print(f'[Translate] {alias}[key{ki}] loi: {e} — thu slot tiep')
+    while True:
+        _gemini_pool.wait_rate_limit()  # token bucket — serialize requests, chặn burst
+        slot = _gemini_pool.pick_slot()
+        if not slot:
+            raise RuntimeError('GeminiPool: tất cả slots exhausted')
+        alias, ki, api_key = slot
+        slot_key = (alias, ki)
+        if slot_key in tried:
+            raise RuntimeError('GeminiPool: đã thử hết slots')
+        tried.add(slot_key)
+        model_name = _GPOOL_MODELS[alias]
+        try:
+            if is_html:
+                result = _fix_html_spacing(_translate_gemini_html(text, model=model_name, api_key=api_key))
+            else:
+                result = _translate_gemini(text, model=model_name, api_key=api_key)
+            _gemini_pool.record_success(alias, ki)
+            return result, alias
+        except Exception as e:
+            err = str(e)
+            is_rl = '429' in err or 'quota' in err.lower()
+            is_nf = '404' in err or 'not found' in err.lower()
+            _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl, is_not_found=is_nf)
+            print(f'[Translate] {alias}[key{ki}] loi: {e} — thu slot tiep')
 
 
 def _dispatcher_translate(text, preferred=None):
@@ -1574,8 +1573,9 @@ async def _tg_setup_realtime(feed_urls):
         if all_channels:
             print(f'[TG] Đăng ký real-time đầy đủ: {len(all_channels)} channels')
             global _system_fully_loaded
-            _system_fully_loaded = True
-            print('[System] ✅ Fully loaded — Gemini enabled')
+            if not _system_fully_loaded:  # chỉ set 1 lần, tránh log spam khi WS reconnect
+                _system_fully_loaded = True
+                print('[System] ✅ Fully loaded — Gemini enabled')
             await _register_handler(all_channels)
         else:
             print('[TG] Không có channel nào resolve được')

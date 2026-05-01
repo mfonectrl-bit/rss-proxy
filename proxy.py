@@ -1283,6 +1283,22 @@ def maybe_translate(title, desc):
         return title, desc, False
     return (translate_text(title) if title else title), (translate_text(desc) if desc else desc), True
 
+def _google_translate_only(text):
+    """
+    Dịch bằng Google Translate thuần — dùng trong TG history load.
+    KHÔNG dùng Gemini dù _system_fully_loaded = True.
+    """
+    if not text or len(text.strip()) < 4:
+        return text
+    if is_same_as_target(text[:400]):
+        return text
+    try:
+        _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
+        return GoogleTranslator(source='auto', target=_gtarget).translate(text) or text
+    except Exception:
+        return text
+
+
 def _fast_translate(text):
     """
     Dịch nhanh cho pipeline — không classification, không AI phức tạp.
@@ -4747,26 +4763,16 @@ def _run_read_all_bg(url, feed_cfg):
 
             if _effective_translate:
                 item["text"] = msg_text
+                # History load: dùng Google Translate cố định, KHÔNG dùng Gemini
+                # Gemini chỉ được dùng sau khi toàn bộ history load xong (_system_fully_loaded)
                 if _has_hidden_link or _has_format:
-                    translated, _eng, _ = _translate_with_hidden_links(_html_text)
-                    # Nếu kết quả rỗng → fallback Google plain text
-                    if not translated or not translated.strip():
-                        _plain = re.sub(r'<[^>]+>', '', _html_text).strip()
-                        translated = _fast_translate(_plain) if _plain else msg_text
-                        _eng = 'google'
+                    _plain = re.sub(r'<[^>]+>', '', _html_text).strip()
+                    translated = _google_translate_only(_plain) or msg_text
                     item["_tg_html_text"] = translated
-                    item["_translate_engine_used"] = _eng
+                    item["_translate_engine_used"] = 'google'
                 else:
-                    translated = _fast_translate(msg_text)
-                    # Nếu kết quả rỗng → fallback Google trực tiếp
-                    if not translated or not translated.strip():
-                        try:
-                            _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
-                            translated = GoogleTranslator(source='auto', target=_gtarget).translate(msg_text) or msg_text
-                        except Exception:
-                            translated = msg_text
-                        _tl_engine.used = 'google'
-                    item["_translate_engine_used"] = getattr(_tl_engine, 'used', '')
+                    translated = _google_translate_only(msg_text)
+                    item["_translate_engine_used"] = 'google'
                 item["desc"] = translated
                 item["title"] = (translated[:80] + "...") if len(translated) > 80 else translated
                 item["translated"] = True

@@ -637,82 +637,301 @@ _GOOGLE_LANG_CODE = {
 }
 
 
-from gemini_pool_sync import GeminiPool, GEMINI_MODELS as _GPOOL_MODELS, GEMINI_PREFIX as _GPOOL_PREFIX
-
-_gemini_pool = GeminiPool(
-    keys=GEMINI_API_KEYS,
-    system_loaded_fn=lambda: _system_fully_loaded,
-)
-# Alias backward-compat cho các caller chưa đổi tên
-_engine_dispatcher = _gemini_pool
-
-
-# Import dịch — cần trước _dispatcher_translate (resolve at call-time, nhưng explicit hơn)
-try:
-    from deep_translator import GoogleTranslator as _GoogleTranslator
-except ImportError:
-    _GoogleTranslator = None
-
-def _gemini_translate_inner(text, is_html=False):
+class EngineDispatcher:
     """
-    Core retry loop dùng GeminiPool — dùng chung cho plain text và HTML.
-    Bảo vệ 2 lớp:
-      1. Semaphore: giới hạn MAX_CONCURRENT_TRANSLATES thread đồng thời
-      2. Token bucket (wait_rate_limit): enforce MIN_REQUEST_INTERVAL
-         giữa các HTTP call → chặn per-second burst limit của Google
-    Trả về (result, alias) hoặc raise RuntimeError khi hết slot.
+    WeightedDispatcher với multi-key support.
+
+    Mỗi Gemini API key là một pool quota độc lập (per Google Cloud project).
+    Round-robin qua tất cả (model, key_index) combinations theo weighted cycle.
+
+    Ví dụ 2 keys:
+      Cycle: (GM3.1,k0),(GM3.0,k1),(GM3.1,k0),(GM2.5L,k1),...
+
+    Thêm key mới: chỉ cần update env var GEMINI_API_KEYS=k1,k2,k3 rồi restart.
     """
-    tried = set()
-    while True:
-        slot = _gemini_pool.pick_slot()
-        if not slot:
-            raise RuntimeError('GeminiPool: tất cả slots exhausted')
-        alias, ki, api_key = slot
-        slot_key = (alias, ki)
-        if slot_key in tried:
-            raise RuntimeError('GeminiPool: đã thử hết slots')
-        tried.add(slot_key)
-        model_name = _GPOOL_MODELS[alias]
+
+    GEMINI_MODELS = {
+        'gemini-2.5':      'gemini-2.5-flash',
+        'gemini-2.5-lite': 'gemini-2.5-flash-lite',
+        'gemini-3.0':      'gemini-3-flash-preview',
+        'gemini-3.1':      'gemini-3.1-flash-lite-preview',
+    }
+    GEMINI_PREFIX = {
+        'gemini-2.5':      'GM2.5',
+        'gemini-2.5-lite': 'GM2.5L',
+        'gemini-3.0':      'GM3.0',
+        'gemini-3.1':      'GM3.1',
+    }
+    LIMITS = {
+        'gemini-2.5':      5,
+        'gemini-2.5-lite': 10,
+        'gemini-3.0':      5,    # gemini-3-flash-preview — 5 RPM, 20 RPD (AI Studio confirmed)
+        'gemini-3.1':      15,
+        'deepl':           40,
+        'google':          999,
+    }
+    MIN_INTERVAL = {
+        'gemini-2.5':      13.0,
+        'gemini-2.5-lite': 6.5,
+        'gemini-3.0':      13.0, # 5 RPM → 60/5 = 12s, +1s buffer
+        'gemini-3.1':      4.5,
+        'deepl':           1.5,
+        'google':          0.0,
+    }
+    COOLDOWN_BASE = 30
+    COOLDOWN_CAP  = 480
+    MAX_FAILS     = 1
+
+    # Weighted base cycle theo RPM: GM3.1(15)=3, GM2.5L(10)=2, GM2.5(5)=1, GM3.0(5)=1
+    # GM3.0 chỉ 1 slot vì RPD=20/key rất thấp — tránh hết quota sớm
+    _BASE_CYCLE = [
+        'gemini-3.1', 'gemini-2.5-lite',
+        'gemini-3.1', 'gemini-2.5',
+        'gemini-3.1', 'gemini-2.5-lite',
+        'gemini-3.0', 'gemini-2.5-lite',
+    ]
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._keys = list(GEMINI_API_KEYS)  # snapshot lúc khởi tạo
+
+        # Build full cycle interleave keys vào base cycle
+        self._rr_cycle = self._build_cycle()
+        self._rr_index = 0
+
+        # Log phân phối để dễ debug
+        if self._rr_cycle:
+            from collections import Counter
+            _kc = Counter(ki for _, ki in self._rr_cycle)
+            print(f'[Dispatcher] Cycle={len(self._rr_cycle)} slots | Key distribution: { {f"key{k}": v for k, v in sorted(_kc.items())} }')
+
+        # State per (model, key_index) cho Gemini
+        self._state = {}
+        for ki in range(max(len(self._keys), 1)):
+            for model in ('gemini-2.5', 'gemini-2.5-lite', 'gemini-3.0', 'gemini-3.1'):
+                self._state[(model, ki)] = {
+                    'req_times': [], 'fails': 0,
+                    'cooldown_until': 0.0, 'last_req': 0.0,
+                }
+        # State cho non-Gemini
+        self._state['deepl']  = {'req_times': [], 'fails': 0, 'cooldown_until': 0.0, 'last_req': 0.0}
+        self._state['google'] = {'req_times': [], 'fails': 0, 'cooldown_until': 0.0, 'last_req': 0.0}
+
+    def _build_cycle(self):
+        """
+        Build weighted cycle cho tất cả (model, key_index) combinations.
+        Mỗi key được phân phối đều: lặp BASE_CYCLE đủ số lần để cover tất cả keys.
+        Ví dụ 5 keys + BASE_CYCLE 6 phần tử → lặp 5 lần = 30 slot, mỗi key xuất hiện 6 lần.
+        """
+        if not self._keys:
+            return []
+        n = len(self._keys)
+        cycle = []
+        # Lặp BASE_CYCLE đủ lcm(len(BASE_CYCLE), n) lần để mỗi key xuất hiện đều
+        import math
+        base_len = len(self._BASE_CYCLE)
+        repeat = math.lcm(base_len, n) // base_len if base_len else 1
+        for rep in range(repeat):
+            for i, model in enumerate(self._BASE_CYCLE):
+                global_i = rep * base_len + i
+                cycle.append((model, global_i % n))
+        # Đảm bảo mỗi key xuất hiện ít nhất 1 lần (safety)
+        covered = {ki for _, ki in cycle}
+        for ki in range(n):
+            if ki not in covered:
+                cycle.append(('gemini-3.1', ki))
+        return cycle
+
+    def _effective_min_interval(self, model):
+        """MIN_INTERVAL thực tế = base / số keys — nhiều keys thì interval ngắn hơn."""
+        base = self.MIN_INTERVAL.get(model, 0.0)
+        n = max(len(self._keys), 1)
+        return base / n if n > 1 else base
+
+    def _is_available_slot(self, model, ki, now):
+        """Kiểm tra slot (model, key_index) có sẵn sàng không."""
+        if not _system_fully_loaded or ki >= len(self._keys):
+            return False
+        st = self._state.get((model, ki))
+        if not st:
+            return False
+        if now < st['cooldown_until']:
+            return False
+        min_iv = self._effective_min_interval(model)
+        if min_iv > 0 and (now - st['last_req']) < min_iv:
+            return False
+        limit = self.LIMITS[model]
+        cutoff = now - 60.0
+        st['req_times'] = [t for t in st['req_times'] if t > cutoff]
+        return len(st['req_times']) < limit
+
+    def _is_available(self, engine, now):
+        """Check backward-compat: bất kỳ slot nào của engine available không."""
+        if engine in ('gemini-2.5', 'gemini-2.5-lite', 'gemini-3.1'):
+            return any(self._is_available_slot(engine, ki, now)
+                       for ki in range(len(self._keys)))
+        st = self._state.get(engine)
+        if not st:
+            return False
+        if now < st['cooldown_until']:
+            return False
+        min_iv = self.MIN_INTERVAL.get(engine, 0.0)
+        if min_iv > 0 and (now - st['last_req']) < min_iv:
+            return False
+        limit = self.LIMITS[engine]
+        cutoff = now - 60.0
+        st['req_times'] = [t for t in st['req_times'] if t > cutoff]
+        return len(st['req_times']) < limit
+
+    def _record_request_slot(self, model, ki, now):
+        st = self._state[(model, ki)]
+        st['req_times'].append(now)
+        st['last_req'] = now
+
+    def _record_request(self, engine, now):
+        """Record request cho non-Gemini engines."""
+        st = self._state.get(engine)
+        if st:
+            st['req_times'].append(now)
+            st['last_req'] = now
+
+    def _record_success(self, engine, ki=None):
+        with self._lock:
+            key = (engine, ki) if ki is not None else engine
+            st = self._state.get(key)
+            if st:
+                st['fails'] = 0
+
+    def _record_failure(self, engine, ki=None, is_rate_limit=False):
+        with self._lock:
+            key = (engine, ki) if ki is not None and (engine, ki) in self._state else engine
+            st = self._state.get(key)
+            if not st:
+                return
+            st['fails'] += 1
+            if is_rate_limit or st['fails'] >= self.MAX_FAILS:
+                cooldown = min(self.COOLDOWN_BASE * (2 ** (st['fails'] - 1)), self.COOLDOWN_CAP)
+                st['cooldown_until'] = time.time() + cooldown
+                label = f'{engine}[key{ki}]' if ki is not None else engine
+                reason = 'rate limit' if is_rate_limit else f'{st["fails"]} lỗi liên tiếp'
+                print(f'[Dispatcher] {label} → cooldown {cooldown}s ({reason})')
+                st['fails'] = 0
+
+    def pick_gemini_slot(self):
+        """
+        Pick (model, key_index, api_key) theo weighted round-robin.
+        Phải được gọi trong lock. Trả về tuple hoặc None.
+        """
+        if not self._keys or not _system_fully_loaded or not self._rr_cycle:
+            return None
+        now = time.time()
+        n = len(self._rr_cycle)
+        start = self._rr_index
+        tried = set()
+        for attempt in range(n):
+            idx = (start + attempt) % n
+            model, ki = self._rr_cycle[idx]
+            slot = (model, ki)
+            if slot in tried:
+                continue
+            tried.add(slot)
+            if self._is_available_slot(model, ki, now):
+                self._rr_index = (idx + 1) % n
+                self._record_request_slot(model, ki, now)
+                return model, ki, self._keys[ki]
+        return None
+
+    def translate(self, text, preferred=None):
+        """Dịch text với multi-key Gemini round-robin, fallback DeepL → Google."""
+        if not text or len(text.strip()) < 4:
+            return text, 'none'
+
+        # Thử Gemini (multi-key)
+        if self._keys and _system_fully_loaded:
+            with self._lock:
+                slot = self.pick_gemini_slot()
+            if slot:
+                model, ki, api_key = slot
+                try:
+                    result = _translate_gemini(text, model=self.GEMINI_MODELS[model], api_key=api_key)
+                    self._record_success(model, ki)
+                    return result, model
+                except Exception as e:
+                    err_str = str(e)
+                    is_rl = '429' in err_str or 'quota' in err_str.lower()
+                    self._record_failure(model, ki, is_rate_limit=is_rl)
+                    # Thử slot tiếp theo ngay lập tức
+                    with self._lock:
+                        slot2 = self.pick_gemini_slot()
+                    if slot2:
+                        model2, ki2, api_key2 = slot2
+                        try:
+                            result = _translate_gemini(text, model=self.GEMINI_MODELS[model2], api_key=api_key2)
+                            self._record_success(model2, ki2)
+                            return result, model2
+                        except Exception as e2:
+                            err2 = str(e2)
+                            is_rl2 = '429' in err2 or 'quota' in err2.lower()
+                            self._record_failure(model2, ki2, is_rate_limit=is_rl2)
+
+        # Thử DeepL
+        if DEEPL_API_KEY:
+            now = time.time()
+            with self._lock:
+                deepl_ok = self._is_available('deepl', now)
+                if deepl_ok:
+                    self._record_request('deepl', now)
+            if deepl_ok:
+                try:
+                    result = _translate_deepl(text)
+                    self._record_success('deepl')
+                    return result, 'deepl'
+                except Exception:
+                    self._record_failure('deepl')
+
+        # Fallback cứng: Google
         try:
-            if is_html:
-                result = _fix_html_spacing(_translate_gemini_html(text, model=model_name, api_key=api_key))
-            else:
-                result = _translate_gemini(text, model=model_name, api_key=api_key)
-            _gemini_pool.record_success(alias, ki)
-            return result, alias
-        except Exception as e:
-            err = str(e)
-            is_rl = '429' in err or 'quota' in err.lower() or '503' in err
-            is_nf = '404' in err or 'not found' in err.lower()
-            _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl, is_not_found=is_nf)
-            print(f'[Translate] {alias}[key{ki}] loi: {e} — thu slot tiep')
-
-
-def _dispatcher_translate(text, preferred=None):
-    """
-    Drop-in replacement cho _engine_dispatcher.translate() cũ.
-    Dùng trong _fast_translate(). Trả về (result, engine_label).
-    """
-    if GEMINI_API_KEYS and _system_fully_loaded:
-        try:
-            return _gemini_translate_inner(text, is_html=False)
-        except RuntimeError:
-            pass
-
-    if DEEPL_API_KEY:
-        try:
-            return _translate_deepl(text), 'deepl'
+            result = _translate_google(text)
+            return result, 'google'
         except Exception:
             pass
+        return text, 'error'
 
-    try:
-        _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
-        if _GoogleTranslator:
-            return _GoogleTranslator(source='auto', target=_gtarget).translate(text) or text, 'google'
-    except Exception:
-        pass
-    return text, 'error'
+    def status(self):
+        """Status của tất cả slots — dùng cho log/debug."""
+        now = time.time()
+        out = {}
+        with self._lock:
+            for model in ('gemini-2.5', 'gemini-2.5-lite', 'gemini-3.0', 'gemini-3.1'):
+                for ki in range(len(self._keys)):
+                    st = self._state.get((model, ki))
+                    if not st:
+                        continue
+                    cutoff = now - 60.0
+                    recent = len([t for t in st['req_times'] if t > cutoff])
+                    label = f'{model}[key{ki}]' if len(self._keys) > 1 else model
+                    out[label] = {
+                        'req_last_min': recent,
+                        'limit': self.LIMITS[model],
+                        'fails': st['fails'],
+                        'cooldown_left': round(max(0, st['cooldown_until'] - now)),
+                        'available': self._is_available_slot(model, ki, now),
+                    }
+            for eng in ('deepl', 'google'):
+                st = self._state[eng]
+                cutoff = now - 60.0
+                recent = len([t for t in st['req_times'] if t > cutoff])
+                out[eng] = {
+                    'req_last_min': recent,
+                    'limit': self.LIMITS[eng],
+                    'fails': st['fails'],
+                    'cooldown_left': round(max(0, st['cooldown_until'] - now)),
+                    'available': self._is_available(eng, now),
+                }
+        return out
 
+# Singleton dispatcher
+_engine_dispatcher = EngineDispatcher()
 
 # ================= AI SERVICE (Multi-AI Rotation) =================
 
@@ -826,10 +1045,26 @@ class BatchPipeline:
                         translated = None
                         _eng = ''
                         if GEMINI_API_KEYS and _system_fully_loaded:
-                            try:
-                                translated, _eng = _gemini_translate_inner(text, is_html=False)
-                            except RuntimeError:
-                                pass  # hết slot → fallback bên dưới
+                            _tried_slots = set()
+                            for _attempt in range(len(_engine_dispatcher._rr_cycle) + 1):
+                                with _engine_dispatcher._lock:
+                                    _slot = _engine_dispatcher.pick_gemini_slot()
+                                if not _slot:
+                                    break
+                                _gmodel, _gki, _gkey = _slot
+                                _slot_id = (_gmodel, _gki)
+                                if _slot_id in _tried_slots:
+                                    break
+                                _tried_slots.add(_slot_id)
+                                try:
+                                    translated = _fast_translate_with_key(text, _gmodel, _gkey)
+                                    _engine_dispatcher._record_success(_gmodel, _gki)
+                                    _eng = _gmodel
+                                    break
+                                except Exception as _ge:
+                                    _is_rl = '429' in str(_ge) or 'quota' in str(_ge).lower()
+                                    _engine_dispatcher._record_failure(_gmodel, _gki, is_rate_limit=_is_rl)
+                                    print(f'[Translate] {_gmodel}[key{_gki}] plain lỗi: {_ge} — thử slot tiếp')
                         # Fallback: _fast_translate (sẽ dùng dispatcher → DeepL → Google)
                         if not translated or not translated.strip():
                             translated = _fast_translate(text)
@@ -894,11 +1129,11 @@ if GEMINI_API_KEY: _engines_ready.append('Gemini ✅')
 if DEEPL_API_KEY:  _engines_ready.append('DeepL ✅')
 _engines_ready.append('Google ✅')
 print(f'[i] Engine dịch: {" | ".join(_engines_ready)} — ưu tiên: {_active_engine}')
-from gemini_pool_sync import QUOTA as _GPOOL_QUOTA
-_g25_lim = _GPOOL_QUOTA['gemini-2.5']['rpm'];      _g25_iv = int(_GPOOL_QUOTA['gemini-2.5']['interval'])
-_g20_lim = _GPOOL_QUOTA['gemini-2.5-lite']['rpm']; _g30_lim = _GPOOL_QUOTA['gemini-3.0']['rpm']; _g15_lim = _GPOOL_QUOTA['gemini-3.1']['rpm']
-_d_lim = 40  # DeepL limit giữ nguyên
-print(f'[i] GeminiPool: GM2.5={_g25_lim}/min({_g25_iv}s) | GM2.5L={_g20_lim}/min | GM3.0={_g30_lim}/min | GM3.1={_g15_lim}/min | DeepL={_d_lim}/min | Google=unlimited')
+_ed = _engine_dispatcher
+_g25_lim = _ed.LIMITS['gemini-2.5']; _g25_iv = int(_ed.MIN_INTERVAL['gemini-2.5'])
+_g20_lim = _ed.LIMITS['gemini-2.5-lite']; _g30_lim = _ed.LIMITS['gemini-3.0']; _g15_lim = _ed.LIMITS['gemini-3.1']
+_d_lim = _ed.LIMITS['deepl']
+print(f'[i] EngineDispatcher: GM2.5={_g25_lim}/min({_g25_iv}s) | GM2.5L={_g20_lim}/min | GM3.0={_g30_lim}/min | GM3.1={_g15_lim}/min | DeepL={_d_lim}/min | Google=unlimited')
 
 try:
     from telethon import TelegramClient, events
@@ -929,8 +1164,8 @@ tg_phone_code_hash = None   # lưu phone_code_hash khi gửi OTP
 
 # --- HÀM TIỆN ÍCH ---
 def _translate_with_engine(text, engine=None):
-    """Wrapper dùng GeminiPool — backward compatible."""
-    result, used = _dispatcher_translate(text, preferred=engine or translate_engine)
+    """Wrapper dùng EngineDispatcher — backward compatible."""
+    result, used = _engine_dispatcher.translate(text, preferred=engine or translate_engine)
     return result
 
 
@@ -1098,11 +1333,31 @@ def _translate_with_hidden_links(html_text):
     Trả về (translated_text, engine_used, is_html).
     """
     if GEMINI_API_KEYS and _system_fully_loaded:
-        try:
-            result, alias = _gemini_translate_inner(html_text, is_html=True)
-            return result, alias, True
-        except RuntimeError as e:
-            print(f'[Translate] Gemini HTML hết slot: {e}')
+        _tried = set()
+        for _ in range(len(_engine_dispatcher._rr_cycle) + 1):
+            with _engine_dispatcher._lock:
+                slot = _engine_dispatcher.pick_gemini_slot()
+            if not slot:
+                break
+            model, ki, api_key = slot
+            slot_id = (model, ki)
+            if slot_id in _tried:
+                break
+            _tried.add(slot_id)
+            try:
+                result = _fix_html_spacing(
+                    _translate_gemini_html(
+                        html_text,
+                        model=_engine_dispatcher.GEMINI_MODELS[model],
+                        api_key=api_key
+                    )
+                )
+                _engine_dispatcher._record_success(model, ki)
+                return result, model, True
+            except Exception as e:
+                is_rl = '429' in str(e) or 'quota' in str(e).lower()
+                _engine_dispatcher._record_failure(model, ki, is_rate_limit=is_rl)
+                print(f'[Translate] {model}[key{ki}] HTML lỗi: {e} — thử engine tiếp')
 
     # Thử DeepL
     if DEEPL_API_KEY:
@@ -1282,22 +1537,6 @@ def maybe_translate(title, desc):
         return title, desc, False
     return (translate_text(title) if title else title), (translate_text(desc) if desc else desc), True
 
-def _google_translate_only(text):
-    """
-    Dịch bằng Google Translate thuần — dùng trong TG history load.
-    KHÔNG dùng Gemini dù _system_fully_loaded = True.
-    """
-    if not text or len(text.strip()) < 4:
-        return text
-    if is_same_as_target(text[:400]):
-        return text
-    try:
-        _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
-        return GoogleTranslator(source='auto', target=_gtarget).translate(text) or text
-    except Exception:
-        return text
-
-
 def _fast_translate(text):
     """
     Dịch nhanh cho pipeline — không classification, không AI phức tạp.
@@ -1324,7 +1563,7 @@ def _fast_translate(text):
     NL_TOKEN = '⏎'   # dùng ký tự Unicode đặc biệt — engine không dịch ký tự này
     masked = masked.replace('\n', NL_TOKEN)
 
-    translated, _used_engine = _dispatcher_translate(masked)
+    translated, _used_engine = _engine_dispatcher.translate(masked, preferred=translate_engine)
     _tl_engine.used = _used_engine  # lưu để caller có thể lấy
 
     # Bước 3: Khôi phục newlines
@@ -1360,7 +1599,7 @@ def _fast_translate_with_key(text, model_alias, api_key):
     NL_TOKEN = '⏎'
     masked = masked.replace('\n', NL_TOKEN)
 
-    model_name = _GPOOL_MODELS.get(model_alias, model_alias)
+    model_name = _engine_dispatcher.GEMINI_MODELS.get(model_alias, model_alias)
     result = _translate_gemini(masked, model=model_name, api_key=api_key)
 
     result = result.replace(NL_TOKEN, '\n')
@@ -1588,9 +1827,8 @@ async def _tg_setup_realtime(feed_urls):
         if all_channels:
             print(f'[TG] Đăng ký real-time đầy đủ: {len(all_channels)} channels')
             global _system_fully_loaded
-            if not _system_fully_loaded:  # chỉ set 1 lần, tránh log spam khi WS reconnect
-                _system_fully_loaded = True
-                print('[System] ✅ Fully loaded — Gemini enabled')
+            _system_fully_loaded = True
+            print('[System] ✅ Fully loaded — Gemini enabled')
             await _register_handler(all_channels)
         else:
             print('[TG] Không có channel nào resolve được')
@@ -4762,16 +5000,26 @@ def _run_read_all_bg(url, feed_cfg):
 
             if _effective_translate:
                 item["text"] = msg_text
-                # History load: dùng Google Translate cố định, KHÔNG dùng Gemini
-                # Gemini chỉ được dùng sau khi toàn bộ history load xong (_system_fully_loaded)
                 if _has_hidden_link or _has_format:
-                    _plain = re.sub(r'<[^>]+>', '', _html_text).strip()
-                    translated = _google_translate_only(_plain) or msg_text
+                    translated, _eng, _ = _translate_with_hidden_links(_html_text)
+                    # Nếu kết quả rỗng → fallback Google plain text
+                    if not translated or not translated.strip():
+                        _plain = re.sub(r'<[^>]+>', '', _html_text).strip()
+                        translated = _fast_translate(_plain) if _plain else msg_text
+                        _eng = 'google'
                     item["_tg_html_text"] = translated
-                    item["_translate_engine_used"] = 'google'
+                    item["_translate_engine_used"] = _eng
                 else:
-                    translated = _google_translate_only(msg_text)
-                    item["_translate_engine_used"] = 'google'
+                    translated = _fast_translate(msg_text)
+                    # Nếu kết quả rỗng → fallback Google trực tiếp
+                    if not translated or not translated.strip():
+                        try:
+                            _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
+                            translated = GoogleTranslator(source='auto', target=_gtarget).translate(msg_text) or msg_text
+                        except Exception:
+                            translated = msg_text
+                        _tl_engine.used = 'google'
+                    item["_translate_engine_used"] = getattr(_tl_engine, 'used', '')
                 item["desc"] = translated
                 item["title"] = (translated[:80] + "...") if len(translated) > 80 else translated
                 item["translated"] = True
@@ -5334,7 +5582,7 @@ def ws_handler(ws):
 
             elif t == 'translate_engine':
                 translate_engine = msg.get('engine', 'google')
-                st = _gemini_pool.status()
+                st = _engine_dispatcher.status()
                 eng_st = st.get(translate_engine, {})
                 if translate_engine == 'gemini' and not GEMINI_API_KEY:
                     print(f'[WS] Engine: gemini — ⚠️ GEMINI_API_KEY chưa set, dispatcher sẽ fallback')

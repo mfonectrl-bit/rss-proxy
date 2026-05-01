@@ -664,7 +664,6 @@ def _gemini_translate_inner(text, is_html=False):
     """
     tried = set()
     while True:
-        _gemini_pool.wait_rate_limit()  # token bucket — serialize requests, chặn burst
         slot = _gemini_pool.pick_slot()
         if not slot:
             raise RuntimeError('GeminiPool: tất cả slots exhausted')

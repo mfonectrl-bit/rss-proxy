@@ -5331,15 +5331,12 @@ def ws_handler(ws):
 
             elif t == 'translate_engine':
                 translate_engine = msg.get('engine', 'google')
-                st = _gemini_pool.status()
-                eng_st = st.get(translate_engine, {})
                 if translate_engine == 'gemini' and not GEMINI_API_KEY:
                     print(f'[WS] Engine: gemini — ⚠️ GEMINI_API_KEY chưa set, dispatcher sẽ fallback')
                 elif translate_engine == 'deepl' and not DEEPL_API_KEY:
                     print(f'[WS] Engine: deepl — ⚠️ DEEPL_API_KEY chưa set, dispatcher sẽ fallback')
                 else:
-                    print(f'[WS] Engine ưu tiên → {translate_engine} | '
-                          f'dispatcher status: {st}')
+                    print(f'[WS] Engine ưu tiên → {translate_engine}')
 
             elif t == 'translate_lang':
                 lang = msg.get('lang', 'vi').strip().lower()

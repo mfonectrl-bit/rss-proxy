@@ -12,10 +12,10 @@ from typing import Callable, Dict, List, Optional, Tuple
 # ========================== CONFIGURATION ==========================
 
 QUOTA: Dict[str, Dict[str, float]] = {
-    "gemini-2.5":      {"rpm": 5,   "rpd": 250,  "interval": 13.0},
-    "gemini-2.5-lite": {"rpm": 10,  "rpd": 1000, "interval": 6.5},
-    "gemini-3.0":      {"rpm": 5,   "rpd": 20,   "interval": 13.0},
-    "gemini-3.1":      {"rpm": 15,  "rpd": 1500, "interval": 4.5},
+    "gemini-2.5":      {"rpm": 5,   "rpd": 20,  "interval": 13.0},
+    "gemini-2.5-lite": {"rpm": 10,  "rpd": 20,  "interval": 6.5},
+    "gemini-3.0":      {"rpm": 5,   "rpd": 20,  "interval": 13.0},
+    "gemini-3.1":      {"rpm": 15,  "rpd": 500, "interval": 4.5},
 }
 
 GEMINI_MODELS: Dict[str, str] = {

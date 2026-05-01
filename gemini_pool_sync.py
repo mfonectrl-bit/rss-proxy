@@ -40,7 +40,7 @@ BASE_WEIGHTS: Dict[str, int] = {
 }
 
 # Fallback settings
-FALLBACK_MODELS: List[str] = ["gemini-2.5-lite", "gemini-3.1", "gemini-2.5"]
+FALLBACK_MODELS: List[str] = ["gemini-3.1", "gemini-2.5-lite", "gemini-2.5"]
 FALLBACK_RPM_MULTIPLIER: float = 0.6
 FALLBACK_COOLDOWN: float = 15.0
 

@@ -12,10 +12,10 @@ from typing import Callable, Dict, List, Optional, Tuple
 # ========================== CONFIGURATION ==========================
 
 QUOTA: Dict[str, Dict[str, float]] = {
-    "gemini-2.5":      {"rpm": 5,   "rpd": 20,  "interval": 13.0},
-    "gemini-2.5-lite": {"rpm": 10,  "rpd": 20,  "interval": 6.5},
-    "gemini-3.0":      {"rpm": 5,   "rpd": 20,  "interval": 13.0},
-    "gemini-3.1":      {"rpm": 15,  "rpd": 500, "interval": 4.5},
+    "gemini-2.5":      {"rpm": 5,   "rpd": 250,  "interval": 13.0},
+    "gemini-2.5-lite": {"rpm": 10,  "rpd": 1000, "interval": 6.5},
+    "gemini-3.0":      {"rpm": 5,   "rpd": 20,   "interval": 13.0},
+    "gemini-3.1":      {"rpm": 15,  "rpd": 1500, "interval": 4.5},
 }
 
 GEMINI_MODELS: Dict[str, str] = {
@@ -217,12 +217,23 @@ class GeminiPool:
                 if is_rate_limit:
                     cooldown = int(cooldown * 1.8)
 
-                slot.cooldown_until = time.time() + cooldown
-                label = f"{alias}[key{ki}]" if len(self._keys) > 1 else alias
-                fb = " (fallback)" if slot.is_fallback else ""
+                now = time.time()
                 reason = "rate_limit" if is_rate_limit else "consecutive fails"
-                print(f"[GeminiPool] {label}{fb} → cooldown {cooldown}s ({reason})")
-                slot.fails = 0
+
+                if is_rate_limit:
+                    # 429 là per-API-key → cooldown TẤT CẢ models dùng cùng key này
+                    for a in QUOTA:
+                        s = self._slots.get((a, ki))
+                        if s:
+                            s.cooldown_until = now + cooldown
+                            s.fails = 0
+                    print(f"[GeminiPool] key{ki} → ALL models cooldown {cooldown}s ({reason})")
+                else:
+                    slot.cooldown_until = now + cooldown
+                    slot.fails = 0
+                    label = f"{alias}[key{ki}]" if len(self._keys) > 1 else alias
+                    fb = " (fallback)" if slot.is_fallback else ""
+                    print(f"[GeminiPool] {label}{fb} → cooldown {cooldown}s ({reason})")
 
     def metrics(self) -> str:
         """Prometheus metrics"""

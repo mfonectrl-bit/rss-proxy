@@ -660,24 +660,35 @@ def _gemini_translate_inner(text, is_html=False):
     ngăn burst 429 khi nhiều tin dồn cùng lúc (real-time flood / restart).
     Trả về (result, alias) hoặc raise RuntimeError khi hết slot.
     """
+    tried = set()
     with _gemini_pool.translate_context():
-        slot = _gemini_pool.pick_slot()
-        if not slot:
-            raise RuntimeError('GeminiPool: không có slot khả dụng')
-        alias, ki, api_key = slot
-        model_name = _GPOOL_MODELS[alias]
-        try:
-            if is_html:
-                result = _fix_html_spacing(_translate_gemini_html(text, model=model_name, api_key=api_key))
-            else:
-                result = _translate_gemini(text, model=model_name, api_key=api_key)
-            _gemini_pool.record_success(alias, ki)
-            return result, alias
-        except Exception as e:
-            is_rl = '429' in str(e) or 'quota' in str(e).lower()
-            _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl)
-            # Không retry sang slot khác — mỗi request chỉ thử 1 slot, fail thì fallback Google
-            raise RuntimeError(f'GeminiPool: {alias}[key{ki}] loi: {e}')
+        while True:
+            slot = _gemini_pool.pick_slot()
+            if not slot:
+                if tried:
+                    raise RuntimeError(f'GeminiPool: đã thử {len(tried)} slot(s), tất cả exhausted')
+                raise RuntimeError('GeminiPool: không có slot khả dụng')
+            alias, ki, api_key = slot
+            slot_key = (alias, ki)
+            if slot_key in tried:
+                raise RuntimeError(f'GeminiPool: đã thử hết {len(tried)} slot(s)')
+            tried.add(slot_key)
+            model_name = _GPOOL_MODELS[alias]
+            try:
+                if is_html:
+                    result = _fix_html_spacing(_translate_gemini_html(text, model=model_name, api_key=api_key))
+                else:
+                    result = _translate_gemini(text, model=model_name, api_key=api_key)
+                _gemini_pool.record_success(alias, ki)
+                return result, alias
+            except Exception as e:
+                is_rl = '429' in str(e) or 'quota' in str(e).lower()
+                _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl)
+                if is_rl:
+                    # 429 → không retry sang slot khác, fallback Google ngay
+                    # Pool đã cooldown key này, request tiếp theo tự pick key còn tốt
+                    raise RuntimeError(f'GeminiPool: {alias}[key{ki}] rate_limit — fallback')
+                print(f'[Translate] {alias}[key{ki}] loi: {e} — thu slot tiep')
 
 
 def _dispatcher_translate(text, preferred=None):

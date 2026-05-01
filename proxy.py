@@ -665,11 +665,14 @@ def _gemini_translate_inner(text, is_html=False):
         while True:
             slot = _gemini_pool.pick_slot()
             if not slot:
-                raise RuntimeError('GeminiPool: tất cả slots exhausted')
+                if tried:
+                    raise RuntimeError(f'GeminiPool: đã thử {len(tried)} slot(s), tất cả exhausted')
+                raise RuntimeError('GeminiPool: không có slot khả dụng')
             alias, ki, api_key = slot
             slot_key = (alias, ki)
             if slot_key in tried:
-                raise RuntimeError('GeminiPool: đã thử hết slots')
+                # pick_slot trả lại slot đã fail → pool thực sự hết, thoát
+                raise RuntimeError(f'GeminiPool: đã thử hết {len(tried)} slot(s)')
             tried.add(slot_key)
             model_name = _GPOOL_MODELS[alias]
             try:
@@ -990,7 +993,7 @@ def _translate_gemini(text, model='gemini-2.0-flash', api_key=None):
     url = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={_key}'
     req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=45) as resp:
             data = json.loads(resp.read())
         result = data['candidates'][0]['content']['parts'][0]['text'].strip()
         if _is_error_result(result):
@@ -1002,6 +1005,8 @@ def _translate_gemini(text, model='gemini-2.0-flash', api_key=None):
         retry_after = e.headers.get('Retry-After', '') if hasattr(e, 'headers') else ''
         ra_str = f' retry-after={retry_after}s' if retry_after else ''
         raise RuntimeError(f'Gemini HTTP {e.code}{ra_str}: {body[:200]}')
+    except urllib.error.URLError as e:
+        raise RuntimeError(f'Gemini timeout/network: {e.reason}')
 
 def _translate_gemini_html(html_text, model='gemini-2.0-flash', api_key=None):
     """
@@ -1028,7 +1033,7 @@ def _translate_gemini_html(html_text, model='gemini-2.0-flash', api_key=None):
     url = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={_key}'
     req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=45) as resp:
             data = json.loads(resp.read())
         result = data['candidates'][0]['content']['parts'][0]['text'].strip()
         # Bỏ markdown fence nếu model trả về ```html ... ```
@@ -1044,6 +1049,8 @@ def _translate_gemini_html(html_text, model='gemini-2.0-flash', api_key=None):
         retry_after = e.headers.get('Retry-After', '') if hasattr(e, 'headers') else ''
         ra_str = f' retry-after={retry_after}s' if retry_after else ''
         raise RuntimeError(f'Gemini HTML HTTP {e.code}{ra_str}: {body[:200]}')
+    except urllib.error.URLError as e:
+        raise RuntimeError(f'Gemini HTML timeout/network: {e.reason}')
 
 
 def _translate_deepl_html(html_text):

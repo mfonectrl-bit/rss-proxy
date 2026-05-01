@@ -683,7 +683,7 @@ def _gemini_translate_inner(text, is_html=False):
             return result, alias
         except Exception as e:
             err = str(e)
-            is_rl = '429' in err or 'quota' in err.lower()
+            is_rl = '429' in err or 'quota' in err.lower() or '503' in err
             is_nf = '404' in err or 'not found' in err.lower()
             _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl, is_not_found=is_nf)
             print(f'[Translate] {alias}[key{ki}] loi: {e} — thu slot tiep')

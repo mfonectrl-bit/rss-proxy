@@ -39,16 +39,16 @@ from typing import Callable, Dict, List, Optional, Tuple
 # ──────────────────────────────────────────────
 QUOTA: Dict[str, Dict] = {
     # alias          rpm   rpd    min_interval(s)
-    "gemini-2.5":     {"rpm": 5,  "rpd": 250,  "interval": 13.0},
+    "gemini-2.5":     {"rpm": 5,  "rpd": 20,   "interval": 13.0},  # RPD=20 per project!
     "gemini-2.5-lite":{"rpm": 10, "rpd": 1000, "interval": 6.5},
     "gemini-3.0":     {"rpm": 5,  "rpd": 20,   "interval": 13.0},  # RPD=20 rất thấp!
-    "gemini-3.1":     {"rpm": 15, "rpd": 1500, "interval": 4.5},
+    "gemini-3.1":     {"rpm": 15, "rpd": 500,  "interval": 4.5},   # RPD=500 per project
 }
 
 # Tên model thực gửi lên API
 GEMINI_MODELS: Dict[str, str] = {
     "gemini-2.5":      "gemini-2.5-flash",
-    "gemini-2.5-lite": "gemini-2.5-flash-lite-preview",  # fix: thêm -preview
+    "gemini-2.5-lite": "gemini-2.5-flash-lite",           # confirmed: không có -preview
     "gemini-3.0":      "gemini-3-flash-preview",
     "gemini-3.1":      "gemini-3.1-flash-lite-preview",
 }
@@ -341,7 +341,7 @@ class GeminiPool:
                 slot.health.on_success()
 
     def record_failure(
-        self, alias: str, ki: int, is_rate_limit: bool = False
+        self, alias: str, ki: int, is_rate_limit: bool = False, is_not_found: bool = False
     ) -> None:
         with self._lock:
             slot = self._slots.get((alias, ki))
@@ -350,6 +350,15 @@ class GeminiPool:
 
             slot.health.on_failure()
             slot.fails += 1
+            label = f"{alias}[key{ki}]" if len(self._keys) > 1 else alias
+
+            if is_not_found:
+                # 404: model không tồn tại → cooldown dài, không retry vô tận
+                slot.cooldown_until = time.time() + COOLDOWN_CAP
+                slot.health.score = 5.0
+                print(f"[GeminiPool] {label} → cooldown {COOLDOWN_CAP}s (404 model not found)")
+                slot.fails = 0
+                return
 
             should_cooldown = is_rate_limit or slot.fails >= MAX_FAILS
             if should_cooldown:
@@ -359,7 +368,6 @@ class GeminiPool:
                 )
                 slot.cooldown_until = time.time() + cooldown
                 reason = "rate limit" if is_rate_limit else f"{slot.fails} lỗi liên tiếp"
-                label = f"{alias}[key{ki}]" if len(self._keys) > 1 else alias
                 print(f"[GeminiPool] {label} → cooldown {cooldown}s ({reason})")
                 slot.fails = 0  # reset sau khi đã tính cooldown
 

@@ -656,8 +656,10 @@ except ImportError:
 def _gemini_translate_inner(text, is_html=False):
     """
     Core retry loop dùng GeminiPool — dùng chung cho plain text và HTML.
-    Semaphore giới hạn MAX_CONCURRENT_TRANSLATES thread đồng thời,
-    ngăn burst 429 khi nhiều tin dồn cùng lúc (real-time flood / restart).
+    Bảo vệ 2 lớp:
+      1. Semaphore: giới hạn MAX_CONCURRENT_TRANSLATES thread đồng thời
+      2. Token bucket (wait_rate_limit): enforce MIN_REQUEST_INTERVAL
+         giữa các HTTP call → chặn per-second burst limit của Google
     Trả về (result, alias) hoặc raise RuntimeError khi hết slot.
     """
     tried = set()
@@ -665,16 +667,15 @@ def _gemini_translate_inner(text, is_html=False):
         while True:
             slot = _gemini_pool.pick_slot()
             if not slot:
-                if tried:
-                    raise RuntimeError(f'GeminiPool: đã thử {len(tried)} slot(s), tất cả exhausted')
-                raise RuntimeError('GeminiPool: không có slot khả dụng')
+                raise RuntimeError('GeminiPool: tất cả slots exhausted')
             alias, ki, api_key = slot
             slot_key = (alias, ki)
             if slot_key in tried:
-                raise RuntimeError(f'GeminiPool: đã thử hết {len(tried)} slot(s)')
+                raise RuntimeError('GeminiPool: đã thử hết slots')
             tried.add(slot_key)
             model_name = _GPOOL_MODELS[alias]
             try:
+                _gemini_pool.wait_rate_limit()  # token bucket — enforce min interval
                 if is_html:
                     result = _fix_html_spacing(_translate_gemini_html(text, model=model_name, api_key=api_key))
                 else:
@@ -684,10 +685,6 @@ def _gemini_translate_inner(text, is_html=False):
             except Exception as e:
                 is_rl = '429' in str(e) or 'quota' in str(e).lower()
                 _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl)
-                if is_rl:
-                    # 429 → không retry sang slot khác, fallback Google ngay
-                    # Pool đã cooldown key này, request tiếp theo tự pick key còn tốt
-                    raise RuntimeError(f'GeminiPool: {alias}[key{ki}] rate_limit — fallback')
                 print(f'[Translate] {alias}[key{ki}] loi: {e} — thu slot tiep')
 
 
@@ -996,7 +993,7 @@ def _translate_gemini(text, model='gemini-2.0-flash', api_key=None):
     url = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={_key}'
     req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
     try:
-        with urllib.request.urlopen(req, timeout=45) as resp:
+        with urllib.request.urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read())
         result = data['candidates'][0]['content']['parts'][0]['text'].strip()
         if _is_error_result(result):
@@ -1008,8 +1005,6 @@ def _translate_gemini(text, model='gemini-2.0-flash', api_key=None):
         retry_after = e.headers.get('Retry-After', '') if hasattr(e, 'headers') else ''
         ra_str = f' retry-after={retry_after}s' if retry_after else ''
         raise RuntimeError(f'Gemini HTTP {e.code}{ra_str}: {body[:200]}')
-    except urllib.error.URLError as e:
-        raise RuntimeError(f'Gemini timeout/network: {e.reason}')
 
 def _translate_gemini_html(html_text, model='gemini-2.0-flash', api_key=None):
     """
@@ -1036,7 +1031,7 @@ def _translate_gemini_html(html_text, model='gemini-2.0-flash', api_key=None):
     url = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={_key}'
     req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
     try:
-        with urllib.request.urlopen(req, timeout=45) as resp:
+        with urllib.request.urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read())
         result = data['candidates'][0]['content']['parts'][0]['text'].strip()
         # Bỏ markdown fence nếu model trả về ```html ... ```
@@ -1052,8 +1047,6 @@ def _translate_gemini_html(html_text, model='gemini-2.0-flash', api_key=None):
         retry_after = e.headers.get('Retry-After', '') if hasattr(e, 'headers') else ''
         ra_str = f' retry-after={retry_after}s' if retry_after else ''
         raise RuntimeError(f'Gemini HTML HTTP {e.code}{ra_str}: {body[:200]}')
-    except urllib.error.URLError as e:
-        raise RuntimeError(f'Gemini HTML timeout/network: {e.reason}')
 
 
 def _translate_deepl_html(html_text):
@@ -1578,10 +1571,10 @@ async def _tg_setup_realtime(feed_urls):
         all_channels = [ch for ch in raw_channels if ch in _resolved_channels_cache]
         if all_channels:
             print(f'[TG] Đăng ký real-time đầy đủ: {len(all_channels)} channels')
+            global _system_fully_loaded
+            _system_fully_loaded = True
+            print('[System] ✅ Fully loaded — Gemini enabled')
             await _register_handler(all_channels)
-            if not _system_fully_loaded:
-                _enable_gemini_after_delay(120.0)
-                print('[System] GeminiWarmup thread started — Gemini enable sau 120s')
         else:
             print('[TG] Không có channel nào resolve được')
     finally:
@@ -1872,15 +1865,6 @@ threading.Thread(target=_run_cleanup_scheduler, daemon=True, name='CleanupSchedu
 # Set chứa các feed URL đã init xong known_guids — chỉ feed nào có trong set mới được forward
 _forward_ready_feeds = set()
 _system_fully_loaded = False   # True sau khi toàn bộ TG history load xong
-
-def _enable_gemini_after_delay(delay: float = 120.0):
-    """Enable Gemini sau delay giây — chạy trên thread riêng, độc lập với setup flow."""
-    def _run():
-        global _system_fully_loaded
-        time.sleep(delay)
-        _system_fully_loaded = True
-        print(f'[System] ✅ Fully loaded — Gemini enabled (sau {int(delay)}s warmup)')
-    threading.Thread(target=_run, daemon=True, name='GeminiWarmup').start()
 _watchdog_running = False  # Tránh watchdog chạy trùng
 
 # --- WebSocket thuần RFC 6455 (không cần thư viện websockets) ---
@@ -5343,12 +5327,15 @@ def ws_handler(ws):
 
             elif t == 'translate_engine':
                 translate_engine = msg.get('engine', 'google')
+                st = _gemini_pool.status()
+                eng_st = st.get(translate_engine, {})
                 if translate_engine == 'gemini' and not GEMINI_API_KEY:
                     print(f'[WS] Engine: gemini — ⚠️ GEMINI_API_KEY chưa set, dispatcher sẽ fallback')
                 elif translate_engine == 'deepl' and not DEEPL_API_KEY:
                     print(f'[WS] Engine: deepl — ⚠️ DEEPL_API_KEY chưa set, dispatcher sẽ fallback')
                 else:
-                    print(f'[WS] Engine ưu tiên → {translate_engine}')
+                    print(f'[WS] Engine ưu tiên → {translate_engine} | '
+                          f'dispatcher status: {st}')
 
             elif t == 'translate_lang':
                 lang = msg.get('lang', 'vi').strip().lower()

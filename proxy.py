@@ -611,6 +611,13 @@ _thread_pool = ThreadPoolExecutor(max_workers=20)
 # Pool riêng cho forward — tách biệt, không bị poll/fetch chiếm chỗ
 _forward_pool = ThreadPoolExecutor(max_workers=5)
 
+# Fields không JSON serializable — strip trước khi broadcast qua WebSocket
+_WS_STRIP = frozenset({
+    '_tg_media_bytes',      # bytes
+    '_tg_entities',         # Telethon entity objects
+    '_tg_translated_entities',  # Telethon entity objects
+})
+
 # --- Engine dịch ---
 DEEPL_API_KEY  = os.environ.get('DEEPL_API_KEY', '').strip()
 
@@ -5262,7 +5269,7 @@ def _poll_one(url_obj):
             # Broadcast lên UI để hiển thị ngay — không dịch, không forward
             ws_items = []
             for it in items:
-                ws_it = {k: v for k, v in it.items() if k not in ('_tg_media_bytes', 'text', 'text_translated')}
+                ws_it = {k: v for k, v in it.items() if k not in _WS_STRIP and k not in ('text', 'text_translated')}
                 ws_it['feed_url'] = url
                 ws_it['show_link'] = show_link
                 ws_items.append(ws_it)
@@ -5326,7 +5333,7 @@ def _poll_one(url_obj):
                     it['text_translated'] = it['text']
                     it['translated']      = False
                     it['_translate_engine_used'] = ''
-                    ws_it = {k: v for k, v in it.items() if k not in ('_tg_media_bytes', 'text', 'text_translated')}
+                    ws_it = {k: v for k, v in it.items() if k not in _WS_STRIP and k not in ('text', 'text_translated')}
                     broadcast({'type': 'new_items', 'url': url, 'items': [ws_it]})
                     _forward_pool.submit(_do_forward, [it], category, url)
                 else:
@@ -5378,7 +5385,8 @@ def _init_tg_feed(url_obj):
             known_guids[url] = {it['guid'] for it in items if it['guid']}
 
         # Broadcast thẳng lên UI không qua dịch — nhanh, không tốn pool
-        ws_items = [{k: v for k, v in it.items() if k != '_tg_media_bytes'} for it in items]
+        # Strip các field không JSON serializable (Telethon objects)
+        ws_items = [{k: v for k, v in it.items() if k not in _WS_STRIP} for it in items]
         if ws_items:
             broadcast({'type': 'new_items', 'url': url, 'items': ws_items})
         _forward_ready_feeds.add(url)
@@ -5870,7 +5878,7 @@ class HttpHandler(BaseHTTPRequestHandler):
                         it['category'] = category
                 if do_tl and translate_enabled and TRANSLATE_AVAILABLE:
                     items = process_tg_items(items)
-                safe_items = [{k:v for k,v in it.items() if k != '_tg_media_bytes'} for it in items]
+                safe_items = [{k:v for k,v in it.items() if k not in _WS_STRIP} for it in items]
                 resp = json.dumps({'items': safe_items}, ensure_ascii=False).encode('utf-8')
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json; charset=utf-8')

@@ -100,6 +100,26 @@ def save_feeds_to_file(urls):
             print(f'[CONFIG] GitHub lưu lỗi: {e}')
             return False
 
+def _normalize_feed(f: dict) -> dict:
+    """
+    Normalize các field boolean của feed object — tránh trường hợp feed cũ
+    chưa có field hoặc lưu dạng string/số thay vì boolean thật.
+    """
+    for key, default in (('do_translate', True), ('show_link', True),
+                          ('auto_fwd', True), ('read_all', False)):
+        val = f.get(key, default)
+        # Chuẩn hoá: string "false"/"0" → False, còn lại → bool thật
+        if isinstance(val, str):
+            f[key] = val.strip().lower() not in ('false', '0', 'no', '')
+        else:
+            f[key] = bool(val)
+    # history_limit phải là int
+    try:
+        f['history_limit'] = int(f.get('history_limit', 20))
+    except (TypeError, ValueError):
+        f['history_limit'] = 20
+    return f
+
 def load_feeds_from_file():
     """Load feeds.json từ GitHub repo, fallback về local nếu lỗi"""
     if GITHUB_TOKEN and GITHUB_REPO:
@@ -5566,9 +5586,9 @@ def ws_handler(ws):
 
                 with lock:
                     watched_urls.clear()
-                    watched_urls.extend(urls)
+                    watched_urls.extend(_normalize_feed(u) for u in urls)
                     init_count = 0
-                    for u in urls:
+                    for u in watched_urls:
                         url = u.get('url')
                         if url and (url not in known_guids or not known_guids[url]):
                             known_guids[url] = set()
@@ -5873,9 +5893,9 @@ class HttpHandler(BaseHTTPRequestHandler):
 
             with lock:
                 watched_urls.clear()
-                watched_urls.extend(urls)
+                watched_urls.extend(_normalize_feed(u) for u in urls)
                 init_count = 0
-                for u in urls:
+                for u in watched_urls:
                     url_key = u.get('url')
                     if url_key and (url_key not in known_guids or not known_guids[url_key]):
                         known_guids[url_key] = set()
@@ -6287,8 +6307,8 @@ if __name__ == '__main__':
 
         with lock:
             watched_urls.clear()
-            watched_urls.extend(default_feeds)
-            for u in default_feeds:
+            watched_urls.extend(_normalize_feed(u) for u in default_feeds)
+            for u in watched_urls:
                 url = u.get('url')
                 if url and url not in known_guids:
                     known_guids[url] = set()

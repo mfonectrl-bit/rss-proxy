@@ -2486,16 +2486,6 @@ async function doLogin(){
 }
 document.getElementById('usr').focus();
 </script>
-<!-- Error notification banner -->
-<div class="err-banner" id="err-banner">
-  <span class="eb-close" onclick="closeErrBanner()">×</span>
-  <div class="eb-title"><span>⚠️</span><span id="eb-title-text">Lỗi hệ thống</span></div>
-  <div class="eb-msg" id="eb-msg"></div>
-  <div class="eb-actions">
-    <button class="eb-btn" onclick="closeErrBanner()">Đóng</button>
-    <button class="eb-btn" id="eb-del-btn" style="display:none" onclick="deleteErrFeed()">Xóa feed này</button>
-  </div>
-</div>
 </body>
 </html>"""
 

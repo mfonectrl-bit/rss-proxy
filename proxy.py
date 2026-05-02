@@ -5435,6 +5435,7 @@ def poller():
                                     _tg_realtime_last_setup = time.time()
                                     _tg_realtime_last_urls.update(tg_urls_all)
                                     print(f'[TG Watchdog] ✅ Re-register {len(tg_urls_all)} channels (handler bị mất)')
+                                    global _system_fully_loaded
                                     if not _system_fully_loaded:
                                         _enable_gemini_after_delay(120.0)
                                         print('[TG Watchdog] GeminiWarmup started — Gemini enable sau 120s')

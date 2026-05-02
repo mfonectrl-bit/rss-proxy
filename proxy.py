@@ -4009,6 +4009,7 @@ function connectWS(){
         feedsPayload=feeds.map(f=>({url:f.url,name:f.name,
             show_link:f.show_link!==false,
             auto_fwd:f.auto_fwd===true,
+            do_translate:f.do_translate!==false,
             destinations:f.destinations||[],
             history_limit:f.history_limit!=null?f.history_limit:20}));
         wsReconnectCount++;

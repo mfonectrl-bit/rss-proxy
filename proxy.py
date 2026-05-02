@@ -1206,6 +1206,16 @@ def _translate_gemini_html(html_text, model='gemini-2.0-flash', api_key=None):
         with urllib.request.urlopen(req, timeout=45) as resp:
             data = json.loads(resp.read())
         result = data['candidates'][0]['content']['parts'][0]['text'].strip()
+        # DEBUG: log input/output để kiểm tra format preservation
+        if '<b>' in html_text or '<i>' in html_text or '<u>' in html_text:
+            has_b_in  = '<b>'  in html_text
+            has_i_in  = '<i>'  in html_text
+            has_b_out = '<b>'  in result
+            has_i_out = '<i>'  in result
+            if (has_b_in and not has_b_out) or (has_i_in and not has_i_out):
+                print(f'[Gemini/HTML] ⚠️ FORMAT LOST — input: {html_text[:200]} | output: {result[:200]}')
+            else:
+                print(f'[Gemini/HTML] ✅ Format OK — b={has_b_out} i={has_i_out}')
         # Bỏ markdown fence nếu model trả về ```html ... ```
         result = re.sub(r'^```html\s*', '', result)
         result = re.sub(r'^```\s*', '', result)

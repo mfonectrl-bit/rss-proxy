@@ -824,68 +824,31 @@ class BatchPipeline:
                 if should_translate and text and is_same_as_target(text[:200]):
                     should_translate = False
                 if should_translate:
-                    is_history   = item.get('_is_history', False)
-                    has_hidden_link = item.get('_tg_has_hidden_link', False)
-                    has_format      = item.get('_tg_has_format', False)
-                    html_text = item.get('_tg_html_text', '')
+                    is_history  = item.get('_is_history', False)
+                    raw_text    = item.get('_tg_raw_text', '') or text
+                    entities    = item.get('_tg_entities') or None
 
-                    if is_history:
-                        # ── HISTORY ITEM ── dùng Google Translate thuần, không Gemini/DeepL
-                        if html_text and (has_hidden_link or has_format):
-                            translated, _eng, _ = _translate_google_html_only(html_text)
-                            if translated and translated.strip():
-                                item['_tg_html_text'] = translated
-                            item['_translate_engine_used'] = _eng
-                        else:
-                            translated, _eng = _translate_google_only(text)
-                            if not translated or not translated.strip():
-                                translated = text
-                                _eng = 'google'
-                            item['_tg_html_text'] = ''
-                            item['_translate_engine_used'] = _eng
+                    # ── UNIFIED TRANSLATE — entity-aware, engine-adaptive ──
+                    # force_google=True khi là history item (Gemini chưa enable)
+                    translated_text, new_entities, _eng = translate_with_entities(
+                        raw_text, entities, force_google=is_history
+                    )
 
-                    elif html_text and (has_hidden_link or has_format):
-                        # ── REALTIME — có link ẩn / HTML format ──
-                        translated, _eng, _ = _translate_with_hidden_links(html_text)
-                        # Nếu kết quả rỗng → fallback Google plain text
-                        if not translated or not translated.strip():
-                            _plain = re.sub(r'<[^>]+>', '', html_text).strip()
-                            try:
-                                _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
-                                translated = GoogleTranslator(source='auto', target=_gtarget).translate(_plain) or _plain
-                            except Exception:
-                                translated = _plain or text
-                            _eng = 'google'
-                        # Chỉ update nếu có kết quả hợp lệ
-                        if translated and translated.strip():
-                            item['_tg_html_text'] = translated
-                        item['_translate_engine_used'] = _eng
+                    if not translated_text or not translated_text.strip():
+                        translated_text = text
+                        _eng = 'none'
 
+                    if new_entities is not None:
+                        # Entity-based result → dùng formatting_entities khi gửi
+                        item['_tg_translated_text']     = translated_text
+                        item['_tg_translated_entities'] = new_entities
+                        item['_tg_html_text']           = ''
                     else:
-                        # ── REALTIME — plain text ──
-                        # Ưu tiên Gemini, chỉ fallback Google khi Gemini hết quota/lỗi
-                        translated = None
-                        _eng = ''
-                        if GEMINI_API_KEYS and _system_fully_loaded:
-                            try:
-                                translated, _eng = _gemini_translate_inner(text, is_html=False)
-                            except RuntimeError:
-                                pass  # hết slot → fallback bên dưới
-                        # Fallback: _fast_translate (sẽ dùng dispatcher → DeepL → Google)
-                        if not translated or not translated.strip():
-                            translated = _fast_translate(text)
-                            _eng = getattr(_tl_engine, 'used', 'google')
-                        # Nếu vẫn rỗng → Google trực tiếp
-                        if not translated or not translated.strip():
-                            try:
-                                _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
-                                translated = GoogleTranslator(source='auto', target=_gtarget).translate(text) or text
-                            except Exception:
-                                translated = text
-                            _eng = 'google'
-                        # Xóa _tg_html_text để _do_forward không dùng text gốc chưa dịch
+                        # Plain text result
                         item['_tg_html_text'] = ''
-                        item['_translate_engine_used'] = _eng
+
+                    item['_translate_engine_used'] = _eng
+                    translated = translated_text
                 else:
                     translated = text  # Không dịch — giữ nguyên bản gốc
                     item['_translate_engine_used'] = ''  # Không gán prefix engine
@@ -1110,38 +1073,138 @@ def _translate_google_html_only(html_text):
         return translated, 'google', False
 
 
+def translate_with_entities(raw_text, entities=None, force_google=False):
     """
-    Dịch text bằng Gemini. api_key: key cụ thể (multi-key), None = dùng GEMINI_API_KEY.
+    ╔══════════════════════════════════════════════════════════════╗
+    ║  UNIVERSAL TRANSLATE ENGINE — entity-aware, format-safe     ║
+    ╚══════════════════════════════════════════════════════════════╝
+
+    Dịch text bảo toàn format Telegram (bold/italic/underline/link).
+
+    Cơ chế:
+    1. Nếu có entities → split theo entity segments → dịch từng segment
+       → rebuild entities với offset/length mới → format 100% intact
+    2. Nếu không có entities → plain text translate
+
+    Engine priority:
+    - force_google=True hoặc chưa fully loaded  → Google Translate
+    - Gemini available (_system_fully_loaded)    → Gemini (via pool)
+    - Gemini fail                                → DeepL nếu có
+    - DeepL fail / không có                      → Google Translate
+
+    Target language: lấy từ translate_target_lang global (web UI).
+
+    Trả về: (translated_text, new_entities_or_None, engine_used)
+      - new_entities: list entities đã update offset/length, hoặc None nếu plain text
     """
-    _key = api_key or GEMINI_API_KEY
-    if not _key:
-        raise ValueError('GEMINI_API_KEY chưa set')
-    _lang = _LANG_NAME.get(translate_target_lang, translate_target_lang)
-    prompt = (
-        f'Dịch đoạn văn bản sau sang {_lang} tự nhiên, giữ nguyên format xuống dòng, '
-        'emoji và các ký tự đặc biệt. Chỉ trả về bản dịch, không giải thích thêm:\n\n' + text[:15000]
-    )
-    payload = json.dumps({
-        'contents': [{'parts': [{'text': prompt}]}],
-        'generationConfig': {'temperature': 0.1, 'maxOutputTokens': 8192},
-    }).encode('utf-8')
-    url = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={_key}'
-    req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
-    try:
-        with urllib.request.urlopen(req, timeout=45) as resp:
-            data = json.loads(resp.read())
-        result = data['candidates'][0]['content']['parts'][0]['text'].strip()
-        if _is_error_result(result):
-            raise RuntimeError(f'Gemini trả về error text: {result[:100]}')
+    if not raw_text or not raw_text.strip():
+        return raw_text, None, 'none'
+
+    _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
+
+    # ── Helper: dịch 1 đoạn text thuần ──────────────────────────
+    def _translate_segment(seg):
+        """Dịch 1 segment text thuần — không HTML, không entity."""
+        if not seg or not seg.strip():
+            return seg
+        if is_same_as_target(seg[:200]):
+            return seg
+
+        # Mask URL để không bị dịch
+        url_ph = {}
+        def _mask(m):
+            tok = f'URLTOK{len(url_ph)}END'
+            url_ph[tok] = m.group(0)
+            return tok
+        masked = re.sub(r'https?://[^\s\)<>]+', _mask, seg)
+
+        # Mask newlines
+        NL = '⏎NL⏎'
+        masked = masked.replace('\n', NL)
+
+        # Chọn engine
+        result = None
+        if not force_google and GEMINI_API_KEYS and _system_fully_loaded:
+            try:
+                result, _ = _gemini_translate_inner(masked, is_html=False)
+            except RuntimeError:
+                result = None
+
+        if not result and not force_google and DEEPL_API_KEY:
+            try:
+                payload = urllib.parse.urlencode({
+                    'auth_key': DEEPL_API_KEY,
+                    'text': masked[:4000],
+                    'target_lang': translate_target_lang.upper(),
+                    'source_lang': 'auto',
+                }).encode('utf-8')
+                base = 'api-free.deepl.com' if DEEPL_API_KEY.endswith(':fx') else 'api.deepl.com'
+                req = urllib.request.Request(
+                    f'https://{base}/v2/translate', data=payload,
+                    headers={'Content-Type': 'application/x-www-form-urlencoded'}
+                )
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    d = json.loads(resp.read())
+                result = d['translations'][0]['text']
+            except Exception:
+                result = None
+
+        if not result:
+            try:
+                result = _GoogleTranslator(source='auto', target=_gtarget).translate(masked) or masked
+            except Exception:
+                result = masked
+
+        # Restore
+        result = result.replace(NL, '\n')
+        for tok, url in url_ph.items():
+            result = result.replace(tok, url)
         return result
-    except urllib.error.HTTPError as e:
-        body = e.read().decode('utf-8', errors='ignore')
-        # Parse Retry-After nếu có để log chính xác
-        retry_after = e.headers.get('Retry-After', '') if hasattr(e, 'headers') else ''
-        ra_str = f' retry-after={retry_after}s' if retry_after else ''
-        raise RuntimeError(f'Gemini HTTP {e.code}{ra_str}: {body[:200]}')
-    except urllib.error.URLError as e:
-        raise RuntimeError(f'Gemini timeout/network: {e.reason}')
+
+    # ── Entity-based translate ────────────────────────────────────
+    if entities:
+        from copy import deepcopy
+        ents = sorted(entities, key=lambda e: e.offset)
+
+        # Split text thành segments
+        parts = []
+        last = 0
+        for ent in ents:
+            start = ent.offset
+            end   = ent.offset + ent.length
+            if start > last:
+                parts.append({'text': raw_text[last:start], 'entity': None})
+            parts.append({'text': raw_text[start:end], 'entity': ent})
+            last = end
+        if last < len(raw_text):
+            parts.append({'text': raw_text[last:], 'entity': None})
+
+        # Dịch từng segment
+        translated_parts = [_translate_segment(p['text']) for p in parts]
+
+        # Rebuild entities với offset/length mới
+        new_entities = []
+        cursor = 0
+        for i, p in enumerate(parts):
+            t = translated_parts[i]
+            if p['entity'] is not None:
+                ent = deepcopy(p['entity'])
+                ent.offset = cursor
+                ent.length = len(t)
+                new_entities.append(ent)
+            cursor += len(t)
+
+        final_text = ''.join(translated_parts)
+        engine_used = 'google' if (force_google or not _system_fully_loaded) else 'gemini'
+        return final_text, new_entities, engine_used
+
+    # ── Plain text translate (không có entity) ────────────────────
+    result = _translate_segment(raw_text)
+    engine_used = 'google' if (force_google or not _system_fully_loaded) else 'gemini'
+    return result, None, engine_used
+
+
+
 
 def _translate_gemini(text, model='gemini-2.0-flash', api_key=None):
     """
@@ -1186,15 +1249,19 @@ def _translate_gemini_html(html_text, model='gemini-2.0-flash', api_key=None):
         raise ValueError('GEMINI_API_KEY chưa set')
     _lang = _LANG_NAME.get(translate_target_lang, translate_target_lang)
     prompt = (
-        f'Dịch nội dung TEXT trong đoạn HTML sau sang {_lang} tự nhiên.\n'
-        'QUY TẮC BẮT BUỘC — vi phạm bất kỳ quy tắc nào là SAI:\n'
-        '1. GIỮ NGUYÊN 100% thẻ HTML: <a href="...">, <b>, </b>, <i>, </i>, <u>, </u>, <s>, </s>, <code>, </code>, <pre>, </pre>\n'
-        '2. KHÔNG xóa, KHÔNG sửa, KHÔNG thêm bất kỳ thẻ HTML nào\n'
-        '3. KHÔNG chuyển <b>text</b> thành **text** hay bất kỳ markdown nào\n'
-        '4. Giữ nguyên dấu cách, xuống dòng, emoji xung quanh thẻ HTML\n'
-        '5. Chỉ dịch phần text thuần giữa các thẻ — không chạm vào thẻ\n'
-        '6. Chỉ trả về HTML đã dịch, không giải thích, không markdown fence\n\n'
-        'INPUT:\n' + html_text[:15000]
+        f'Bạn là dịch thuật viên chuyên nghiệp. Nhiệm vụ: dịch phần TEXT trong HTML sang {_lang}.\n'
+        'OUTPUT phải là HTML hợp lệ — KHÔNG phải markdown, KHÔNG phải plain text.\n\n'
+        'VÍ DỤ:\n'
+        'INPUT:  <b>Breaking news</b>: The <i>president</i> signed the <u>new bill</u>.\n'
+        f'OUTPUT: <b>Tin nóng</b>: Tổng thống đã ký <i>dự luật</i> <u>mới</u>.\n\n'
+        'QUY TẮC:\n'
+        '- Giữ NGUYÊN VẸN tất cả thẻ: <b></b> <i></i> <u></u> <s></s> <code></code> <pre></pre> <a href="..."></a>\n'
+        '- TUYỆT ĐỐI KHÔNG chuyển <b> thành ** hay <i> thành * hay bất kỳ markdown nào\n'
+        '- Chỉ dịch text thuần nằm giữa các thẻ\n'
+        '- Giữ nguyên xuống dòng, emoji, khoảng trắng\n'
+        '- Chỉ trả về HTML đã dịch, không thêm giải thích\n\n'
+        f'INPUT:\n{html_text[:15000]}\n'
+        'OUTPUT:'
     )
     payload = json.dumps({
         'contents': [{'parts': [{'text': prompt}]}],
@@ -1206,16 +1273,9 @@ def _translate_gemini_html(html_text, model='gemini-2.0-flash', api_key=None):
         with urllib.request.urlopen(req, timeout=45) as resp:
             data = json.loads(resp.read())
         result = data['candidates'][0]['content']['parts'][0]['text'].strip()
-        # DEBUG: log input/output để kiểm tra format preservation
-        if '<b>' in html_text or '<i>' in html_text or '<u>' in html_text:
-            has_b_in  = '<b>'  in html_text
-            has_i_in  = '<i>'  in html_text
-            has_b_out = '<b>'  in result
-            has_i_out = '<i>'  in result
-            if (has_b_in and not has_b_out) or (has_i_in and not has_i_out):
-                print(f'[Gemini/HTML] ⚠️ FORMAT LOST — input: {html_text[:200]} | output: {result[:200]}')
-            else:
-                print(f'[Gemini/HTML] ✅ Format OK — b={has_b_out} i={has_i_out}')
+        # Strip prefix "OUTPUT:" nếu Gemini echo lại
+        if result.lower().startswith('output:'):
+            result = result[7:].strip()
         # Bỏ markdown fence nếu model trả về ```html ... ```
         result = re.sub(r'^```html\s*', '', result)
         result = re.sub(r'^```\s*', '', result)
@@ -1680,11 +1740,21 @@ async def _tg_load_history(channel, limit=20):
         desc = msg.message.replace('\n', '<br>')
         title = (msg.message[:80] + '...') if len(msg.message) > 80 else msg.message
         pub  = msg.date.isoformat() if msg.date else ''
+        _has_format = bool(
+            msg.entities and
+            any(isinstance(e, (MessageEntityBold, MessageEntityItalic, MessageEntityUnderline,
+                               MessageEntityStrike, MessageEntityCode, MessageEntityPre,
+                               MessageEntityTextUrl)) for e in msg.entities)
+        )
+        desc = tg_html.unparse(msg.message, msg.entities) if _has_format else msg.message.replace('\n', '<br>')
         items.append({
             'guid': guid, 'title': title, 'desc': desc, 'link': link,
             'pubDate': pub, 'translated': False, 'category': '',
             '_tg_media_bytes': None, '_tg_msg_id': msg.id, '_tg_chat': chat_username,
             '_source': 'telethon',
+            '_tg_raw_text': msg.message,
+            '_tg_entities': msg.entities if msg.entities else [],
+            '_tg_has_format': _has_format,
         })
     return items
 
@@ -1846,6 +1916,8 @@ async def _register_handler(channels_list):
             '_tg_has_hidden_link': _has_hidden_link,
             '_tg_has_format': _has_format,
             '_tg_html_text': _html_text,
+            '_tg_raw_text': msg_text,                        # text gốc không HTML
+            '_tg_entities': msg.entities if msg.entities else [],  # entities gốc
         }
         with tg_new_items_lock:
             tg_new_items_queue.append(item)
@@ -4388,35 +4460,41 @@ def process_items(items):
 def process_tg_items(items):
     """
     Dịch TG history items cho /tl_fetch endpoint (do browser gọi khi load UI).
-    Dùng Google Translate THUẦN — không Gemini, không DeepL.
-    Gemini chỉ dùng sau khi toàn bộ history load xong (_system_fully_loaded).
+    Dùng translate_with_entities — bảo toàn bold/italic/underline/link.
+    force_google=True vì history load trước khi Gemini enabled.
     """
     if not translate_enabled or not TRANSLATE_AVAILABLE:
         return items
     results = [None] * len(items)
     def do(i, it):
+        raw_text = it.get('_tg_raw_text', '') or ''
+        entities = it.get('_tg_entities', []) or []
         desc_plain = strip_html(it.get('desc', '').replace('<br>', '\n'))
-
-        if is_same_as_target(desc_plain):
+        check_text = raw_text or desc_plain
+        if not check_text or is_same_as_target(check_text[:200]):
             results[i] = {**it, 'translated': False}
             return
-
-        translated_desc_plain, _ = _translate_google_only(desc_plain[:4000])
-        translated_desc_plain = translated_desc_plain or desc_plain
-
-        # Re-derive title từ bản dịch
-        title_translated = (translated_desc_plain[:80] + '...') if len(translated_desc_plain) > 80 else translated_desc_plain
-        desc_translated = translated_desc_plain.replace('\n', '<br>')
-
-        results[i] = {**it, 'title': title_translated, 'desc': desc_translated, 'translated': True}
-
+        translated_text, new_entities, _eng = translate_with_entities(
+            raw_text or desc_plain, entities or None, force_google=True
+        )
+        if not translated_text or not translated_text.strip():
+            results[i] = {**it, 'translated': False}
+            return
+        title_translated = (translated_text[:80] + '...') if len(translated_text) > 80 else translated_text
+        results[i] = {
+            **it,
+            'title': title_translated,
+            'translated': True,
+            '_tg_translated_text':     translated_text,
+            '_tg_translated_entities': new_entities,
+        }
     futures = [_thread_pool.submit(do, i, it) for i, it in enumerate(items)]
     for f in futures:
         try:
             f.result(timeout=20)
         except Exception:
             pass
-    return [r for r in results if r is not None]
+    return [r if r is not None else items[i] for i, r in enumerate(results)]
 
 # Semaphore để serialize Telethon calls — tránh conflict khi nhiều kênh poll cùng lúc
 # Dùng asyncio.Semaphore vì được dùng bên trong async functions với await
@@ -4714,9 +4792,20 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
             return True
 
         else:
-            for chunk in _split_text(caption, 4096):
-                await tg_client.send_message(dest, chunk, parse_mode='html',
-                                             reply_to=thread_reply, link_preview=show_preview)
+            # Kiểm tra xem có entity-based translation không (bảo toàn bold/italic)
+            _fmt_entities = item.get('_tg_translated_entities')
+            _fmt_text     = item.get('_tg_translated_text', '')
+            if _fmt_entities and _fmt_text:
+                # Dùng formatting_entities — không cần parse_mode, format bảo toàn 100%
+                for chunk in _split_text(_fmt_text, 4096):
+                    await tg_client.send_message(dest, chunk,
+                                                 formatting_entities=_fmt_entities,
+                                                 reply_to=thread_reply,
+                                                 link_preview=show_preview)
+            else:
+                for chunk in _split_text(caption, 4096):
+                    await tg_client.send_message(dest, chunk, parse_mode='html',
+                                                 reply_to=thread_reply, link_preview=show_preview)
             return True
 
     except Exception as e:
@@ -4983,6 +5072,8 @@ def _run_read_all_bg(url, feed_cfg):
                 "_tg_has_hidden_link": _has_hidden_link,
                 "_tg_has_format": _has_format,
                 "_tg_html_text": _html_text,
+                "_tg_raw_text": msg_text,
+                "_tg_entities": msg.entities if msg.entities else [],
             }
 
             # Auto-skip nếu text đã là ngôn ngữ đích — tránh dịch thừa cho feed tiếng Việt

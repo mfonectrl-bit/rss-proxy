@@ -3934,14 +3934,16 @@ async function fetchAndMerge(url,feedName,category,markNew){
     try{
         const feedCfg=feeds.find(f=>f.url===url)||{};
         const historyLimit=feedCfg.history_limit!=null?feedCfg.history_limit:20;
+        // Dùng do_translate của từng feed — không phải global translateOn
+        const feedTranslate=(feedCfg.do_translate!==false) && translateOn ? '1' : '0';
         let items;
         if(isTgSource(url)){
-            const r=await fetch('/tl_fetch?url='+encodeURIComponent(url)+'&translate='+(translateOn?'1':'0')+'&category='+encodeURIComponent(category)+'&history_limit='+historyLimit);
+            const r=await fetch('/tl_fetch?url='+encodeURIComponent(url)+'&translate='+feedTranslate+'&category='+encodeURIComponent(category)+'&history_limit='+historyLimit);
             if(!r.ok) throw new Error('HTTP '+r.status);
             const data=await r.json();
             items=data.items||[];
         } else {
-            const r=await fetch('/fetch?url='+encodeURIComponent(url)+'&translate='+(translateOn?'1':'0')+'&category='+encodeURIComponent(category)+'&history_limit='+historyLimit);
+            const r=await fetch('/fetch?url='+encodeURIComponent(url)+'&translate='+feedTranslate+'&category='+encodeURIComponent(category)+'&history_limit='+historyLimit);
             if(!r.ok) throw new Error('HTTP '+r.status);
             const data=await r.json();
             items=data.items||[];

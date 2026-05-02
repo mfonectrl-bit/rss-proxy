@@ -1123,6 +1123,39 @@ def _translate_google_html_only(html_text):
     except urllib.error.URLError as e:
         raise RuntimeError(f'Gemini timeout/network: {e.reason}')
 
+def _translate_gemini(text, model='gemini-2.0-flash', api_key=None):
+    """
+    Dịch text bằng Gemini. api_key: key cụ thể (multi-key), None = dùng GEMINI_API_KEY.
+    """
+    _key = api_key or GEMINI_API_KEY
+    if not _key:
+        raise ValueError('GEMINI_API_KEY chưa set')
+    _lang = _LANG_NAME.get(translate_target_lang, translate_target_lang)
+    prompt = (
+        f'Dịch đoạn văn bản sau sang {_lang} tự nhiên, giữ nguyên format xuống dòng, '
+        'emoji và các ký tự đặc biệt. Chỉ trả về bản dịch, không giải thích thêm:\n\n' + text[:15000]
+    )
+    payload = json.dumps({
+        'contents': [{'parts': [{'text': prompt}]}],
+        'generationConfig': {'temperature': 0.1, 'maxOutputTokens': 8192},
+    }).encode('utf-8')
+    url = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={_key}'
+    req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
+    try:
+        with urllib.request.urlopen(req, timeout=45) as resp:
+            data = json.loads(resp.read())
+        result = data['candidates'][0]['content']['parts'][0]['text'].strip()
+        if _is_error_result(result):
+            raise RuntimeError(f'Gemini trả về error text: {result[:100]}')
+        return result
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='ignore')
+        retry_after = e.headers.get('Retry-After', '') if hasattr(e, 'headers') else ''
+        ra_str = f' retry-after={retry_after}s' if retry_after else ''
+        raise RuntimeError(f'Gemini HTTP {e.code}{ra_str}: {body[:200]}')
+    except urllib.error.URLError as e:
+        raise RuntimeError(f'Gemini timeout/network: {e.reason}')
+
 def _translate_gemini_html(html_text, model='gemini-2.0-flash', api_key=None):
     """
     Dịch HTML có link ẩn bằng Gemini — giữ nguyên tất cả thẻ HTML.

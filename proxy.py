@@ -1744,9 +1744,7 @@ async def _tg_setup_realtime(feed_urls):
         if all_channels:
             print(f'[TG] Đăng ký real-time đầy đủ: {len(all_channels)} channels')
             await _register_handler(all_channels)
-            if not _system_fully_loaded:
-                _enable_gemini_after_delay(120.0)
-                print('[System] GeminiWarmup fallback timer started — Gemini enable sau 120s nếu counter chưa về 0')
+            # Không dùng fallback timer nữa — _on_feed_history_loaded() counter đã handle đủ
         else:
             print('[TG] Không có channel nào resolve được')
     finally:
@@ -5436,9 +5434,6 @@ def poller():
                                     _tg_realtime_last_urls.update(tg_urls_all)
                                     print(f'[TG Watchdog] ✅ Re-register {len(tg_urls_all)} channels (handler bị mất)')
                                     global _system_fully_loaded
-                                    if not _system_fully_loaded:
-                                        _enable_gemini_after_delay(120.0)
-                                        print('[TG Watchdog] GeminiWarmup started — Gemini enable sau 120s')
                             else:
                                 print(f'[TG Watchdog] ✅ Handler OK ({len(handlers)} handlers) — không cần re-register')
                         else:

@@ -4772,9 +4772,9 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
         grouped   = item.get('_tg_grouped_id')
         has_media = item.get('_tg_has_media', False)
         rss_media = item.get('_rss_media_url')
-        # Web preview: bật khi nội dung có link (nổi / ẩn / t.me), tắt khi không có link nào.
-        # Không phụ thuộc vào media — Telegram xử lý media và web preview độc lập.
-        show_preview = bool(desc_has_link)
+        # Web preview: bật khi nội dung GỐC có link VÀ tin không có media.
+        # Tin có media (photo/video TG hoặc RSS image) → tắt preview mặc định.
+        show_preview = bool(desc_has_link) and not has_media and not rss_media
 
         # reply_to = topic_id nếu gửi vào topic của group, None nếu gửi bình thường
         thread_reply = int(topic_id) if topic_id else None

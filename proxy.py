@@ -1740,11 +1740,14 @@ async def _tg_load_history(channel, limit=20):
         desc = msg.message.replace('\n', '<br>')
         title = (msg.message[:80] + '...') if len(msg.message) > 80 else msg.message
         pub  = msg.date.isoformat() if msg.date else ''
+        _FORMAT_TYPE_NAMES = {
+            'MessageEntityBold', 'MessageEntityItalic', 'MessageEntityUnderline',
+            'MessageEntityStrike', 'MessageEntityCode', 'MessageEntityPre',
+            'MessageEntityTextUrl',
+        }
         _has_format = bool(
             msg.entities and
-            any(isinstance(e, (MessageEntityBold, MessageEntityItalic, MessageEntityUnderline,
-                               MessageEntityStrike, MessageEntityCode, MessageEntityPre,
-                               MessageEntityTextUrl)) for e in msg.entities)
+            any(type(e).__name__ in _FORMAT_TYPE_NAMES for e in msg.entities)
         )
         desc = tg_html.unparse(msg.message, msg.entities) if _has_format else msg.message.replace('\n', '<br>')
         items.append({

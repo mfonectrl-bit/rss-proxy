@@ -1110,6 +1110,8 @@ def translate_with_entities(raw_text, entities=None, force_google=False):
     _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
 
     # ── Helper: dịch 1 đoạn text thuần ──────────────────────────
+    _engine_used = ['google']  # mutable để nested function ghi được
+
     def _translate_segment(seg):
         """Dịch 1 segment text thuần — không HTML, không entity."""
         if not seg or not seg.strip():
@@ -1133,7 +1135,8 @@ def translate_with_entities(raw_text, entities=None, force_google=False):
         result = None
         if not force_google and GEMINI_API_KEYS and _system_fully_loaded:
             try:
-                result, _ = _gemini_translate_inner(masked, is_html=False)
+                result, alias = _gemini_translate_inner(masked, is_html=False)
+                _engine_used[0] = alias  # alias = 'GM3.1', 'GM2.5L', ...
             except RuntimeError:
                 result = None
 
@@ -1153,6 +1156,7 @@ def translate_with_entities(raw_text, entities=None, force_google=False):
                 with urllib.request.urlopen(req, timeout=15) as resp:
                     d = json.loads(resp.read())
                 result = d['translations'][0]['text']
+                _engine_used[0] = 'DL'
             except Exception:
                 result = None
 
@@ -1161,6 +1165,7 @@ def translate_with_entities(raw_text, entities=None, force_google=False):
                 result = _GoogleTranslator(source='auto', target=_gtarget).translate(masked) or masked
             except Exception:
                 result = masked
+            _engine_used[0] = 'GT'
 
         # Restore
         result = result.replace(NL, '\n')
@@ -1202,13 +1207,11 @@ def translate_with_entities(raw_text, entities=None, force_google=False):
             cursor += len(t)
 
         final_text = ''.join(translated_parts)
-        engine_used = 'google' if (force_google or not _system_fully_loaded) else 'gemini'
-        return final_text, new_entities, engine_used
+        return final_text, new_entities, _engine_used[0]
 
     # ── Plain text translate (không có entity) ────────────────────
     result = _translate_segment(raw_text)
-    engine_used = 'google' if (force_google or not _system_fully_loaded) else 'gemini'
-    return result, None, engine_used
+    return result, None, _engine_used[0]
 
 
 
@@ -5091,26 +5094,18 @@ def _run_read_all_bg(url, feed_cfg):
 
             if _effective_translate:
                 item["text"] = msg_text
-                if _has_hidden_link or _has_format:
-                    translated, _eng, _ = _translate_with_hidden_links(_html_text)
-                    # Nếu kết quả rỗng → fallback Google plain text
-                    if not translated or not translated.strip():
-                        _plain = re.sub(r'<[^>]+>', '', _html_text).strip()
-                        translated = _fast_translate(_plain) if _plain else msg_text
-                        _eng = 'google'
-                    item["_tg_html_text"] = translated
-                    item["_translate_engine_used"] = _eng
+                _raw_entities = msg.entities if msg.entities else None
+                translated, new_ents, _eng = translate_with_entities(msg_text, _raw_entities)
+                if not translated or not translated.strip():
+                    translated = msg_text
+                    _eng = 'none'
+                if new_ents is not None:
+                    item["_tg_translated_text"]     = translated
+                    item["_tg_translated_entities"] = new_ents
+                    item["_tg_html_text"]           = ''
                 else:
-                    translated = _fast_translate(msg_text)
-                    # Nếu kết quả rỗng → fallback Google trực tiếp
-                    if not translated or not translated.strip():
-                        try:
-                            _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
-                            translated = GoogleTranslator(source='auto', target=_gtarget).translate(msg_text) or msg_text
-                        except Exception:
-                            translated = msg_text
-                        _tl_engine.used = 'google'
-                    item["_translate_engine_used"] = getattr(_tl_engine, 'used', '')
+                    item["_tg_html_text"] = ''
+                item["_translate_engine_used"] = _eng
                 item["desc"] = translated
                 item["title"] = (translated[:80] + "...") if len(translated) > 80 else translated
                 item["translated"] = True

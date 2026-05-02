@@ -3118,7 +3118,10 @@ function updateFwdBar(){
 }
 
 function openForwardModal(){
-    // Lấy feed configs của các tin đang được chọn để pre-check đúng đích
+    if(!tgChannels||tgChannels.length===0){
+        alert('Chưa có kênh đích — vào Quản lý Kênh để thêm hoặc thử refresh trang.');
+        return;
+    }
     const selectedItems=allItems.filter(it=>selected.has(it.guid));
     // Gom tất cả destinations đã config trong các feed được chọn
     const preDestMap={};  // ch_idx -> topic_ids (từ config feed)
@@ -3194,8 +3197,11 @@ async function forwardSelected(){
     try{
         const r=await fetch('/tg_forward',{method:'POST',headers:{'Content-Type':'application/json'},
             body:JSON.stringify({destinations,items})});
-        const data=await r.json();
-        document.getElementById('result-list').innerHTML=data.results.map(r=>
+        let data;
+        try{data=await r.json();}
+        catch(je){alert('Lỗi: Server trả về response không hợp lệ (HTTP '+r.status+')');return;}
+        if(data.error){alert('Lỗi: '+data.error);return;}
+        document.getElementById('result-list').innerHTML=(data.results||[]).map(r=>
             `<div style="padding:7px;background:${r.ok?'#f0fdf4':'#fef2f2'}">${r.ok?'✓':'✗'} ${r.title||'Gửi'}${r.error?' — '+r.error:''}</div>`
         ).join('');
         document.getElementById('result-modal').classList.add('open');

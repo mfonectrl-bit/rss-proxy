@@ -1191,8 +1191,95 @@ def translate_with_entities(raw_text, entities=None, force_google=False):
         if last < len(raw_text):
             parts.append({'text': raw_text[last:], 'entity': None})
 
-        # Dịch từng segment
-        translated_parts = [_translate_segment(p['text']) for p in parts]
+        # ── Batch translate: gom tất cả segments thành 1 request ──
+        # Dùng separator đủ lạ để Google không dịch nhầm
+        SEP = ' ⟦§⟧ '
+        SEP_CLEAN = '⟦§⟧'  # để match khi Google bỏ space
+
+        # Chỉ dịch segments có text thật, whitespace/newline giữ nguyên
+        translatable = [(i, p['text']) for i, p in enumerate(parts) if p['text'].strip()]
+        translated_parts = [p['text'] for p in parts]  # default: giữ nguyên
+
+        if translatable:
+            # Mask URL và newline trong toàn bộ batch
+            url_ph = {}
+            def _mask_url(m):
+                tok = f'URLTOK{len(url_ph)}END'
+                url_ph[tok] = m.group(0)
+                return tok
+            NL = '⏎NL⏎'
+
+            segs_masked = []
+            for _, seg in translatable:
+                s = re.sub(r'https?://[^\s\)<>]+', _mask_url, seg)
+                s = s.replace('\n', NL)
+                segs_masked.append(s)
+
+            batch_input = SEP.join(segs_masked)
+
+            # Dịch 1 lần duy nhất
+            batch_translated = None
+            if not force_google and GEMINI_API_KEYS and _system_fully_loaded:
+                try:
+                    batch_translated, alias = _gemini_translate_inner(batch_input, is_html=False)
+                    _engine_used[0] = alias
+                except RuntimeError:
+                    batch_translated = None
+
+            if not batch_translated and not force_google and DEEPL_API_KEY:
+                try:
+                    payload = urllib.parse.urlencode({
+                        'auth_key': DEEPL_API_KEY,
+                        'text': batch_input[:4000],
+                        'target_lang': translate_target_lang.upper(),
+                        'source_lang': 'auto',
+                    }).encode('utf-8')
+                    base = 'api-free.deepl.com' if DEEPL_API_KEY.endswith(':fx') else 'api.deepl.com'
+                    req = urllib.request.Request(
+                        f'https://{base}/v2/translate', data=payload,
+                        headers={'Content-Type': 'application/x-www-form-urlencoded'}
+                    )
+                    with urllib.request.urlopen(req, timeout=15) as resp:
+                        d = json.loads(resp.read())
+                    batch_translated = d['translations'][0]['text']
+                    _engine_used[0] = 'DL'
+                except Exception:
+                    batch_translated = None
+
+            if not batch_translated:
+                try:
+                    batch_translated = _GoogleTranslator(
+                        source='auto', target=_gtarget
+                    ).translate(batch_input) or batch_input
+                except Exception:
+                    batch_translated = batch_input
+                _engine_used[0] = 'GT'
+
+            # Restore URL và newline
+            batch_translated = batch_translated.replace(NL, '\n')
+            for tok, url in url_ph.items():
+                batch_translated = batch_translated.replace(tok, url)
+
+            # Split lại theo separator — thử cả 2 dạng (có/không có space)
+            segs_out = batch_translated.split(SEP)
+            if len(segs_out) != len(translatable):
+                segs_out = batch_translated.split(SEP_CLEAN)
+            # Nếu vẫn không khớp → fallback giữ nguyên từng segment
+            if len(segs_out) == len(translatable):
+                for k, (orig_idx, _) in enumerate(translatable):
+                    translated_parts[orig_idx] = segs_out[k].strip() or parts[orig_idx]['text']
+            else:
+                # Separator bị dịch mất → fallback dịch toàn bộ raw_text 1 lần
+                print(f'[Translate] Batch separator mismatch ({len(segs_out)} vs {len(translatable)}) — fallback full text')
+                translated_parts = [p['text'] for p in parts]
+                try:
+                    full_translated = _GoogleTranslator(
+                        source='auto', target=_gtarget
+                    ).translate(raw_text) or raw_text
+                    # Không có entity info → trả về plain
+                    return full_translated, None, 'GT'
+                except Exception:
+                    return raw_text, None, 'GT'
 
         # Rebuild entities với offset/length mới
         new_entities = []

@@ -1,6 +1,10 @@
 """
-GeminiPool Sync v2.4 — Clean, Optimized & Production Ready
-Drop-in replacement cho EngineDispatcher trong proxy5.
+GeminiPool Sync v3.0 — Simplified & Reliable
+- Bỏ RPD tracking (AI Studio RPD không hoạt động như tài liệu)
+- Bỏ health score / decay (gây slot chết ngầm sau ~50m idle)
+- Bỏ fallback mechanism (không cần, primary cycle cover hết)
+- Chỉ giữ RPM tracking + 60s retry sau mỗi lần lỗi
+- Slot bị lỗi → retry_after = now + 60s → tự available lại, không cần probe
 """
 
 import threading
@@ -12,10 +16,10 @@ from typing import Callable, Dict, List, Optional, Tuple
 # ========================== CONFIGURATION ==========================
 
 QUOTA: Dict[str, Dict[str, float]] = {
-    "gemini-2.5":      {"rpm": 5,   "rpd": 20,  "interval": 13.0},
-    "gemini-2.5-lite": {"rpm": 10,  "rpd": 20,  "interval": 6.5},
-    "gemini-3.0":      {"rpm": 5,   "rpd": 20,  "interval": 13.0},
-    "gemini-3.1":      {"rpm": 15,  "rpd": 500, "interval": 4.5},
+    "gemini-2.5":      {"rpm": 5,  "interval": 13.0},
+    "gemini-2.5-lite": {"rpm": 10, "interval": 6.5},
+    "gemini-3.0":      {"rpm": 5,  "interval": 13.0},
+    "gemini-3.1":      {"rpm": 15, "interval": 4.5},
 }
 
 GEMINI_MODELS: Dict[str, str] = {
@@ -39,302 +43,221 @@ BASE_WEIGHTS: Dict[str, int] = {
     "gemini-3.0":      1,
 }
 
-# Fallback settings
-FALLBACK_MODELS: List[str] = ["gemini-3.1", "gemini-2.5-lite", "gemini-2.5"]
-FALLBACK_RPM_MULTIPLIER: float = 0.6
-FALLBACK_COOLDOWN: float = 15.0
+# Sau mỗi lần lỗi, slot tự retry sau bao nhiêu giây
+RETRY_AFTER_ERROR: float = 60.0
 
-# Health & Cooldown
-HEALTH_DECAY_PER_MIN: float = 1.5
-HEALTH_RECOVERY: float = 12.0
-HEALTH_PENALTY: float = 22.0
-MIN_HEALTH_FOR_USE: float = 25.0
-
-COOLDOWN_BASE: int = 30
-COOLDOWN_CAP: int = 600
-MAX_FAILS: int = 2
-
+# Số concurrent dịch tối đa — tránh burst 429
 MAX_CONCURRENT_TRANSLATES: int = 4
+
+# RPM log prune mỗi N giây
 PRUNE_INTERVAL: int = 45
+
+# Cache cycle trong N giây trước khi rebuild
 CYCLE_CACHE_TTL: float = 5.0
 
 # ===================================================================
 
 
 @dataclass
-class KeyHealth:
-    """Health tracking cho từng (model, key)"""
-    score: float = 100.0
-    error_streak: int = 0
-    last_success: float = 0.0
-    last_error: float = 0.0
-    last_decay: float = field(default_factory=time.time)
-
-    def decay(self, now: float) -> None:
-        minutes = (now - self.last_decay) / 60.0
-        if minutes > 0.1:
-            self.score = max(10.0, self.score - minutes * HEALTH_DECAY_PER_MIN)
-            self.last_decay = now
-
-    def on_success(self) -> None:
-        self.decay(time.time())
-        self.score = min(100.0, self.score + HEALTH_RECOVERY)
-        self.error_streak = 0
-        self.last_success = time.time()
-
-    def on_failure(self) -> None:
-        self.decay(time.time())
-        self.score = max(10.0, self.score - HEALTH_PENALTY)
-        self.error_streak += 1
-        self.last_error = time.time()
-
-
-@dataclass
 class SlotState:
-    """State của một slot (model_alias, key_index)"""
-    rpm_log: deque[float] = field(default_factory=deque)
-    rpd_log: deque[float] = field(default_factory=deque)
-    fails: int = 0
-    cooldown_until: float = 0.0
-    last_req: float = 0.0
-    health: KeyHealth = field(default_factory=KeyHealth)
-    is_fallback: bool = False
+    """State tối giản của 1 slot (model_alias, key_index)"""
+    rpm_log:     deque = field(default_factory=deque)  # timestamps trong 60s gần nhất
+    retry_after: float = 0.0                            # thời điểm slot available trở lại
+    last_req:    float = 0.0                            # timestamp request cuối
 
-    def prune(self, now: float) -> None:
-        cutoff_rpm = now - 60.0
-        cutoff_rpd = now - 86400.0
-        while self.rpm_log and self.rpm_log[0] < cutoff_rpm:
+    def prune_rpm(self, now: float) -> None:
+        cutoff = now - 60.0
+        while self.rpm_log and self.rpm_log[0] < cutoff:
             self.rpm_log.popleft()
-        while self.rpd_log and self.rpd_log[0] < cutoff_rpd:
-            self.rpd_log.popleft()
 
-    def can_use(self, alias: str, now: float, n_keys: int, is_fallback: bool = False) -> bool:
-        if self.health.score < MIN_HEALTH_FOR_USE:
+    def can_use(self, alias: str, now: float, n_keys: int) -> bool:
+        # Đang trong thời gian retry wait?
+        if now < self.retry_after:
             return False
-        if now < self.cooldown_until:
-            return False
-
+        # Chưa đủ interval giữa 2 request liên tiếp?
         interval = QUOTA[alias]["interval"] / max(n_keys, 1)
         if now - self.last_req < interval:
             return False
-
-        rpm_limit = QUOTA[alias]["rpm"]
-        if is_fallback:
-            rpm_limit = max(1, int(rpm_limit * FALLBACK_RPM_MULTIPLIER))
-
-        if len(self.rpm_log) >= rpm_limit:
-            return False
-        if len(self.rpd_log) >= QUOTA[alias]["rpd"]:
+        # Vượt RPM?
+        self.prune_rpm(now)
+        if len(self.rpm_log) >= QUOTA[alias]["rpm"]:
             return False
         return True
 
     def record_usage(self, now: float) -> None:
         self.rpm_log.append(now)
-        self.rpd_log.append(now)
         self.last_req = now
 
 
 class GeminiPool:
-    """Gemini API Pool với adaptive weight, fallback thông minh và chống burst"""
+    """
+    Gemini API Pool v3.0 — weighted round-robin, RPM-only, 60s auto-retry.
+    Không health decay, không RPD, không fallback riêng — đơn giản và đáng tin.
+    """
 
     MODELS = GEMINI_MODELS
     PREFIX = GEMINI_PREFIX
 
     def __init__(self, keys: List[str], system_loaded_fn: Callable[[], bool] = lambda: True):
-        self._keys: List[str] = list(keys)
-        self._is_loaded = system_loaded_fn
-        self._lock = threading.Lock()
-        self._sem = threading.Semaphore(MAX_CONCURRENT_TRANSLATES)
+        self._keys:      List[str] = list(keys)
+        self._is_loaded: Callable  = system_loaded_fn
+        self._lock       = threading.Lock()
+        self._sem        = threading.Semaphore(MAX_CONCURRENT_TRANSLATES)
 
-        # Initialize slots
-        self._slots: Dict[Tuple[str, int], SlotState] = {}
+        # Khởi tạo slot cho mọi (alias, key_index)
         n_keys = max(len(self._keys), 1)
-        for ki in range(n_keys):
-            for alias in QUOTA:
-                self._slots[(alias, ki)] = SlotState()
+        self._slots: Dict[Tuple[str, int], SlotState] = {
+            (alias, ki): SlotState()
+            for alias in QUOTA
+            for ki in range(n_keys)
+        }
 
-        # Cycle cache
-        self._cycle: List[Tuple[str, int]] = []
+        # Weighted cycle cache
+        self._cycle:         List[Tuple[str, int]] = []
         self._cycle_expires: float = 0.0
-        self._cycle_idx: int = 0
-
-        # Fallback tracking
-        self._last_fallback_time: float = 0.0
-        self._fallback_count: int = 0
+        self._cycle_idx:     int   = 0
 
         # Background prune thread
-        self._prune_thread = threading.Thread(
-            target=self._prune_loop, daemon=True, name="GeminiPool-Prune"
-        )
-        self._prune_thread.start()
+        threading.Thread(
+            target=self._prune_loop, daemon=True, name='GeminiPool-Prune'
+        ).start()
 
-        self._log_startup()
+        print(
+            f'[GeminiPool v3.0] keys={len(self._keys)} | '
+            f'models={list(QUOTA.keys())} | '
+            f'max_concurrent={MAX_CONCURRENT_TRANSLATES} | '
+            f'retry_after_error={RETRY_AFTER_ERROR}s'
+        )
 
     # ====================== PUBLIC API ======================
 
     def translate_context(self):
-        """Context manager chống burst 429"""
+        """Semaphore context để chống burst concurrent"""
         return self._sem
 
     def pick_slot(self) -> Optional[Tuple[str, int, str]]:
-        """Trả về (model_alias, key_index, api_key) hoặc None"""
+        """
+        Trả về (model_alias, key_index, api_key) hoặc None nếu không có slot khả dụng.
+        Round-robin theo weighted cycle, skip slot đang trong retry_after.
+        """
         if not self._keys or not self._is_loaded():
             return None
 
-        now = time.time()
+        now    = time.time()
         n_keys = len(self._keys)
 
         with self._lock:
             self._refresh_cycle_if_needed(now)
+            if not self._cycle:
+                return None
 
-            # Thử primary cycle trước
-            result = self._try_pick_primary(now, n_keys)
-            if result:
-                return result
+            n            = len(self._cycle)
+            max_attempts = min(n * 2, 200)
 
-            # Nếu không được thì fallback
-            return self._try_pick_fallback(now, n_keys)
+            for attempt in range(max_attempts):
+                idx       = (self._cycle_idx + attempt) % n
+                alias, ki = self._cycle[idx]
+                slot      = self._slots[(alias, ki)]
 
-    def record_success(self, alias: str, ki: int) -> None:
-        with self._lock:
-            slot = self._slots.get((alias, ki))
-            if slot:
-                slot.fails = 0
-                slot.health.on_success()
-                slot.is_fallback = False
-
-    def record_failure(self, alias: str, ki: int, is_rate_limit: bool = False) -> None:
-        with self._lock:
-            slot = self._slots.get((alias, ki))
-            if not slot:
-                return
-
-            slot.health.on_failure()
-            slot.fails += 1
-
-            if is_rate_limit or slot.fails >= MAX_FAILS:
-                cooldown = min(COOLDOWN_BASE * (2 ** (slot.fails - 1)), COOLDOWN_CAP)
-                if is_rate_limit:
-                    cooldown = int(cooldown * 1.8)
-
-                now = time.time()
-                reason = "rate_limit" if is_rate_limit else "consecutive fails"
-
-                if is_rate_limit:
-                    # 429 là per-API-key → cooldown TẤT CẢ models dùng cùng key này
-                    for a in QUOTA:
-                        s = self._slots.get((a, ki))
-                        if s:
-                            s.cooldown_until = now + cooldown
-                            s.fails = 0
-                    print(f"[GeminiPool] key{ki} → ALL models cooldown {cooldown}s ({reason})")
-                else:
-                    slot.cooldown_until = now + cooldown
-                    slot.fails = 0
-                    label = f"{alias}[key{ki}]" if len(self._keys) > 1 else alias
-                    fb = " (fallback)" if slot.is_fallback else ""
-                    print(f"[GeminiPool] {label}{fb} → cooldown {cooldown}s ({reason})")
-
-    def metrics(self) -> str:
-        """Prometheus metrics"""
-        now = time.time()
-        lines: List[str] = [
-            "# HELP gemini_pool_rpm_current Current RPM usage",
-            "# TYPE gemini_pool_rpm_current gauge",
-        ]
-
-        with self._lock:
-            for alias in QUOTA:
-                for ki in range(len(self._keys)):
-                    slot = self._slots[(alias, ki)]
-                    label = f'model="{alias}",key="{ki}"'
-                    lines.append(f'gemini_pool_rpm_current{{{label}}} {len(slot.rpm_log)}')
-                    lines.append(f'gemini_pool_rpd_current{{{label}}} {len(slot.rpd_log)}')
-                    lines.append(f'gemini_pool_health_score{{{label}}} {slot.health.score:.1f}')
-                    lines.append(f'gemini_pool_cooldown_remaining{{{label}}} {max(0.0, slot.cooldown_until - now):.1f}')
-                    lines.append(f'gemini_pool_available{{{label}}} {int(slot.can_use(alias, now, len(self._keys)))}')
-
-            lines.append(f"gemini_pool_fallback_total {self._fallback_count}")
-
-        return "\n".join(lines) + "\n"
-
-    # ====================== INTERNAL ======================
-
-    def _get_effective_weight(self, alias: str, ki: int, now: float) -> float:
-        slot = self._slots[(alias, ki)]
-        slot.health.decay(now)
-        health_factor = max(0.3, slot.health.score / 100.0)
-        return BASE_WEIGHTS.get(alias, 1) * health_factor
-
-    def _build_dynamic_cycle(self, now: float) -> List[Tuple[str, int]]:
-        if not self._keys:
-            return []
-        cycle: List[Tuple[str, int]] = []
-        n = len(self._keys)
-
-        for alias in BASE_WEIGHTS:
-            for ki in range(n):
-                weight = self._get_effective_weight(alias, ki, now)
-                repeats = max(1, round(weight))
-                cycle.extend([(alias, ki)] * repeats)
-        return cycle
-
-    def _refresh_cycle_if_needed(self, now: float) -> None:
-        if now > self._cycle_expires:
-            self._cycle = self._build_dynamic_cycle(now)
-            self._cycle_expires = now + CYCLE_CACHE_TTL
-
-    def _try_pick_primary(self, now: float, n_keys: int) -> Optional[Tuple[str, int, str]]:
-        if not self._cycle:
-            return None
-
-        n = len(self._cycle)
-        max_attempts = min(n * 2, 120)
-
-        for attempt in range(max_attempts):
-            idx = (self._cycle_idx + attempt) % n
-            alias, ki = self._cycle[idx]
-            slot = self._slots[(alias, ki)]
-
-            if slot.can_use(alias, now, n_keys, is_fallback=False):
-                slot.record_usage(now)
-                self._cycle_idx = (idx + 1) % n
-                return alias, ki, self._keys[ki]
-
-        return None
-
-    def _try_pick_fallback(self, now: float, n_keys: int) -> Optional[Tuple[str, int, str]]:
-        if now - self._last_fallback_time < FALLBACK_COOLDOWN:
-            return None
-
-        for alias in FALLBACK_MODELS:
-            for ki in range(n_keys):
-                slot = self._slots.get((alias, ki))
-                if slot and slot.can_use(alias, now, n_keys, is_fallback=True):
+                if slot.can_use(alias, now, n_keys):
                     slot.record_usage(now)
-                    slot.is_fallback = True
-                    self._last_fallback_time = now
-                    self._fallback_count += 1
-
-                    label = f"{alias}[key{ki}]"
-                    print(f"[GeminiPool] FALLBACK ACTIVATED → {label} (total={self._fallback_count})")
+                    self._cycle_idx = (idx + 1) % n
                     return alias, ki, self._keys[ki]
 
         return None
 
+    def record_success(self, alias: str, ki: int) -> None:
+        """Gọi sau khi request thành công — reset retry_after"""
+        with self._lock:
+            slot = self._slots.get((alias, ki))
+            if slot:
+                slot.retry_after = 0.0
+
+    def record_failure(self, alias: str, ki: int, is_rate_limit: bool = False) -> None:
+        """
+        Gọi sau khi request thất bại.
+        - 429 (rate limit): cooldown TẤT CẢ models trên cùng key (per-key quota)
+        - Lỗi khác (503, timeout...): chỉ cooldown slot đó
+        Sau RETRY_AFTER_ERROR giây, slot tự available lại — không cần probe.
+        """
+        now         = time.time()
+        retry_until = now + RETRY_AFTER_ERROR
+
+        with self._lock:
+            if is_rate_limit:
+                # 429 là per-API-key → cooldown tất cả models dùng cùng key này
+                for a in QUOTA:
+                    s = self._slots.get((a, ki))
+                    if s:
+                        s.retry_after = retry_until
+                print(f'[GeminiPool] key{ki} 429 → ALL models retry sau {RETRY_AFTER_ERROR:.0f}s')
+            else:
+                slot = self._slots.get((alias, ki))
+                if slot:
+                    slot.retry_after = retry_until
+                label = f'{alias}[key{ki}]' if len(self._keys) > 1 else alias
+                print(f'[GeminiPool] {label} lỗi → retry sau {RETRY_AFTER_ERROR:.0f}s')
+
+    def slot_status(self) -> str:
+        """Log trạng thái tất cả slots — dùng để debug"""
+        now    = time.time()
+        n_keys = len(self._keys)
+        lines  = ['[GeminiPool] Slot status:']
+        with self._lock:
+            for alias in QUOTA:
+                for ki in range(n_keys):
+                    slot   = self._slots[(alias, ki)]
+                    slot.prune_rpm(now)
+                    avail  = slot.can_use(alias, now, n_keys)
+                    remain = max(0.0, slot.retry_after - now)
+                    rpm    = len(slot.rpm_log)
+                    label  = f'[key{ki}]' if n_keys > 1 else ''
+                    lines.append(
+                        f'  {alias}{label}: rpm={rpm}/{QUOTA[alias]["rpm"]} | '
+                        f'retry_in={remain:.0f}s | available={avail}'
+                    )
+        return '\n'.join(lines)
+
+    def metrics(self) -> str:
+        """Prometheus metrics"""
+        now    = time.time()
+        n_keys = len(self._keys)
+        lines  = [
+            '# HELP gemini_pool_rpm_current Current RPM usage per slot',
+            '# TYPE gemini_pool_rpm_current gauge',
+        ]
+        with self._lock:
+            for alias in QUOTA:
+                for ki in range(n_keys):
+                    slot  = self._slots[(alias, ki)]
+                    label = f'model="{alias}",key="{ki}"'
+                    slot.prune_rpm(now)
+                    lines.append(f'gemini_pool_rpm_current{{{label}}} {len(slot.rpm_log)}')
+                    lines.append(f'gemini_pool_rpm_limit{{{label}}} {QUOTA[alias]["rpm"]}')
+                    lines.append(f'gemini_pool_retry_remaining{{{label}}} {max(0.0, slot.retry_after - now):.1f}')
+                    lines.append(f'gemini_pool_available{{{label}}} {int(slot.can_use(alias, now, n_keys))}')
+        return '\n'.join(lines) + '\n'
+
+    # ====================== INTERNAL ======================
+
+    def _build_cycle(self) -> List[Tuple[str, int]]:
+        """Xây weighted cycle: model có weight cao → xuất hiện nhiều lần hơn"""
+        cycle: List[Tuple[str, int]] = []
+        for alias, weight in BASE_WEIGHTS.items():
+            for ki in range(len(self._keys)):
+                cycle.extend([(alias, ki)] * weight)
+        return cycle
+
+    def _refresh_cycle_if_needed(self, now: float) -> None:
+        if now > self._cycle_expires:
+            self._cycle         = self._build_cycle()
+            self._cycle_expires = now + CYCLE_CACHE_TTL
+
     def _prune_loop(self) -> None:
+        """Background thread: prune rpm_log cũ định kỳ"""
         while True:
             time.sleep(PRUNE_INTERVAL)
             now = time.time()
             with self._lock:
                 for slot in self._slots.values():
-                    slot.prune(now)
-                    slot.health.decay(now)
-
-    def _log_startup(self) -> None:
-        print(
-            f"[GeminiPool v2.4] Initialized | "
-            f"keys={len(self._keys)} | "
-            f"max_concurrent={MAX_CONCURRENT_TRANSLATES} | "
-            f"fallback=enabled | cycle_cache={CYCLE_CACHE_TTL}s"
-        )
+                    slot.prune_rpm(now)

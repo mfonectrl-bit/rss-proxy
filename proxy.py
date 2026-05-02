@@ -804,11 +804,28 @@ class BatchPipeline:
                 if should_translate and text and is_same_as_target(text[:200]):
                     should_translate = False
                 if should_translate:
+                    is_history   = item.get('_is_history', False)
                     has_hidden_link = item.get('_tg_has_hidden_link', False)
                     has_format      = item.get('_tg_has_format', False)
                     html_text = item.get('_tg_html_text', '')
-                    if html_text and (has_hidden_link or has_format):
-                        # Bản tin có link ẩn / format HTML → dịch HTML để giữ nguyên thẻ
+
+                    if is_history:
+                        # ── HISTORY ITEM ── dùng Google Translate thuần, không Gemini/DeepL
+                        if html_text and (has_hidden_link or has_format):
+                            translated, _eng, _ = _translate_google_html_only(html_text)
+                            if translated and translated.strip():
+                                item['_tg_html_text'] = translated
+                            item['_translate_engine_used'] = _eng
+                        else:
+                            translated, _eng = _translate_google_only(text)
+                            if not translated or not translated.strip():
+                                translated = text
+                                _eng = 'google'
+                            item['_tg_html_text'] = ''
+                            item['_translate_engine_used'] = _eng
+
+                    elif html_text and (has_hidden_link or has_format):
+                        # ── REALTIME — có link ẩn / HTML format ──
                         translated, _eng, _ = _translate_with_hidden_links(html_text)
                         # Nếu kết quả rỗng → fallback Google plain text
                         if not translated or not translated.strip():
@@ -823,9 +840,10 @@ class BatchPipeline:
                         if translated and translated.strip():
                             item['_tg_html_text'] = translated
                         item['_translate_engine_used'] = _eng
+
                     else:
-                        # Bản tin plain text (không có hidden link / format):
-                        # Ưu tiên Gemini cho TẤT CẢ bản tin, chỉ fallback Google khi Gemini hết quota/lỗi
+                        # ── REALTIME — plain text ──
+                        # Ưu tiên Gemini, chỉ fallback Google khi Gemini hết quota/lỗi
                         translated = None
                         _eng = ''
                         if GEMINI_API_KEYS and _system_fully_loaded:
@@ -977,7 +995,101 @@ def _translate_google(text):
             raise
         raise
 
-def _translate_gemini(text, model='gemini-2.0-flash', api_key=None):
+
+def _translate_google_only(text):
+    """
+    Dịch bằng Google Translate THUẦN — dùng cho history items.
+    Không gọi Gemini, không gọi DeepL. Bảo toàn URL và newline.
+    Trả về (translated_text, 'google').
+    """
+    if not text or len(text.strip()) < 4:
+        return text, 'google'
+    if is_same_as_target(text[:400]):
+        return text, 'google'
+    if not _GoogleTranslator:
+        return text, 'none'
+
+    _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
+
+    # Bảo toàn URL
+    url_ph = {}
+    def _mask_url(m):
+        tok = f'URLTOKEN{len(url_ph)}URLTOKEN'
+        url_ph[tok] = m.group(0)
+        return tok
+    masked = re.sub(r'https?://[^\s\)<>]+', _mask_url, text)
+
+    # Bảo toàn newlines
+    NL_TOKEN = '⏎'
+    masked = masked.replace('\n', NL_TOKEN)
+
+    try:
+        translated = _GoogleTranslator(source='auto', target=_gtarget).translate(masked) or masked
+    except Exception as e:
+        print(f'[Translate/Google-history] Lỗi: {e} — giữ nguyên bản gốc')
+        return text, 'google'
+
+    # Khôi phục
+    translated = translated.replace(NL_TOKEN, '\n')
+    for tok, url in url_ph.items():
+        translated = translated.replace(tok, url)
+
+    return translated, 'google'
+
+
+def _translate_google_html_only(html_text):
+    """
+    Dịch HTML có hidden link / format bằng Google Translate THUẦN — dùng cho history items.
+    Không gọi Gemini, không gọi DeepL. Giữ nguyên thẻ HTML.
+    Trả về (translated_html, 'google', True).
+    """
+    if not html_text:
+        return html_text, 'google', True
+    if not _GoogleTranslator:
+        return html_text, 'none', True
+
+    _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
+    try:
+        parts = re.split(r'(<[^>]+>)', html_text)
+        result = []
+        for part in parts:
+            if re.match(r'<[^>]+>', part):
+                is_opening = not part.startswith('</')
+                if is_opening and result and result[-1] and result[-1][-1] not in (' ', '\n'):
+                    result.append(' ')
+                result.append(part)
+            elif part.strip():
+                leading  = part[:len(part) - len(part.lstrip('\n'))]
+                trailing = part[len(part.rstrip('\n')):]
+                inner    = part.strip()
+                import html as _html_mod
+                inner = _html_mod.unescape(inner)
+                url_ph = {}
+                def _mask_url(m):
+                    tok = f'__URL{len(url_ph)}__'
+                    url_ph[tok] = m.group(0)
+                    return tok
+                inner_masked = re.sub(r'https?://\S+', _mask_url, inner)
+                if result and re.match(r'</', result[-1]) and inner_masked and inner_masked[0] not in (' ', '\n') \
+                        and inner_masked[0] not in '.,!?:;)】」』"\'':
+                    inner_masked = ' ' + inner_masked
+                try:
+                    translated_inner = _GoogleTranslator(source='auto', target=_gtarget).translate(inner_masked) or inner_masked
+                    for tok, url in url_ph.items():
+                        translated_inner = translated_inner.replace(tok, url)
+                    result.append(leading + translated_inner + trailing)
+                except Exception:
+                    result.append(part)
+            else:
+                result.append(part)
+        return _fix_html_spacing(''.join(result)), 'google', True
+    except Exception as e:
+        print(f'[Translate/Google-HTML-history] Lỗi: {e} — fallback plain text')
+        _plain = re.sub(r'<[^>]+>', '', html_text).strip()
+        translated, _ = _translate_google_only(_plain)
+        return translated, 'google', False
+
+
     """
     Dịch text bằng Gemini. api_key: key cụ thể (multi-key), None = dùng GEMINI_API_KEY.
     """
@@ -1581,7 +1693,7 @@ async def _tg_setup_realtime(feed_urls):
             await _register_handler(all_channels)
             if not _system_fully_loaded:
                 _enable_gemini_after_delay(120.0)
-                print('[System] GeminiWarmup thread started — Gemini enable sau 120s')
+                print('[System] GeminiWarmup fallback timer started — Gemini enable sau 120s nếu counter chưa về 0')
         else:
             print('[TG] Không có channel nào resolve được')
     finally:
@@ -1871,16 +1983,45 @@ threading.Thread(target=_run_cleanup_scheduler, daemon=True, name='CleanupSchedu
 
 # Set chứa các feed URL đã init xong known_guids — chỉ feed nào có trong set mới được forward
 _forward_ready_feeds = set()
-_system_fully_loaded = False   # True sau khi toàn bộ TG history load xong
+_system_fully_loaded = False   # True sau khi toàn bộ history (RSS + TG) load xong
+
+# --- History load counter ---
+# Đếm số feed còn đang load history. Khi về 0 → _system_fully_loaded = True.
+# Được khởi tạo trong poller() sau khi biết tổng số feed.
+_history_pending_lock  = threading.Lock()
+_history_pending_count = 0   # số feed chưa load xong history
+_history_total_count   = 0   # tổng số feed ban đầu (để log)
+
+def _on_feed_history_loaded(url: str):
+    """
+    Gọi mỗi khi 1 feed load xong history (RSS hoặc TG).
+    Khi tất cả feed đã load → set _system_fully_loaded = True → Gemini enabled.
+    Thread-safe.
+    """
+    global _history_pending_count, _system_fully_loaded
+    with _history_pending_lock:
+        if _history_pending_count > 0:
+            _history_pending_count -= 1
+        remaining = _history_pending_count
+    print(f'[System] History loaded: {url[:60]} — còn {remaining}/{_history_total_count} feed chưa xong')
+    if remaining == 0 and not _system_fully_loaded:
+        _system_fully_loaded = True
+        print('[System] ✅ Toàn bộ history đã load — Gemini ENABLED')
 
 def _enable_gemini_after_delay(delay: float = 120.0):
-    """Enable Gemini sau delay giây — chạy trên thread riêng, độc lập với setup flow."""
+    """
+    Fallback: enable Gemini sau delay giây — dùng khi không có feed nào cần load
+    (ví dụ: chỉ có TG realtime, không có RSS, hoặc tất cả history_limit=0).
+    Vẫn giữ để tương thích với các code path gọi hàm này từ TG watchdog.
+    """
     def _run():
         global _system_fully_loaded
         time.sleep(delay)
-        _system_fully_loaded = True
-        print(f'[System] ✅ Fully loaded — Gemini enabled (sau {int(delay)}s warmup)')
+        if not _system_fully_loaded:
+            _system_fully_loaded = True
+            print(f'[System] ✅ Fully loaded (fallback timer {int(delay)}s) — Gemini ENABLED')
     threading.Thread(target=_run, daemon=True, name='GeminiWarmup').start()
+
 _watchdog_running = False  # Tránh watchdog chạy trùng
 
 # --- WebSocket thuần RFC 6455 (không cần thư viện websockets) ---
@@ -4145,22 +4286,39 @@ def parse_items(xml_bytes, category_hint='', limit=None):
     return items
 
 def process_items(items):
+    """
+    Dịch RSS history items cho /fetch endpoint (do browser gọi khi load UI).
+    Dùng Google Translate THUẦN — không Gemini, không DeepL.
+    Gemini chỉ dùng sau khi toàn bộ history load xong (_system_fully_loaded).
+    """
     if not translate_enabled or not TRANSLATE_AVAILABLE:
         return items
     results = [None] * len(items)
     def do(i, it):
-        t, d, was = maybe_translate(it['title'], it['desc'])
-        results[i] = {**it, 'title': t, 'desc': d, 'translated': was}
+        sample = strip_html((it.get('title') or '') + ' ' + (it.get('desc') or ''))
+        if is_same_as_target(sample):
+            results[i] = {**it, 'translated': False}
+            return
+        t, _ = _translate_google_only(it.get('title') or '')
+        d, _ = _translate_google_only(it.get('desc') or '')
+        results[i] = {**it,
+                      'title': t or it.get('title', ''),
+                      'desc':  d or it.get('desc', ''),
+                      'translated': True}
     futures = [_thread_pool.submit(do, i, it) for i, it in enumerate(items)]
     for f in futures:
         try:
-            f.result(timeout=15)
+            f.result(timeout=20)
         except Exception:
             pass
-    return [r for r in results if r is not None]
+    return [r if r is not None else items[i] for i, r in enumerate(results)]
 
 def process_tg_items(items):
-    """Dịch items từ Telethon — dịch desc trước, sau đó derive title từ desc đã dịch"""
+    """
+    Dịch TG history items cho /tl_fetch endpoint (do browser gọi khi load UI).
+    Dùng Google Translate THUẦN — không Gemini, không DeepL.
+    Gemini chỉ dùng sau khi toàn bộ history load xong (_system_fully_loaded).
+    """
     if not translate_enabled or not TRANSLATE_AVAILABLE:
         return items
     results = [None] * len(items)
@@ -4171,12 +4329,11 @@ def process_tg_items(items):
             results[i] = {**it, 'translated': False}
             return
 
-        # Dịch toàn bộ text gốc (plain text, không có HTML)
-        translated_desc_plain = _translate_with_engine(desc_plain[:4000]) or desc_plain
+        translated_desc_plain, _ = _translate_google_only(desc_plain[:4000])
+        translated_desc_plain = translated_desc_plain or desc_plain
 
         # Re-derive title từ bản dịch
         title_translated = (translated_desc_plain[:80] + '...') if len(translated_desc_plain) > 80 else translated_desc_plain
-        # Convert desc plain đã dịch về dạng HTML với <br>
         desc_translated = translated_desc_plain.replace('\n', '<br>')
 
         results[i] = {**it, 'title': title_translated, 'desc': desc_translated, 'translated': True}
@@ -4184,7 +4341,7 @@ def process_tg_items(items):
     futures = [_thread_pool.submit(do, i, it) for i, it in enumerate(items)]
     for f in futures:
         try:
-            f.result(timeout=15)
+            f.result(timeout=20)
         except Exception:
             pass
     return [r for r in results if r is not None]
@@ -4945,6 +5102,8 @@ def _poll_one(url_obj):
                 ws_items.append(ws_it)
             if ws_items:
                 broadcast({'type': 'new_items', 'url': url, 'items': ws_items})
+            # Báo history feed này đã load xong → giảm counter
+            _on_feed_history_loaded(url)
             return True   # Không forward tin cũ
 
         # Bình thường: tìm tin mới
@@ -4971,12 +5130,14 @@ def _poll_one(url_obj):
                     current = set(guids_list[-(history_limit * 2):])
                 known_guids[url] = current
 
-            print(f'[+] {len(new_items)} bài mới → pipeline: {url}')
-            
+            _do_translate = url_obj.get('do_translate', True)
+            _route = 'pipeline' if _do_translate else 'direct'
+            print(f'[+] {len(new_items)} bài mới → {_route}: {url}')
+
             for it in new_items:
                 it['show_link']    = show_link
                 it['feed_url']     = url
-                it['do_translate'] = url_obj.get('do_translate', True)
+                it['do_translate'] = _do_translate
                 # Khôi phục \n từ <br> trước khi strip tag — strip_html thay <br> bằng space
                 _rss_desc = it.get('desc', '') or ''
                 _rss_desc_plain = re.sub(r'<br\s*/?>', '\n', _rss_desc, flags=re.I)
@@ -4994,7 +5155,16 @@ def _poll_one(url_obj):
                 else:
                     it['_rss_media_url'] = None
 
-                _pipeline.put(it)
+                if not _do_translate:
+                    # Bypass pipeline — broadcast UI + forward trực tiếp, không qua dịch
+                    it['text_translated'] = it['text']
+                    it['translated']      = False
+                    it['_translate_engine_used'] = ''
+                    ws_it = {k: v for k, v in it.items() if k not in ('_tg_media_bytes', 'text', 'text_translated')}
+                    broadcast({'type': 'new_items', 'url': url, 'items': [ws_it]})
+                    _forward_pool.submit(_do_forward, [it], category, url)
+                else:
+                    _pipeline.put(it)
 
         # Feed poll thành công → báo recover nếu trước đó đã có lỗi
         _notify_recover(url, url_obj.get('name', url))
@@ -5016,6 +5186,7 @@ def _init_tg_feed(url_obj):
     Load lịch sử 1 lần khi thêm kênh TG mới — chỉ để hiển thị UI.
     KHÔNG dịch ở đây (tránh chiếm thread pool, block forward).
     KHÔNG forward (đây là tin cũ).
+    Luôn gọi _on_feed_history_loaded() khi xong — dù skip hay lỗi.
     """
     url           = url_obj['url']
     category      = url_obj.get('category', '')
@@ -5026,6 +5197,8 @@ def _init_tg_feed(url_obj):
         with lock:
             known_guids[url] = set()
         print(f'[TG] Bỏ qua lịch sử {channel} (history_limit=0)')
+        # history_limit=0 vẫn phải báo done — counter đã không đếm feed này
+        # (poller chỉ đếm feed có history_limit > 0), nên không cần gọi ở đây
         return
 
     try:
@@ -5046,6 +5219,9 @@ def _init_tg_feed(url_obj):
         print(f'[TG] Load lịch sử {channel}: {len(items)} tin (history_limit={history_limit})')
     except Exception as e:
         print(f'[!] Load lịch sử lỗi {channel}: {e}')
+    finally:
+        # Luôn báo done kể cả khi lỗi — tránh counter bị kẹt mãi mãi
+        _on_feed_history_loaded(url)
 
 def _process_tg_queue():
     """
@@ -5098,9 +5274,9 @@ def _process_tg_queue():
             for it in new_items:
                 known_guids[feed_url].add(it['guid'])
 
-        print(f'[+] {len(new_items)} bài mới (real-time → pipeline): {feed_url}')
+        _route = 'pipeline' if do_translate else 'direct'
+        print(f'[+] {len(new_items)} bài mới (real-time → {_route}): {feed_url}')
 
-        # Đẩy vào BatchPipeline thay vì xử lý sync
         for it in new_items:
             # Khôi phục newline từ <br> trước khi dịch — strip_html thay <br> bằng space
             _raw_desc = it.get('desc', '') or ''
@@ -5115,7 +5291,7 @@ def _process_tg_queue():
                 'feed_url': feed_url,
                 'category': category,
                 'show_link': show_link,
-                'do_translate': do_translate,  # lấy từ lock ở trên, không lookup lại
+                'do_translate': do_translate,
                 'guid': it.get('guid', ''),
                 'link': it.get('link', ''),
                 'pubDate': it.get('pubDate', ''),
@@ -5128,13 +5304,23 @@ def _process_tg_queue():
                 '_tg_has_format': it.get('_tg_has_format', False),
                 '_tg_html_text': it.get('_tg_html_text', ''),
             }
-            _pipeline.put(pipeline_item)
+
+            if not do_translate:
+                # Bypass pipeline — broadcast UI + forward trực tiếp, không qua dịch
+                pipeline_item['text_translated'] = _raw_text
+                pipeline_item['translated']      = False
+                pipeline_item['_translate_engine_used'] = ''
+                ws_item = {k: v for k, v in pipeline_item.items() if k not in ('_tg_has_media', 'text', 'text_translated')}
+                broadcast({'type': 'new_items', 'url': feed_url, 'items': [ws_item]})
+                _forward_pool.submit(_do_forward, [pipeline_item], category, feed_url)
+            else:
+                _pipeline.put(pipeline_item)
 
 def poller():
     """
     Poller background chính
     """
-    global poll_next_time
+    global poll_next_time, _history_pending_count, _history_total_count
     FAST_INTERVAL    = 60
     fast_next: dict  = {}
     tg_inited: set   = set()
@@ -5142,6 +5328,7 @@ def poller():
     _last_cleanup: float = 0.0
     _last_debug_sec: int = -1
     _last_tg_watchdog: float = 0   # kiểm tra TG connection mỗi 30 phút
+    _history_counter_inited  = False  # chỉ khởi tạo counter 1 lần
 
     print("[POLL] ✅ Background poller STARTED successfully")
 
@@ -5205,6 +5392,22 @@ def poller():
                     finally:
                         _watchdog_running = False
                 threading.Thread(target=_watchdog, daemon=True).start()
+
+            # --- Init history counter (chỉ 1 lần, sau khi có feed) ---
+            if not _history_counter_inited and len(urls) > 0:
+                _history_counter_inited = True
+                rss_count = sum(1 for u in urls if not is_tg_source(u['url']) and int(u.get('history_limit', 20)) > 0)
+                tg_count  = sum(1 for u in urls if is_tg_source(u['url'])     and int(u.get('history_limit', 20)) > 0
+                                and TELETHON_AVAILABLE and tg_client is not None)
+                with _history_pending_lock:
+                    _history_pending_count = rss_count + tg_count
+                    _history_total_count   = rss_count + tg_count
+                if _history_pending_count == 0:
+                    _system_fully_loaded = True
+                    print('[System] Không có feed history nào — Gemini ENABLED ngay')
+                else:
+                    print(f'[System] History counter khởi tạo: {_history_pending_count} feed cần load '
+                          f'(RSS={rss_count}, TG={tg_count}) — Gemini tạm DISABLED')
 
             # --- Init history cho TG feed mới ---
             tg_urls = [u for u in urls if is_tg_source(u['url'])]

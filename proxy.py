@@ -1186,13 +1186,15 @@ def _translate_gemini_html(html_text, model='gemini-2.0-flash', api_key=None):
         raise ValueError('GEMINI_API_KEY chưa set')
     _lang = _LANG_NAME.get(translate_target_lang, translate_target_lang)
     prompt = (
-        f'Dịch đoạn HTML sau sang {_lang} tự nhiên, giữ nguyên format xuống dòng, '
-        'emoji và các ký tự đặc biệt. '
-        'QUAN TRỌNG: Giữ nguyên TOÀN BỘ các thẻ HTML sau đây — '
-        'chỉ dịch nội dung text thuần, KHÔNG xóa, KHÔNG sửa, KHÔNG thêm bất kỳ thẻ nào: '
-        '<a href="...">, <b>, </b>, <i>, </i>, <u>, </u>, <s>, </s>, <code>, </code>. '
-        'Giữ nguyên dấu cách trước và sau mỗi thẻ HTML. '
-        'Chỉ trả về bản dịch HTML, không giải thích thêm:\n\n' + html_text[:15000]
+        f'Dịch nội dung TEXT trong đoạn HTML sau sang {_lang} tự nhiên.\n'
+        'QUY TẮC BẮT BUỘC — vi phạm bất kỳ quy tắc nào là SAI:\n'
+        '1. GIỮ NGUYÊN 100% thẻ HTML: <a href="...">, <b>, </b>, <i>, </i>, <u>, </u>, <s>, </s>, <code>, </code>, <pre>, </pre>\n'
+        '2. KHÔNG xóa, KHÔNG sửa, KHÔNG thêm bất kỳ thẻ HTML nào\n'
+        '3. KHÔNG chuyển <b>text</b> thành **text** hay bất kỳ markdown nào\n'
+        '4. Giữ nguyên dấu cách, xuống dòng, emoji xung quanh thẻ HTML\n'
+        '5. Chỉ dịch phần text thuần giữa các thẻ — không chạm vào thẻ\n'
+        '6. Chỉ trả về HTML đã dịch, không giải thích, không markdown fence\n\n'
+        'INPUT:\n' + html_text[:15000]
     )
     payload = json.dumps({
         'contents': [{'parts': [{'text': prompt}]}],

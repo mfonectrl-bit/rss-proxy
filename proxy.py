@@ -927,6 +927,274 @@ except ImportError:
 translate_cache = {}
 translate_lock  = threading.Lock()
 
+# ============================================================
+# AST TRANSLATE ENGINE — UTF-16 safe, 1 request / message
+# ============================================================
+
+def _u16len(s: str) -> int:
+    """Số UTF-16 code units của string s (cách Telegram tính offset)."""
+    return len(s.encode('utf-16-le')) // 2
+
+
+def _u16slice(text: str, start: int, length: int) -> str:
+    """Cắt text theo UTF-16 offset [start, start+length)."""
+    cur = 0
+    out = []
+    for ch in text:
+        step = _u16len(ch)
+        if cur + step <= start:
+            cur += step
+            continue
+        if cur >= start + length:
+            break
+        out.append(ch)
+        cur += step
+    return ''.join(out)
+
+
+def _ast_build_segments(text: str, entities: list) -> list:
+    """
+    Chia text thành các đoạn nhỏ dựa trên boundary của tất cả entities.
+    Mỗi đoạn là dict {'text': str, 'entities': list[entity]}.
+    Dùng UTF-16 offset — đúng với cách Telegram lưu offset/length.
+    """
+    from copy import deepcopy
+    if not entities:
+        return [{'text': text, 'entities': []}]
+
+    total_u16 = _u16len(text)
+    marks = sorted({0, total_u16} | {e.offset for e in entities} | {e.offset + e.length for e in entities})
+
+    segments = []
+    for i in range(len(marks) - 1):
+        seg_start = marks[i]
+        seg_end   = marks[i + 1]
+        seg_text  = _u16slice(text, seg_start, seg_end - seg_start)
+        seg_ents  = []
+        for e in entities:
+            e_start = e.offset
+            e_end   = e.offset + e.length
+            if seg_start >= e_start and seg_end <= e_end:
+                seg_ents.append(deepcopy(e))
+        segments.append({'text': seg_text, 'entities': seg_ents})
+    return segments
+
+
+def _ast_render(segments: list):
+    """
+    Ghép các segment đã dịch thành (final_text, final_entities).
+    Merge các entity liền kề cùng type + url để tránh entity bị vỡ vụn.
+    """
+    from copy import deepcopy
+    try:
+        from telethon.tl.types import MessageEntityTextUrl
+        _TextUrl = MessageEntityTextUrl
+    except ImportError:
+        _TextUrl = None
+
+    final_text = ''
+    final_entities = []
+    cursor = 0  # UTF-16 cursor
+
+    for seg in segments:
+        seg_text = seg['text']
+        seg_u16  = _u16len(seg_text)
+        final_text += seg_text
+        for ent in seg['entities']:
+            new_ent = deepcopy(ent)
+            new_ent.offset = cursor
+            new_ent.length = seg_u16
+            if _TextUrl and isinstance(ent, _TextUrl):
+                new_ent.url = ent.url
+            final_entities.append(new_ent)
+        cursor += seg_u16
+
+    # Merge entity liền kề cùng type + url
+    merged = []
+    for e in final_entities:
+        if (
+            merged
+            and type(merged[-1]) is type(e)
+            and getattr(merged[-1], 'url', None) == getattr(e, 'url', None)
+            and merged[-1].offset + merged[-1].length == e.offset
+        ):
+            merged[-1].length += e.length
+        else:
+            merged.append(e)
+
+    return final_text, merged
+
+
+async def _ast_batch_translate_gemini(segs_text: list, alias: str, ki: int, api_key: str) -> list:
+    """
+    Gửi 1 Gemini request dịch toàn bộ segments dưới dạng JSON array.
+    Trả về list[str] cùng độ dài, hoặc raise exception nếu lỗi.
+    """
+    import asyncio
+    _lang = _LANG_NAME.get(translate_target_lang, translate_target_lang)
+    model_name = _GPOOL_MODELS[alias]
+
+    prompt = (
+        f'Translate every string in the JSON array below to {_lang}.\n'
+        'RULES:\n'
+        '- Return a JSON array only, same number of elements, same order.\n'
+        '- No markdown, no code block, no explanation.\n'
+        '- Preserve newlines, emoji, and special characters exactly.\n'
+        '- Do NOT translate tokens matching URLTOK\\d+END — keep them verbatim.\n\n'
+        'INPUT:\n' + json.dumps(segs_text, ensure_ascii=False)
+    )
+    payload = json.dumps({
+        'contents': [{'parts': [{'text': prompt}]}],
+        'generationConfig': {'temperature': 0.1, 'maxOutputTokens': 8192},
+    }).encode('utf-8')
+    url = (
+        f'https://generativelanguage.googleapis.com/v1beta/models/'
+        f'{model_name}:generateContent?key={api_key}'
+    )
+
+    loop = asyncio.get_event_loop()
+    def _do_request():
+        req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(req, timeout=45) as resp:
+            return json.loads(resp.read())
+
+    rdata = await loop.run_in_executor(None, _do_request)
+    raw = rdata['candidates'][0]['content']['parts'][0]['text'].strip()
+    raw = re.sub(r'^```json\s*', '', raw)
+    raw = re.sub(r'^```\s*',     '', raw)
+    raw = re.sub(r'\s*```$',     '', raw).strip()
+    parsed = json.loads(raw)
+    if not isinstance(parsed, list) or len(parsed) != len(segs_text):
+        raise ValueError(f'Gemini count mismatch: got {len(parsed) if isinstance(parsed, list) else "?"}, expected {len(segs_text)}')
+    return [str(x) for x in parsed]
+
+
+async def _ast_translate_with_entities(raw_text: str, entities: list, force_google: bool = False):
+    """
+    Entry point async cho AST engine.
+    Trả về (translated_text, new_entities, engine_used).
+    - new_entities: list entity đã cập nhật offset/length đúng UTF-16
+    - engine_used: alias string
+    """
+    import asyncio
+    from copy import deepcopy
+
+    if not raw_text or not raw_text.strip():
+        return raw_text, [], 'none'
+
+    if not entities:
+        # Không có entity → plain text, gọi engine sync qua executor
+        loop = asyncio.get_event_loop()
+        result, _, eng = await loop.run_in_executor(
+            None,
+            lambda: translate_with_entities(raw_text, None, force_google)
+        )
+        return result, [], eng
+
+    # Mask URL để bảo vệ link khỏi bị dịch
+    url_ph: dict = {}
+    def _mask(m):
+        tok = f'URLTOK{len(url_ph)}END'
+        url_ph[tok] = m.group(0)
+        return tok
+
+    NL = '⏎NL⏎'
+
+    # Build segments từ entities gốc
+    segments = _ast_build_segments(raw_text, entities)
+
+    # Chuẩn bị list text để dịch (chỉ segment có text thật)
+    translatable_idx = [i for i, s in enumerate(segments) if s['text'].strip()]
+    segs_masked = []
+    for i in translatable_idx:
+        t = re.sub(r'https?://[^\s\)<>]+', _mask, segments[i]['text'])
+        t = t.replace('\n', NL)
+        segs_masked.append(t)
+
+    segs_out = None
+    engine_used = 'none'
+
+    # ── Gemini (async, 1 request) ──────────────────────────────
+    if not force_google and GEMINI_API_KEYS:
+        tried_slots: set = set()
+        with _gemini_pool.translate_context():
+            while True:
+                slot = _gemini_pool.pick_slot()
+                if not slot:
+                    break
+                alias, ki, api_key = slot
+                if (alias, ki) in tried_slots:
+                    break
+                tried_slots.add((alias, ki))
+                try:
+                    segs_out = await _ast_batch_translate_gemini(segs_masked, alias, ki, api_key)
+                    _gemini_pool.record_success(alias, ki)
+                    engine_used = alias
+                    break
+                except Exception as _ge:
+                    is_rl = '429' in str(_ge) or 'quota' in str(_ge).lower()
+                    _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl)
+                    if is_rl:
+                        break
+                    print(f'[AST] Gemini {alias}[key{ki}] lỗi: {_ge} — thử slot khác')
+
+    # ── DeepL fallback (sync qua executor) ────────────────────
+    if segs_out is None and not force_google and DEEPL_API_KEY:
+        loop = asyncio.get_event_loop()
+        try:
+            _base = 'api-free.deepl.com' if DEEPL_API_KEY.endswith(':fx') else 'api.deepl.com'
+            dl_results = []
+            for _seg in segs_masked:
+                def _dl_call(seg=_seg):
+                    pl = urllib.parse.urlencode({
+                        'auth_key': DEEPL_API_KEY,
+                        'text': seg[:4000],
+                        'target_lang': translate_target_lang.upper(),
+                        'source_lang': 'auto',
+                    }).encode('utf-8')
+                    req = urllib.request.Request(
+                        f'https://{_base}/v2/translate', data=pl,
+                        headers={'Content-Type': 'application/x-www-form-urlencoded'}
+                    )
+                    with urllib.request.urlopen(req, timeout=15) as r:
+                        return json.loads(r.read())['translations'][0]['text']
+                dl_results.append(await loop.run_in_executor(None, _dl_call))
+            segs_out = dl_results
+            engine_used = 'DL'
+        except Exception as _dle:
+            print(f'[AST] DeepL lỗi: {_dle}')
+            segs_out = None
+
+    # ── Google fallback (sync qua executor) ───────────────────
+    if segs_out is None:
+        loop = asyncio.get_event_loop()
+        _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
+        gt_results = []
+        for _seg in segs_masked:
+            def _gt_call(seg=_seg):
+                try:
+                    return _GoogleTranslator(source='auto', target=_gtarget).translate(seg) or seg
+                except Exception:
+                    return seg
+            gt_results.append(await loop.run_in_executor(None, _gt_call))
+        segs_out = gt_results
+        engine_used = 'GT'
+
+    # Restore URL và newline vào kết quả dịch
+    for k, orig_idx in enumerate(translatable_idx):
+        restored = segs_out[k].replace(NL, '\n')
+        for tok, url_val in url_ph.items():
+            restored = restored.replace(tok, url_val)
+        segments[orig_idx]['text'] = restored or segments[orig_idx]['text']
+
+    # Render thành text + entities đúng UTF-16 offset
+    final_text, new_entities = _ast_render(segments)
+    return final_text, new_entities, engine_used
+
+# ============================================================
+# END AST TRANSLATE ENGINE
+# ============================================================
+
 # Telethon state
 tg_client        = None
 tg_api_id        = None
@@ -1172,16 +1440,27 @@ def translate_with_entities(raw_text, entities=None, force_google=False):
             result = result.replace(tok, url)
         return result
 
-    # ── Entity-based translate ────────────────────────────────────
+    # ── Entity-based translate → delegate sang AST engine (UTF-16 safe) ──
     if entities:
+        # Chạy async AST engine trên tg_loop, block thread hiện tại chờ kết quả.
+        # An toàn vì hàm này luôn được gọi từ sync worker thread, không bao giờ
+        # gọi từ bên trong tg_loop (tránh deadlock).
+        try:
+            _txt, _ents, _eng = tg_run(
+                _ast_translate_with_entities(raw_text, entities, force_google)
+            )
+            return _txt, _ents if _ents else None, _eng
+        except Exception as _ast_err:
+            print(f'[AST] Lỗi, fallback plain text: {_ast_err}')
+            # Nếu AST engine lỗi → fallback dịch plain text, mất format nhưng không crash
+            result = _translate_segment(raw_text)
+            return result, None, _engine_used[0]
+
+        # ── (code cũ bên dưới đã được thay thế bởi AST engine) ──
+        # Giữ lại block này dưới dạng dead-code phòng khi cần rollback nhanh.
+        # DEAD CODE BEGIN (không bao giờ chạy tới)
         from copy import deepcopy
         ents = sorted(entities, key=lambda e: e.offset)
-
-        # Loại bỏ overlapping entities — Telegram cho phép overlap (bold + italic
-        # trên cùng range), nhưng split theo range sẽ tạo duplicate text segment.
-        # skip khỏi split — text không bị duplicate. Formatting của
-        # entity bị skip có thể mất (bold+italic overlap), đây là trade-off
-        # chấp nhận được để tránh duplicate nội dung.
         non_overlap_ents = []
         _last_end = 0
         for ent in ents:
@@ -5045,29 +5324,65 @@ def _do_forward(processed, category, url):
                 if channel_name:
                     caption += f'\n\n<i>{channel_name}</i>'
 
-                # Nếu tin có entity-based translation → build _fmt_text đầy đủ
-                # (prefix + body + suffix) rồi shift entity offsets theo len(prefix_plain)
-                # để path formatting_entities trong _tg_send_item gửi đúng format
+                # Nếu tin có entity-based translation → build _fmt_text + entities đầy đủ.
+                # Prefix/suffix đều là entity thật: không URL nổi, không duplicate.
                 if it.get('_tg_translated_entities') is not None and it.get('_tg_translated_text'):
                     from copy import deepcopy as _dc
-                    _body_text = it['_tg_translated_text']
-                    # Prefix plain (không HTML tag)
+                    try:
+                        from telethon.tl.types import (
+                            MessageEntityBold as _MEB,
+                            MessageEntityItalic as _MEI,
+                            MessageEntityTextUrl as _METU,
+                        )
+                        _has_tl = True
+                    except ImportError:
+                        _has_tl = False
+
+                    _body_text  = it['_tg_translated_text']
+                    _prefix_ents = []
+                    _new_body_ents = []
+                    _suffix_text = ''
+                    _suffix_ents = []
+
+                    # ── Prefix: "GM2.5: " → Bold entity ──────────────────
                     _prefix_plain = f'{_eng_prefix}: ' if _eng_prefix and _body_text.strip() else ''
-                    # Suffix plain (Xem bài gốc + channel name, không HTML tag)
-                    _suffix_plain = ''
-                    if show_link and it.get('link'):
-                        _suffix_plain += f'\n\nXem bài g\u1ed1c \u2192 {it["link"]}'
-                    if channel_name:
-                        _suffix_plain += f'\n\n{channel_name}'
-                    # Shift tất cả entity offsets theo len(prefix_plain)
-                    _shift = len(_prefix_plain)
-                    _new_ents = []
+                    if _prefix_plain and _has_tl:
+                        _prefix_ents = [_MEB(offset=0, length=_u16len(_prefix_plain))]
+
+                    # ── Shift body entities sang phải theo prefix ─────────
+                    _shift = _u16len(_prefix_plain)
                     for _e in it['_tg_translated_entities']:
                         _ec = _dc(_e)
                         _ec.offset += _shift
-                        _new_ents.append(_ec)
-                    it['_tg_translated_text']     = _prefix_plain + _body_text + _suffix_plain
-                    it['_tg_translated_entities'] = _new_ents
+                        _new_body_ents.append(_ec)
+
+                    # ── Suffix: "Xem bài gốc →" → TextUrl entity (hidden) ─
+                    _cur = _shift + _u16len(_body_text)
+                    if show_link and it.get('link'):
+                        _lbl    = 'Xem b\u00e0i g\u1ed1c \u2192'
+                        _lpre   = '\n\n'
+                        _suffix_text += _lpre + _lbl
+                        if _has_tl:
+                            _suffix_ents.append(
+                                _METU(offset=_cur + _u16len(_lpre),
+                                      length=_u16len(_lbl),
+                                      url=it['link'])
+                            )
+                        _cur += _u16len(_lpre + _lbl)
+
+                    # ── Suffix: channel name → Italic entity ─────────────
+                    if channel_name:
+                        _cpre = '\n\n'
+                        _suffix_text += _cpre + channel_name
+                        if _has_tl:
+                            _suffix_ents.append(
+                                _MEI(offset=_cur + _u16len(_cpre),
+                                     length=_u16len(channel_name))
+                            )
+
+                    # ── Ghép lại ─────────────────────────────────────────
+                    it['_tg_translated_text']     = _prefix_plain + _body_text + _suffix_text
+                    it['_tg_translated_entities'] = _prefix_ents + _new_body_ents + _suffix_ents
 
 
                 # Dedup per guid+dest+topic — tránh gửi trùng khi nhiều job song song

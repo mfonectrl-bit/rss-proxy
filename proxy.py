@@ -5045,9 +5045,34 @@ def _do_forward(processed, category, url):
                     caption = f'<b>{_eng_prefix}:</b> ' + caption
 
                 if show_link and it.get('link'):
-                    caption += f'\n\n<a href="{it["link"]}">Xem bài gốc →</a>'
+                    caption += f'\n\n<a href="{it["link"]}">Xem bài gốc \u2192</a>'
                 if channel_name:
                     caption += f'\n\n<i>{channel_name}</i>'
+
+                # Nếu tin có entity-based translation → build _fmt_text đầy đủ
+                # (prefix + body + suffix) rồi shift entity offsets theo len(prefix_plain)
+                # để path formatting_entities trong _tg_send_item gửi đúng format
+                if it.get('_tg_translated_entities') is not None and it.get('_tg_translated_text'):
+                    from copy import deepcopy as _dc
+                    _body_text = it['_tg_translated_text']
+                    # Prefix plain (không HTML tag)
+                    _prefix_plain = f'{_eng_prefix}: ' if _eng_prefix and _body_text.strip() else ''
+                    # Suffix plain (Xem bài gốc + channel name, không HTML tag)
+                    _suffix_plain = ''
+                    if show_link and it.get('link'):
+                        _suffix_plain += f'\n\nXem bài g\u1ed1c \u2192 {it["link"]}'
+                    if channel_name:
+                        _suffix_plain += f'\n\n{channel_name}'
+                    # Shift tất cả entity offsets theo len(prefix_plain)
+                    _shift = len(_prefix_plain)
+                    _new_ents = []
+                    for _e in it['_tg_translated_entities']:
+                        _ec = _dc(_e)
+                        _ec.offset += _shift
+                        _new_ents.append(_ec)
+                    it['_tg_translated_text']     = _prefix_plain + _body_text + _suffix_plain
+                    it['_tg_translated_entities'] = _new_ents
+
 
                 # Dedup per guid+dest+topic — tránh gửi trùng khi nhiều job song song
                 _fwd_key = f'{it.get("guid","")}|{dest}|{topic_id}'
@@ -5593,6 +5618,9 @@ def _process_tg_queue():
                 '_tg_has_hidden_link': it.get('_tg_has_hidden_link', False),
                 '_tg_has_format': it.get('_tg_has_format', False),
                 '_tg_html_text': it.get('_tg_html_text', ''),
+                # Cần thiết để translate_with_entities bảo toàn bold/italic/link ẩn
+                '_tg_raw_text': it.get('_tg_raw_text', ''),
+                '_tg_entities': it.get('_tg_entities') or [],
             }
 
             if not do_translate:

@@ -1126,13 +1126,30 @@ async def _ast_translate_with_entities(raw_text: str, entities: list, force_goog
         return tok
 
     NL = '⏎NL⏎'
+    NL = '⏎NL⏎'
     segments = _ast_build_segments(raw_text, entities)
-    translatable_idx = [i for i, s in enumerate(segments) if s['text'].strip()]
+
+    # Xác định segment nào cần dịch:
+    # - Có text thật (không chỉ whitespace)
+    # - KHÔNG phải segment thuần URL (MessageEntityUrl) — URL không được dịch,
+    #   và mask/restore URL trong segment là URL sẽ gây mismatch offset/length
+    #   nếu Gemini biến đổi token dù có instruction giữ nguyên.
+    try:
+        from telethon.tl.types import MessageEntityUrl as _MEUrl
+        _is_url_entity = lambda ents: any(isinstance(e, _MEUrl) for e in ents)
+    except ImportError:
+        _is_url_entity = lambda ents: False
+
+    translatable_idx = [
+        i for i, s in enumerate(segments)
+        if s['text'].strip() and not _is_url_entity(s['entities'])
+    ]
     segs_masked = []
     for i in translatable_idx:
         t = re.sub(r'https?://[^\s\)<>]+', _mask, segments[i]['text'])
         t = t.replace('\n', NL)
         segs_masked.append(t)
+
 
     segs_out = None
     engine_used = 'none'
@@ -1472,12 +1489,18 @@ def translate_with_entities(raw_text, entities=None, force_google=False):
 
     # ── Entity-based translate → delegate sang AST engine (UTF-16 safe) ──
     if entities:
-        # asyncio.run() tạo event loop riêng trên worker thread hiện tại —
-        # hoàn toàn tách biệt khỏi tg_loop, không block Telethon.
+        # Dùng new_event_loop() tường minh thay vì asyncio.run() —
+        # asyncio.run() raise RuntimeError nếu thread đã có loop đang chạy
+        # (Python 3.10+ có thể attach loop vào ThreadPoolExecutor worker thread).
+        # new_event_loop() luôn tạo loop mới, độc lập, an toàn.
         try:
-            _txt, _ents, _eng = asyncio.run(
-                _ast_translate_with_entities(raw_text, entities, force_google)
-            )
+            _loop = asyncio.new_event_loop()
+            try:
+                _txt, _ents, _eng = _loop.run_until_complete(
+                    _ast_translate_with_entities(raw_text, entities, force_google)
+                )
+            finally:
+                _loop.close()
             return _txt, _ents if _ents else None, _eng
         except Exception as _ast_err:
             print(f'[AST] Lỗi, fallback plain text: {_ast_err}')
@@ -5221,13 +5244,35 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
             # Kiểm tra xem có entity-based translation không (bảo toàn bold/italic)
             _fmt_entities = item.get('_tg_translated_entities')
             _fmt_text     = item.get('_tg_translated_text', '')
-            if _fmt_entities and _fmt_text:
-                # Dùng formatting_entities — không cần parse_mode, format bảo toàn 100%
-                for chunk in _split_text(_fmt_text, 4096):
-                    await tg_client.send_message(dest, chunk,
+
+            # Bug fix: dùng `_fmt_entities is not None` thay vì `_fmt_entities and`
+            # vì _fmt_entities có thể là [] (list rỗng) → falsy → skip entity path
+            # nhưng _fmt_text vẫn hợp lệ và cần gửi.
+            # Bug fix: không dùng _split_text với formatting_entities vì entities có
+            # offset tuyệt đối — khi text bị split, chunk 2+ có offset sai.
+            # Giải pháp: gửi nguyên nếu ≤ 4096; nếu > 4096 chunk sau gửi plain.
+            if _fmt_entities is not None and _fmt_text:
+                if len(_fmt_text) <= 4096:
+                    # Trường hợp phổ biến: gửi 1 lần, entities đúng offset
+                    await tg_client.send_message(dest, _fmt_text,
                                                  formatting_entities=_fmt_entities,
                                                  reply_to=thread_reply,
                                                  link_preview=show_preview)
+                else:
+                    # Text dài bất thường: chunk đầu với entities, còn lại plain
+                    first_chunk = _fmt_text[:4096]
+                    rest        = _fmt_text[4096:]
+                    # Lọc entities nằm hoàn toàn trong chunk đầu
+                    first_ents = [e for e in _fmt_entities
+                                  if e.offset + e.length <= len(first_chunk.encode('utf-16-le')) // 2]
+                    await tg_client.send_message(dest, first_chunk,
+                                                 formatting_entities=first_ents,
+                                                 reply_to=thread_reply,
+                                                 link_preview=show_preview)
+                    for chunk in _split_text(rest, 4096):
+                        await tg_client.send_message(dest, chunk,
+                                                     reply_to=thread_reply,
+                                                     link_preview=False)
             else:
                 for chunk in _split_text(caption, 4096):
                     await tg_client.send_message(dest, chunk, parse_mode='html',

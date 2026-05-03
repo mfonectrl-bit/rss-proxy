@@ -100,7 +100,6 @@ class GeminiPool:
 
     def __init__(self, keys: List[str], system_loaded_fn: Callable[[], bool] = lambda: True):
         self._keys:      List[str] = list(keys)
-        self._is_loaded: Callable  = system_loaded_fn
         self._lock       = threading.Lock()
         self._sem        = threading.Semaphore(MAX_CONCURRENT_TRANSLATES)
 
@@ -140,7 +139,7 @@ class GeminiPool:
         Trả về (model_alias, key_index, api_key) hoặc None nếu không có slot khả dụng.
         Round-robin theo weighted cycle, skip slot đang trong retry_after.
         """
-        if not self._keys or not self._is_loaded():
+        if not self._keys:
             return None
 
         now    = time.time()

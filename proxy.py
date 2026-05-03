@@ -668,7 +668,6 @@ from gemini_pool_sync import GeminiPool, GEMINI_MODELS as _GPOOL_MODELS, GEMINI_
 
 _gemini_pool = GeminiPool(
     keys=GEMINI_API_KEYS,
-    system_loaded_fn=lambda: _system_fully_loaded,
 )
 # Alias backward-compat cho các caller chưa đổi tên
 _engine_dispatcher = _gemini_pool
@@ -723,7 +722,7 @@ def _dispatcher_translate(text, preferred=None):
     Drop-in replacement cho _engine_dispatcher.translate() cũ.
     Dùng trong _fast_translate(). Trả về (result, engine_label).
     """
-    if GEMINI_API_KEYS and _system_fully_loaded:
+    if GEMINI_API_KEYS:
         try:
             return _gemini_translate_inner(text, is_html=False)
         except RuntimeError:
@@ -1095,10 +1094,9 @@ def translate_with_entities(raw_text, entities=None, force_google=False):
     2. Nếu không có entities → plain text translate
 
     Engine priority:
-    - force_google=True hoặc chưa fully loaded  → Google Translate
-    - Gemini available (_system_fully_loaded)    → Gemini (via pool)
-    - Gemini fail                                → DeepL nếu có
-    - DeepL fail / không có                      → Google Translate
+    - force_google=True  → Google Translate (dùng cho history items)
+    - force_google=False → Gemini (via pool) → DeepL → Google
+    - Gemini luôn available với real-time items, không chờ _system_fully_loaded
 
     Target language: lấy từ translate_target_lang global (web UI).
 
@@ -1134,10 +1132,10 @@ def translate_with_entities(raw_text, entities=None, force_google=False):
 
         # Chọn engine
         result = None
-        if not force_google and GEMINI_API_KEYS and _system_fully_loaded:
+        if not force_google and GEMINI_API_KEYS:
             try:
                 result, alias = _gemini_translate_inner(masked, is_html=False)
-                _engine_used[0] = alias  # alias = 'GM3.1', 'GM2.5L', ...
+                _engine_used[0] = alias
             except RuntimeError:
                 result = None
 
@@ -1229,7 +1227,7 @@ def translate_with_entities(raw_text, entities=None, force_google=False):
             segs_out = None  # list[str] kết quả, len == len(translatable)
 
             # ── Gemini: gửi JSON array, nhận JSON array ──────────────
-            if not force_google and GEMINI_API_KEYS and _system_fully_loaded:
+            if not force_google and GEMINI_API_KEYS:
                 try:
                     _lang = _LANG_NAME.get(translate_target_lang, translate_target_lang)
                     _batch_prompt = (
@@ -1492,7 +1490,7 @@ def _translate_with_hidden_links(html_text):
     Dùng weighted round-robin multi-key qua _engine_dispatcher.
     Trả về (translated_text, engine_used, is_html).
     """
-    if GEMINI_API_KEYS and _system_fully_loaded:
+    if GEMINI_API_KEYS:
         try:
             result, alias = _gemini_translate_inner(html_text, is_html=True)
             return result, alias, True

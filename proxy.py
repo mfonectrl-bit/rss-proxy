@@ -4564,33 +4564,27 @@ def process_items(items):
 def process_tg_items(items):
     """
     Dịch TG history items cho /tl_fetch endpoint (do browser gọi khi load UI).
-    Dùng translate_with_entities — bảo toàn bold/italic/underline/link.
-    force_google=True vì history load trước khi Gemini enabled.
+    Dùng Google Translate plain text — 1 request/item, nhanh, không entity-based.
+    Entity-based chỉ dùng cho real-time items qua pipeline.
     """
     if not translate_enabled or not TRANSLATE_AVAILABLE:
         return items
     results = [None] * len(items)
     def do(i, it):
-        raw_text = it.get('_tg_raw_text', '') or ''
-        entities = it.get('_tg_entities', []) or []
+        raw_text   = it.get('_tg_raw_text', '') or ''
         desc_plain = strip_html(it.get('desc', '').replace('<br>', '\n'))
-        check_text = raw_text or desc_plain
-        if not check_text or is_same_as_target(check_text[:200]):
+        text       = raw_text or desc_plain
+        if not text or is_same_as_target(text[:200]):
             results[i] = {**it, 'translated': False}
             return
-        translated_text, new_entities, _eng = translate_with_entities(
-            raw_text or desc_plain, entities or None, force_google=True
-        )
-        if not translated_text or not translated_text.strip():
-            results[i] = {**it, 'translated': False}
-            return
-        title_translated = (translated_text[:80] + '...') if len(translated_text) > 80 else translated_text
+        translated, _ = _translate_google_only(text[:4000])
+        translated = translated or text
+        title_translated = (translated[:80] + '...') if len(translated) > 80 else translated
         results[i] = {
             **it,
             'title': title_translated,
+            'desc':  translated.replace('\n', '<br>'),
             'translated': True,
-            '_tg_translated_text':     translated_text,
-            '_tg_translated_entities': new_entities,
         }
     futures = [_thread_pool.submit(do, i, it) for i, it in enumerate(items)]
     for f in futures:

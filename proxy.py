@@ -5578,7 +5578,7 @@ def _process_tg_queue():
                 known_guids[feed_url].add(it['guid'])
 
         _route = 'pipeline' if do_translate else 'direct'
-        print(f'[+] {len(new_items)} bài mới (real-time → {_route}): {feed_url}')
+        print(f'[+] {len(new_items)} bài mới → {_route}: {feed_url}')
 
         for it in new_items:
             # Khôi phục newline từ <br> trước khi dịch — strip_html thay <br> bằng space

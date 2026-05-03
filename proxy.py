@@ -1096,7 +1096,7 @@ def translate_with_entities(raw_text, entities=None, force_google=False):
     Engine priority:
     - force_google=True  → Google Translate (dùng cho history items)
     - force_google=False → Gemini (via pool) → DeepL → Google
-    - Gemini luôn available với real-time items, không chờ _system_fully_loaded
+    - Gemini luôn available với real-time items (force_google=False)
 
     Target language: lấy từ translate_target_lang global (web UI).
 
@@ -2270,48 +2270,6 @@ threading.Thread(target=_run_cleanup_scheduler, daemon=True, name='CleanupSchedu
 
 # Set chứa các feed URL đã init xong known_guids — chỉ feed nào có trong set mới được forward
 _forward_ready_feeds = set()
-_system_fully_loaded = False   # True sau khi toàn bộ history (RSS + TG) load xong
-
-# --- History load counter — đếm theo số BẢN TIN, không theo số feed ---
-# _items_total  : tổng số bản tin cần load = sum(history_limit) của tất cả feed
-#                 Biết trước vì history_limit đã được set trong config feed.
-# _items_loaded : số bản tin đã broadcast lên UI thành công (chỉ tăng khi thành công,
-#                 không tăng khi lỗi → đảm bảo Gemini enable đúng thời điểm)
-# Được khởi tạo trong poller() sau khi biết danh sách feed.
-_history_lock   = threading.Lock()
-_items_total    = 0   # tổng bản tin history cần load (sum history_limit)
-_items_loaded   = 0   # số bản tin đã broadcast thành công
-
-def _on_items_broadcast(url: str, count: int):
-    """
-    Gọi sau khi broadcast thành công count bản tin history của feed url.
-    Chỉ gọi khi thành công — feed lỗi không được tính.
-    Khi _items_loaded >= _items_total → toàn bộ history đã lên UI → Gemini enabled.
-    Thread-safe.
-    """
-    global _items_loaded, _system_fully_loaded
-    with _history_lock:
-        _items_loaded += count
-        loaded = _items_loaded
-        total  = _items_total
-    print(f'[System] History broadcast: {url[:50]} +{count} → {loaded}/{total} bản tin')
-    if loaded >= total and total > 0 and not _system_fully_loaded:
-        _system_fully_loaded = True
-        print('[System] ✅ Toàn bộ history đã broadcast lên UI — Gemini ENABLED')
-
-def _enable_gemini_after_delay(delay: float = 120.0):
-    """
-    Fallback: enable Gemini sau delay giây — phòng khi tất cả feed đều lỗi
-    hoặc history_limit=0 cho mọi feed → _items_total=0 → không bao giờ trigger.
-    """
-    def _run():
-        global _system_fully_loaded
-        time.sleep(delay)
-        if not _system_fully_loaded:
-            _system_fully_loaded = True
-            print(f'[System] ✅ Fully loaded (fallback timer {int(delay)}s) — Gemini ENABLED')
-    threading.Thread(target=_run, daemon=True, name='GeminiWarmup').start()
-
 
 _watchdog_running = False  # Tránh watchdog chạy trùng
 
@@ -4579,7 +4537,7 @@ def process_items(items):
     """
     Dịch RSS history items cho /fetch endpoint (do browser gọi khi load UI).
     Dùng Google Translate THUẦN — không Gemini, không DeepL.
-    Gemini chỉ dùng sau khi toàn bộ history load xong (_system_fully_loaded).
+    Gemini chỉ dùng cho real-time items (force_google=False).
     """
     if not translate_enabled or not TRANSLATE_AVAILABLE:
         return items
@@ -5460,8 +5418,6 @@ def _poll_one(url_obj):
                 ws_items.append(ws_it)
             if ws_items:
                 broadcast({'type': 'new_items', 'url': url, 'items': ws_items})
-            # Báo số bản tin đã broadcast thành công → tăng counter
-            _on_items_broadcast(url, len(ws_items))
             return True   # Không forward tin cũ
 
         # Bình thường: tìm tin mới
@@ -5544,7 +5500,6 @@ def _init_tg_feed(url_obj):
     Load lịch sử 1 lần khi thêm kênh TG mới — chỉ để hiển thị UI.
     KHÔNG dịch ở đây (tránh chiếm thread pool, block forward).
     KHÔNG forward (đây là tin cũ).
-    Gọi _on_items_broadcast() sau broadcast thành công — không gọi khi lỗi.
     """
     url           = url_obj['url']
     category      = url_obj.get('category', '')
@@ -5555,8 +5510,6 @@ def _init_tg_feed(url_obj):
         with lock:
             known_guids[url] = set()
         print(f'[TG] Bỏ qua lịch sử {channel} (history_limit=0)')
-        # history_limit=0 vẫn phải báo done — counter đã không đếm feed này
-        # (poller chỉ đếm feed có history_limit > 0), nên không cần gọi ở đây
         return
 
     try:
@@ -5570,17 +5523,13 @@ def _init_tg_feed(url_obj):
             known_guids[url] = {it['guid'] for it in items if it['guid']}
 
         # Broadcast thẳng lên UI không qua dịch — nhanh, không tốn pool
-        # Strip các field không JSON serializable (Telethon objects)
         ws_items = [{k: v for k, v in it.items() if k not in _WS_STRIP} for it in items]
         if ws_items:
             broadcast({'type': 'new_items', 'url': url, 'items': ws_items})
         _forward_ready_feeds.add(url)
         print(f'[TG] Load lịch sử {channel}: {len(items)} tin (history_limit={history_limit})')
-        # Báo số bản tin đã broadcast thành công — chỉ gọi khi không lỗi
-        _on_items_broadcast(url, len(ws_items))
     except Exception as e:
         print(f'[!] Load lịch sử lỗi {channel}: {e}')
-        # Không gọi _on_items_broadcast khi lỗi — fallback timer 120s sẽ enable Gemini
 
 
 def _process_tg_queue():
@@ -5689,7 +5638,7 @@ def poller():
     """
     Poller background chính
     """
-    global poll_next_time, _items_total, _items_loaded
+    global poll_next_time
     FAST_INTERVAL    = 60
     fast_next: dict  = {}
     tg_inited: set   = set()
@@ -5697,7 +5646,6 @@ def poller():
     _last_cleanup: float = 0.0
     _last_debug_sec: int = -1
     _last_tg_watchdog: float = 0   # kiểm tra TG connection mỗi 30 phút
-    _history_counter_inited  = False  # chỉ khởi tạo counter 1 lần
 
     print("[POLL] ✅ Background poller STARTED successfully")
 
@@ -5749,7 +5697,6 @@ def poller():
                                     _tg_realtime_last_setup = time.time()
                                     _tg_realtime_last_urls.update(tg_urls_all)
                                     print(f'[TG Watchdog] ✅ Re-register {len(tg_urls_all)} channels (handler bị mất)')
-                                    global _system_fully_loaded
                             else:
                                 print(f'[TG Watchdog] ✅ Handler OK ({len(handlers)} handlers) — không cần re-register')
                         else:
@@ -5759,32 +5706,6 @@ def poller():
                     finally:
                         _watchdog_running = False
                 threading.Thread(target=_watchdog, daemon=True).start()
-
-
-            # --- Init history counter (chỉ 1 lần, sau khi có feed) ---
-            # Đếm theo tổng số BẢN TIN (sum history_limit) — không theo số feed.
-            # Gemini chỉ enable sau khi đủ số bản tin đã broadcast lên UI thành công.
-            if not _history_counter_inited and len(urls) > 0:
-                _history_counter_inited = True
-                rss_items = sum(int(u.get('history_limit', 20))
-                                for u in urls
-                                if not is_tg_source(u['url'])
-                                and int(u.get('history_limit', 20)) > 0)
-                tg_items  = sum(int(u.get('history_limit', 20))
-                                for u in urls
-                                if is_tg_source(u['url'])
-                                and int(u.get('history_limit', 20)) > 0
-                                and TELETHON_AVAILABLE and tg_client is not None)
-                with _history_lock:
-                    _items_total  = rss_items + tg_items
-                    _items_loaded = 0
-                if _items_total == 0:
-                    _system_fully_loaded = True
-                    print('[System] Không có feed history nào — Gemini ENABLED ngay')
-                else:
-                    _enable_gemini_after_delay(120.0)   # fallback phòng tất cả feed lỗi
-                    print(f'[System] History counter: cần load {_items_total} bản tin '
-                          f'(RSS={rss_items}, TG={tg_items}) — Gemini tạm DISABLED')
 
 
             # --- Init history cho TG feed mới ---

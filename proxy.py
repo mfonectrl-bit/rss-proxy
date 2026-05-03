@@ -260,14 +260,6 @@ _read_all_stop_urls = set()
 _read_all_jobs = {}  # {url: {status, done, total, name, current}} — multi-job support
 _read_all_job_lock = threading.Lock()
 
-# === PATCH 5: Global variables missing ===
-_watchdog_running = False
-_tg_realtime_last_setup = 0.0
-_tg_realtime_last_urls = set()
-_cleanup_status = {}
-_cleanup_schedules = {}
-# === END PATCH 5 ===
-
 # Forward count per feed (in-memory, reset khi restart)
 _fwd_counts    = {}   # {url: int}
 _fwd_count_lock = threading.Lock()
@@ -524,18 +516,13 @@ def _notify_error(msg: str, feed_url: str = '', is_test: bool = False):
 
     now = time.time()
     with _feed_error_lock:
-        rec = _feed_errors.setdefault(feed_url, {'count': 0, 'last_notify': 0})
-        
-        rec['count'] = rec.get('count', 0) + 1
-        current_count = rec['count']
-        
-        if current_count < _ERROR_THRESHOLD:
+        rec = _feed_errors.get(feed_url, {'count': 0, 'last_notify': 0})
+        rec['count'] += 1
+        _feed_errors[feed_url] = rec
+        if rec['count'] < _ERROR_THRESHOLD:
             return   # chưa đủ ngưỡng
-        
-        if now - rec.get('last_notify', 0) < _NOTIFY_COOLDOWN:
+        if now - rec['last_notify'] < _NOTIFY_COOLDOWN:
             return   # cooldown chưa hết
-        
-        # Đủ điều kiện notify
         rec['last_notify'] = now
         rec['count'] = 0
 
@@ -722,16 +709,11 @@ def _gemini_translate_inner(text, is_html=False):
                 return result, alias
             except Exception as e:
                 is_rl = '429' in str(e) or 'quota' in str(e).lower()
-                # === PATCH GEMINI 429 ===
-                err_str = str(e).upper()
-                is_rl = any(x in err_str for x in ['429', 'RESOURCE_EXHAUSTED', 'QUOTA', 'RATE LIMIT'])
                 _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl)
                 if is_rl:
-                    # 429 là per-API-key — pool đã cooldown toàn bộ model trên key này.
-                    # KHÔNG raise ngay: tiếp tục loop để pick_slot() chọn key khác còn tốt.
-                    # Chỉ raise khi đã thử tất cả slot hoặc pick_slot() trả None.
-                    print(f'[Translate] {alias}[key{ki}] 429 — thử key khác')
-                    continue
+                    # 429 → không retry sang slot khác, fallback Google ngay
+                    # Pool đã cooldown key này, request tiếp theo tự pick key còn tốt
+                    raise RuntimeError(f'GeminiPool: {alias}[key{ki}] rate_limit — fallback')
                 print(f'[Translate] {alias}[key{ki}] loi: {e} — thu slot tiep')
 
 
@@ -864,16 +846,12 @@ class BatchPipeline:
 
                     if new_entities is not None:
                         # Entity-based result → dùng formatting_entities khi gửi
-                        # KHÔNG xóa _tg_html_text ở đây — _do_forward vẫn cần đọc
-                        # nó để build caption fallback. _tg_send_item ưu tiên
-                        # _tg_translated_entities nên _tg_html_text không gây conflict.
                         item['_tg_translated_text']     = translated_text
                         item['_tg_translated_entities'] = new_entities
+                        item['_tg_html_text']           = ''
                     else:
-                        # Plain text result — vẫn set _tg_translated_text để
-                        # _tg_send_item biết dùng text đã dịch thay vì caption gốc.
-                        item['_tg_translated_text']     = translated_text
-                        item['_tg_translated_entities'] = None
+                        # Plain text result
+                        item['_tg_html_text'] = ''
 
                     item['_translate_engine_used'] = _eng
                     translated = translated_text
@@ -977,13 +955,28 @@ def _u16slice(text: str, start: int, length: int) -> str:
 def _ast_build_segments(text: str, entities: list) -> list:
     """
     Chia text thành các đoạn nhỏ dựa trên boundary của tất cả entities.
+    Mỗi đoạn là dict {'text': str, 'entities': list[entity]}.
+    Dùng UTF-16 offset — đúng với cách Telegram lưu offset/length.
     """
     from copy import deepcopy
     if not entities:
-        return [{'text': text or '', 'entities': []}]
+        return [{'text': text, 'entities': []}]
 
     total_u16 = _u16len(text)
-    marks = sorted({0, total_u16} | {e.offset for e in entities} | {e.offset + e.length for e in entities})
+    # Bug fix: clamp entity end to total_u16 -- out-of-bounds entities
+    # tao ra segment ngoai text, khong match vao segment nao -> _ast_render tra []
+    valid_ents = [e for e in entities
+                  if hasattr(e, "offset") and hasattr(e, "length")
+                  and e.offset >= 0 and e.length > 0
+                  and e.offset < total_u16]
+    if not valid_ents:
+        return [{'text': text, 'entities': []}]
+
+    marks = sorted(
+        {0, total_u16}
+        | {e.offset for e in valid_ents}
+        | {min(e.offset + e.length, total_u16) for e in valid_ents}
+    )
 
     segments = []
     for i in range(len(marks) - 1):
@@ -991,11 +984,16 @@ def _ast_build_segments(text: str, entities: list) -> list:
         seg_end   = marks[i + 1]
         seg_text  = _u16slice(text, seg_start, seg_end - seg_start)
         seg_ents  = []
-        for e in entities:
-            if seg_start >= e.offset and seg_end <= e.offset + e.length:
-                seg_ents.append(deepcopy(e))
+        for e in valid_ents:
+            e_start = e.offset
+            e_end   = min(e.offset + e.length, total_u16)
+            if seg_start >= e_start and seg_end <= e_end:
+                try:
+                    seg_ents.append(deepcopy(e))
+                except Exception:
+                    seg_ents.append(e)  # fallback: dung truc tiep neu deepcopy fail
         segments.append({'text': seg_text, 'entities': seg_ents})
-    return segments or [{'text': text or '', 'entities': []}]
+    return segments
 
 
 def _ast_render(segments: list):
@@ -1144,30 +1142,13 @@ async def _ast_translate_with_entities(raw_text: str, entities: list, force_goog
         return tok
 
     NL = '⏎NL⏎'
-
     segments = _ast_build_segments(raw_text, entities)
-
-    # Xác định segment nào cần dịch:
-    # - Có text thật (không chỉ whitespace)
-    # - KHÔNG phải segment thuần URL (MessageEntityUrl) — URL không được dịch,
-    #   và mask/restore URL trong segment là URL sẽ gây mismatch offset/length
-    #   nếu Gemini biến đổi token dù có instruction giữ nguyên.
-    try:
-        from telethon.tl.types import MessageEntityUrl as _MEUrl
-        _is_url_entity = lambda ents: any(isinstance(e, _MEUrl) for e in ents)
-    except ImportError:
-        _is_url_entity = lambda ents: False
-
-    translatable_idx = [
-        i for i, s in enumerate(segments)
-        if s['text'].strip() and not _is_url_entity(s['entities'])
-    ]
+    translatable_idx = [i for i, s in enumerate(segments) if s['text'].strip()]
     segs_masked = []
     for i in translatable_idx:
         t = re.sub(r'https?://[^\s\)<>]+', _mask, segments[i]['text'])
         t = t.replace('\n', NL)
         segs_masked.append(t)
-
 
     segs_out = None
     engine_used = 'none'
@@ -1248,13 +1229,10 @@ async def _ast_translate_with_entities(raw_text: str, entities: list, force_goog
     # Restore URL + newline
     if segs_out:
         for k, orig_idx in enumerate(translatable_idx):
-            # === PATCH FIX: Bảo vệ IndexError khi segs_out rỗng hoặc translatable_idx không khớp ===
-            if k < len(segs_out):
-                restored = segs_out[k].replace(NL, '\n')
-                for tok, url_val in url_ph.items():
-                    restored = restored.replace(tok, url_val)
-                segments[orig_idx]['text'] = restored or segments[orig_idx]['text']
-            # else: giữ nguyên text gốc (đã có ở _ast_build_segments)
+            restored = segs_out[k].replace(NL, '\n')
+            for tok, url_val in url_ph.items():
+                restored = restored.replace(tok, url_val)
+            segments[orig_idx]['text'] = restored or segments[orig_idx]['text']
 
     final_text, new_entities = _ast_render(segments)
     return final_text, new_entities, engine_used
@@ -1510,25 +1488,191 @@ def translate_with_entities(raw_text, entities=None, force_google=False):
 
     # ── Entity-based translate → delegate sang AST engine (UTF-16 safe) ──
     if entities:
-        # Dùng new_event_loop() tường minh thay vì asyncio.run() —
-        # asyncio.run() raise RuntimeError nếu thread đã có loop đang chạy
-        # (Python 3.10+ có thể attach loop vào ThreadPoolExecutor worker thread).
-        # new_event_loop() luôn tạo loop mới, độc lập, an toàn.
+        # asyncio.run() tạo event loop riêng trên worker thread hiện tại —
+        # hoàn toàn tách biệt khỏi tg_loop, không block Telethon.
         try:
-            _loop = asyncio.new_event_loop()
-            try:
-                _txt, _ents, _eng = _loop.run_until_complete(
-                    _ast_translate_with_entities(raw_text, entities, force_google)
-                )
-            finally:
-                _loop.close()
-            return _txt, _ents if _ents else None, _eng
+            _txt, _ents, _eng = asyncio.run(
+                _ast_translate_with_entities(raw_text, entities, force_google)
+            )
+            # Bug fix: khong convert [] thanh None
+            # [] = valid (khong co entity sau render) -- van set _tg_translated_entities
+            # None = exception path -- moi fallback plain text
+            return _txt, _ents, _eng
         except Exception as _ast_err:
             print(f'[AST] Lỗi, fallback plain text: {_ast_err}')
             result = _translate_segment(raw_text)
             return result, None, _engine_used[0]
 
-        # ── (dead code cũ đã được xóa — AST engine là implementation duy nhất) ──
+        # ── (code cũ bên dưới đã được thay thế bởi AST engine) ──
+        # Giữ lại block này dưới dạng dead-code phòng khi cần rollback nhanh.
+        # DEAD CODE BEGIN (không bao giờ chạy tới)
+        from copy import deepcopy
+        ents = sorted(entities, key=lambda e: e.offset)
+        non_overlap_ents = []
+        _last_end = 0
+        for ent in ents:
+            if ent.offset >= _last_end:
+                non_overlap_ents.append(ent)
+                _last_end = ent.offset + ent.length
+
+        # Split text thành segments dựa trên non_overlap_ents
+        parts = []
+        last = 0
+        for ent in non_overlap_ents:
+            start = ent.offset
+            end   = ent.offset + ent.length
+            if start > last:
+                parts.append({'text': raw_text[last:start], 'entity': None})
+            parts.append({'text': raw_text[start:end], 'entity': ent})
+            last = end
+        if last < len(raw_text):
+            parts.append({'text': raw_text[last:], 'entity': None})
+
+        # ── Batch translate: gom tất cả segments thành 1 JSON request ──
+        # Dùng JSON array thay separator — tránh separator bị dịch mất/biến dạng
+
+        # Chỉ dịch segments có text thật, whitespace/newline giữ nguyên
+        translatable = [(i, p['text']) for i, p in enumerate(parts) if p['text'].strip()]
+        translated_parts = [p['text'] for p in parts]  # default: giữ nguyên
+
+        if translatable:
+            # Mask URL và newline trong từng segment trước khi gửi
+            url_ph = {}
+            def _mask_url(m):
+                tok = f'URLTOK{len(url_ph)}END'
+                url_ph[tok] = m.group(0)
+                return tok
+            NL = '⏎NL⏎'
+
+            segs_masked = []
+            for _, seg in translatable:
+                s = re.sub(r'https?://[^\s\)<>]+', _mask_url, seg)
+                s = s.replace('\n', NL)
+                segs_masked.append(s)
+
+            segs_out = None  # list[str] kết quả, len == len(translatable)
+
+            # ── Gemini: gửi JSON array, nhận JSON array ──────────────
+            if not force_google and GEMINI_API_KEYS:
+                try:
+                    _lang = _LANG_NAME.get(translate_target_lang, translate_target_lang)
+                    _batch_prompt = (
+                        f'Translate every string in the JSON array below to {_lang}.\n'
+                        'RULES:\n'
+                        '- Return a JSON array only, same number of elements, same order.\n'
+                        '- No markdown, no code block, no explanation.\n'
+                        '- Preserve newlines, emoji, special characters exactly.\n'
+                        '- Do NOT translate tokens matching URLTOK\\d+END — keep them verbatim.\n\n'
+                        'INPUT:\n' + json.dumps(segs_masked, ensure_ascii=False)
+                    )
+                    # Dùng GeminiPool qua _gemini_translate_inner nhưng override prompt
+                    # Thực ra ta gọi thẳng _translate_gemini với prompt tùy chỉnh
+                    tried_slots = set()
+                    _alias_used = None
+                    with _gemini_pool.translate_context():
+                        while True:
+                            slot = _gemini_pool.pick_slot()
+                            if not slot:
+                                break
+                            alias, ki, api_key = slot
+                            slot_key = (alias, ki)
+                            if slot_key in tried_slots:
+                                break
+                            tried_slots.add(slot_key)
+                            model_name = _GPOOL_MODELS[alias]
+                            _key = api_key or GEMINI_API_KEY
+                            _payload = json.dumps({
+                                'contents': [{'parts': [{'text': _batch_prompt}]}],
+                                'generationConfig': {'temperature': 0.1, 'maxOutputTokens': 8192},
+                            }).encode('utf-8')
+                            _url = f'https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={_key}'
+                            _req = urllib.request.Request(_url, data=_payload, headers={'Content-Type': 'application/json'})
+                            try:
+                                with urllib.request.urlopen(_req, timeout=45) as _resp:
+                                    _rdata = json.loads(_resp.read())
+                                _raw = _rdata['candidates'][0]['content']['parts'][0]['text'].strip()
+                                # Strip markdown fence nếu model trả về
+                                _raw = re.sub(r'^```json\s*', '', _raw)
+                                _raw = re.sub(r'^```\s*', '', _raw)
+                                _raw = re.sub(r'\s*```$', '', _raw).strip()
+                                _parsed = json.loads(_raw)
+                                if isinstance(_parsed, list) and len(_parsed) == len(segs_masked):
+                                    segs_out = [str(x) for x in _parsed]
+                                    _alias_used = alias
+                                    _gemini_pool.record_success(alias, ki)
+                                    _engine_used[0] = alias
+                                    break
+                                else:
+                                    # Count mismatch → thử slot khác
+                                    print(f'[Translate] Gemini JSON batch count mismatch '
+                                          f'({len(_parsed) if isinstance(_parsed, list) else "?"} vs {len(segs_masked)}) — thử slot khác')
+                                    _gemini_pool.record_failure(alias, ki, is_rate_limit=False)
+                            except Exception as _ge:
+                                is_rl = '429' in str(_ge) or 'quota' in str(_ge).lower()
+                                _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl)
+                                if is_rl:
+                                    break  # rate limit → sang DeepL/Google
+                                print(f'[Translate] Gemini JSON batch {alias}[key{ki}] lỗi: {_ge} — thử slot khác')
+                except Exception as _outer:
+                    print(f'[Translate] Gemini JSON batch outer lỗi: {_outer}')
+                    segs_out = None
+
+            # ── DeepL: gửi từng segment riêng (DeepL không hỗ trợ JSON batch) ──
+            if segs_out is None and not force_google and DEEPL_API_KEY:
+                try:
+                    _base = 'api-free.deepl.com' if DEEPL_API_KEY.endswith(':fx') else 'api.deepl.com'
+                    _dl_results = []
+                    for _seg in segs_masked:
+                        _pl = urllib.parse.urlencode({
+                            'auth_key': DEEPL_API_KEY,
+                            'text': _seg[:4000],
+                            'target_lang': translate_target_lang.upper(),
+                            'source_lang': 'auto',
+                        }).encode('utf-8')
+                        _req = urllib.request.Request(
+                            f'https://{_base}/v2/translate', data=_pl,
+                            headers={'Content-Type': 'application/x-www-form-urlencoded'}
+                        )
+                        with urllib.request.urlopen(_req, timeout=15) as _resp:
+                            _dl_results.append(json.loads(_resp.read())['translations'][0]['text'])
+                    segs_out = _dl_results
+                    _engine_used[0] = 'DL'
+                except Exception:
+                    segs_out = None
+
+            # ── Google: dịch từng segment riêng ──────────────────────
+            if segs_out is None:
+                _gt_results = []
+                for _seg in segs_masked:
+                    try:
+                        _t = _GoogleTranslator(source='auto', target=_gtarget).translate(_seg) or _seg
+                    except Exception:
+                        _t = _seg
+                    _gt_results.append(_t)
+                segs_out = _gt_results
+                _engine_used[0] = 'GT'
+
+            # Restore URL và newline, ghi vào translated_parts
+            for k, (orig_idx, _) in enumerate(translatable):
+                _restored = segs_out[k].replace(NL, '\n')
+                for tok, _url_val in url_ph.items():
+                    _restored = _restored.replace(tok, _url_val)
+                translated_parts[orig_idx] = _restored or parts[orig_idx]['text']
+
+        # Rebuild entities với offset/length mới
+        new_entities = []
+        cursor = 0
+        for i, p in enumerate(parts):
+            t = translated_parts[i]
+            if p['entity'] is not None:
+                ent = deepcopy(p['entity'])
+                ent.offset = cursor
+                ent.length = len(t)
+                new_entities.append(ent)
+            cursor += len(t)
+
+        final_text = ''.join(translated_parts)
+        return final_text, new_entities, _engine_used[0]
 
     # ── Plain text translate (không có entity) ────────────────────
     result = _translate_segment(raw_text)
@@ -5096,35 +5240,13 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
             # Kiểm tra xem có entity-based translation không (bảo toàn bold/italic)
             _fmt_entities = item.get('_tg_translated_entities')
             _fmt_text     = item.get('_tg_translated_text', '')
-
-            # Bug fix: dùng `_fmt_entities is not None` thay vì `_fmt_entities and`
-            # vì _fmt_entities có thể là [] (list rỗng) → falsy → skip entity path
-            # nhưng _fmt_text vẫn hợp lệ và cần gửi.
-            # Bug fix: không dùng _split_text với formatting_entities vì entities có
-            # offset tuyệt đối — khi text bị split, chunk 2+ có offset sai.
-            # Giải pháp: gửi nguyên nếu ≤ 4096; nếu > 4096 chunk sau gửi plain.
-            if _fmt_entities is not None and _fmt_text:
-                if len(_fmt_text) <= 4096:
-                    # Trường hợp phổ biến: gửi 1 lần, entities đúng offset
-                    await tg_client.send_message(dest, _fmt_text,
+            if _fmt_entities and _fmt_text:
+                # Dùng formatting_entities — không cần parse_mode, format bảo toàn 100%
+                for chunk in _split_text(_fmt_text, 4096):
+                    await tg_client.send_message(dest, chunk,
                                                  formatting_entities=_fmt_entities,
                                                  reply_to=thread_reply,
                                                  link_preview=show_preview)
-                else:
-                    # Text dài bất thường: chunk đầu với entities, còn lại plain
-                    first_chunk = _fmt_text[:4096]
-                    rest        = _fmt_text[4096:]
-                    # Lọc entities nằm hoàn toàn trong chunk đầu
-                    first_ents = [e for e in _fmt_entities
-                                  if e.offset + e.length <= len(first_chunk.encode('utf-16-le')) // 2]
-                    await tg_client.send_message(dest, first_chunk,
-                                                 formatting_entities=first_ents,
-                                                 reply_to=thread_reply,
-                                                 link_preview=show_preview)
-                    for chunk in _split_text(rest, 4096):
-                        await tg_client.send_message(dest, chunk,
-                                                     reply_to=thread_reply,
-                                                     link_preview=False)
             else:
                 for chunk in _split_text(caption, 4096):
                     await tg_client.send_message(dest, chunk, parse_mode='html',
@@ -5482,15 +5604,11 @@ def _run_read_all_bg(url, feed_cfg):
                     translated = msg_text
                     _eng = 'none'
                 if new_ents is not None:
-                    # Entity-based: format (bold/italic/link ẩn) được bảo toàn đầy đủ
-                    # KHÔNG xóa _tg_html_text — _do_forward có thể cần đọc để build caption
                     item["_tg_translated_text"]     = translated
                     item["_tg_translated_entities"] = new_ents
+                    item["_tg_html_text"]           = ''
                 else:
-                    # Plain text: không có entity nhưng vẫn set translated_text
-                    # để _tg_send_item biết dùng text đã dịch.
-                    item["_tg_translated_text"]     = translated
-                    item["_tg_translated_entities"] = None
+                    item["_tg_html_text"] = ''
                 item["_translate_engine_used"] = _eng
                 item["desc"] = translated
                 item["title"] = (translated[:80] + "...") if len(translated) > 80 else translated
@@ -6001,18 +6119,6 @@ def poller():
                 _last_cleanup = now
                 _cleanup_known_guids()
                 _memory_cleanup()
-                
-                # === PATCH #3: Cleanup _read_all_jobs để tránh memory leak ===
-                with _read_all_job_lock:
-                    for url in list(_read_all_jobs.keys()):
-                        job = _read_all_jobs.get(url)
-                        if job and job.get('status') in ('done', 'error', 'stopped'):
-                            _read_all_jobs.pop(url, None)
-                    # Xóa các stop flag cũ
-                    if _read_all_stop_urls:
-                        _read_all_stop_urls.clear()
-                # === END PATCH #3 ===
-                
                 # Trim fast_next — xóa URLs không còn trong watched_urls
                 with lock:
                     active_urls = {u['url'] for u in watched_urls}
@@ -6712,25 +6818,14 @@ class HttpHandler(BaseHTTPRequestHandler):
             with _read_all_job_lock:
                 existing = _read_all_jobs.get(url)
                 if existing and existing.get('status') == 'running' and url not in _read_all_stop_urls:
-                    done_n = existing['done']
-                    total_n = existing['total']
+                    done_n = existing['done']; total_n = existing['total']
                     self._json({'error': 'blocked', 'msg': f'Đang có job chạy ngầm cho kênh này ({done_n}/{total_n} tin)'}); return
-                
-                # Reset stop flag và job cũ
-                _read_all_stop_urls.discard(url)
+                # Job mới (hoặc restart sau khi done/error/stopped):
+                # Reset known_guids[url] để job chạy lại từ đầu và đếm đúng
                 if existing and existing.get('status') in ('done', 'error', 'stopped'):
                     with lock:
                         known_guids.pop(url, None)
-                
-                # Tạo job mới
-                _read_all_jobs[url] = {
-                    'url': url, 
-                    'name': feed_cfg.get('name', url), 
-                    'done': 0, 
-                    'total': 0, 
-                    'status': 'running', 
-                    'current': 'Đang khởi động...'
-                }
+                _read_all_jobs[url] = {'url': url, 'name': feed_cfg.get('name', url), 'done': 0, 'total': 0, 'status': 'running', 'current': 'Đang khởi động...'}
             _read_all_stop_urls.discard(url)  # reset stop flag cho url này
             threading.Thread(target=_run_read_all_bg, args=(url, feed_cfg), daemon=True, name='ReadAllBG').start()
             self._json({'ok': True, 'msg': 'Job chạy ngầm đã bắt đầu'})
@@ -6781,62 +6876,6 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
         if isinstance(exc, BrokenPipeError):
             return
         super().handle_error(request, client_address)
-
-# === PATCH 8: Stub cho các hàm missing / undefined ===
-def _fix_html_spacing(text: str) -> str:
-    """Fix spacing sau khi dịch HTML."""
-    if not text:
-        return text
-    # Thay thế khoảng trắng thừa quanh tag
-    text = re.sub(r'\s+<', '<', text)
-    text = re.sub(r'>\s+', '> ', text)
-    return text.strip()
-
-def _translate_gemini(text: str, model: str = None, api_key: str = None):
-    """Fallback placeholder."""
-    return text
-
-def _translate_gemini_html(text: str, model: str = None, api_key: str = None):
-    """HTML translate placeholder."""
-    return text
-
-def _cleanup_known_guids():
-    """Dọn dẹp known_guids cũ."""
-    global known_guids
-    with lock:
-        now = time.time()
-        to_remove = []
-        for url, guids in known_guids.items():
-            if len(guids) > 10000:  # Giới hạn size
-                to_remove.append(url)
-        for url in to_remove:
-            known_guids.pop(url, None)
-
-def _memory_cleanup():
-    """Cleanup memory nhẹ."""
-    import gc
-    gc.collect()
-
-# Stub cho các hàm Telethon realtime (tránh crash)
-def tg_setup_realtime_sync(urls):
-    print(f'[TG] Stub: Setup realtime cho {len(urls)} channels')
-
-def _tg_setup_realtime(urls):
-    print(f'[TG] Stub: Realtime setup cho {len(urls)} urls')
-
-def _init_tg_feed(url_obj):
-    print(f'[TG] Stub: Init history cho {url_obj.get("url","?")}')
-
-def _process_tg_queue():
-    pass  # placeholder
-
-# Stub cho cleanup schedule
-def _load_cleanup_schedules():
-    pass
-
-def _persist_cleanup_schedules():
-    pass
-# === END PATCH 8 ===
 
 if __name__ == '__main__':
     # === REDIS DEDUPLICATOR ===

@@ -1179,10 +1179,22 @@ def translate_with_entities(raw_text, entities=None, force_google=False):
         from copy import deepcopy
         ents = sorted(entities, key=lambda e: e.offset)
 
-        # Split text thành segments
+        # Loại bỏ overlapping entities — Telegram cho phép overlap (bold + italic
+        # trên cùng range), nhưng split theo range sẽ tạo duplicate text segment.
+        # skip khỏi split — text không bị duplicate. Formatting của
+        # entity bị skip có thể mất (bold+italic overlap), đây là trade-off
+        # chấp nhận được để tránh duplicate nội dung.
+        non_overlap_ents = []
+        _last_end = 0
+        for ent in ents:
+            if ent.offset >= _last_end:
+                non_overlap_ents.append(ent)
+                _last_end = ent.offset + ent.length
+
+        # Split text thành segments dựa trên non_overlap_ents
         parts = []
         last = 0
-        for ent in ents:
+        for ent in non_overlap_ents:
             start = ent.offset
             end   = ent.offset + ent.length
             if start > last:
@@ -5039,8 +5051,16 @@ def _do_forward(processed, category, url):
                     desc_plain = re.sub(r'<[^>]+>', '', desc_plain)
                 else:
                     desc_plain = re.sub(r'<[^>]+>', '', desc_raw)
-                # Nếu có link ẩn → dùng text đã expand (link ẩn → URL nổi ngay tại chỗ)
-                _expanded = _expand_hidden_links_to_text(it)
+                # Nếu có link ẩn VÀ không có entity-based translation:
+                # → dùng HTML expand (link ẩn → <a href>)
+                # Nếu có entity-based translation: path formatting_entities trong
+                # _tg_send_item tự handle link ẩn — không dùng _expanded để tránh
+                # link nổi lộ ra và "Xem bài gốc" bị duplicate.
+                _has_entity_translation = bool(
+                    it.get('_tg_translated_entities') is not None
+                    and it.get('_tg_translated_text')
+                )
+                _expanded = None if _has_entity_translation else _expand_hidden_links_to_text(it)
                 if _expanded:
                     caption = _expanded
                 else:
@@ -5655,7 +5675,8 @@ def _process_tg_queue():
                 pipeline_item['text_translated'] = _raw_text
                 pipeline_item['translated']      = False
                 pipeline_item['_translate_engine_used'] = ''
-                ws_item = {k: v for k, v in pipeline_item.items() if k not in ('_tg_has_media', 'text', 'text_translated')}
+                ws_item = {k: v for k, v in pipeline_item.items()
+                           if k not in _WS_STRIP and k not in ('text', 'text_translated', '_tg_has_media')}
                 broadcast({'type': 'new_items', 'url': feed_url, 'items': [ws_item]})
                 _forward_pool.submit(_do_forward, [pipeline_item], category, feed_url)
             else:

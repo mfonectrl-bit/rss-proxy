@@ -1069,27 +1069,54 @@ async def _ast_batch_translate_gemini(segs_text: list, alias: str, ki: int, api_
     return [str(x) for x in parsed]
 
 
+def _ast_batch_translate_gemini_sync(segs_text: list, alias: str, ki: int, api_key: str) -> list:
+    """
+    Sync version — dùng trong executor để không block event loop.
+    Giống _ast_batch_translate_gemini nhưng gọi urllib trực tiếp (không await).
+    """
+    _lang = _LANG_NAME.get(translate_target_lang, translate_target_lang)
+    model_name = _GPOOL_MODELS[alias]
+    prompt = (
+        f'Translate every string in the JSON array below to {_lang}.\n'
+        'RULES:\n'
+        '- Return a JSON array only, same number of elements, same order.\n'
+        '- No markdown, no code block, no explanation.\n'
+        '- Preserve newlines, emoji, and special characters exactly.\n'
+        '- Do NOT translate tokens matching URLTOK\\d+END — keep them verbatim.\n\n'
+        'INPUT:\n' + json.dumps(segs_text, ensure_ascii=False)
+    )
+    payload = json.dumps({
+        'contents': [{'parts': [{'text': prompt}]}],
+        'generationConfig': {'temperature': 0.1, 'maxOutputTokens': 8192},
+    }).encode('utf-8')
+    url = (
+        f'https://generativelanguage.googleapis.com/v1beta/models/'
+        f'{model_name}:generateContent?key={api_key}'
+    )
+    req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
+    with urllib.request.urlopen(req, timeout=45) as resp:
+        rdata = json.loads(resp.read())
+    raw = rdata['candidates'][0]['content']['parts'][0]['text'].strip()
+    raw = re.sub(r'^```json\s*', '', raw)
+    raw = re.sub(r'^```\s*',     '', raw)
+    raw = re.sub(r'\s*```$',     '', raw).strip()
+    parsed = json.loads(raw)
+    if not isinstance(parsed, list) or len(parsed) != len(segs_text):
+        raise ValueError(
+            f'Gemini count mismatch: got {len(parsed) if isinstance(parsed, list) else "?"}, '
+            f'expected {len(segs_text)}'
+        )
+    return [str(x) for x in parsed]
+
+
 async def _ast_translate_with_entities(raw_text: str, entities: list, force_google: bool = False):
     """
     Entry point async cho AST engine.
+    Chạy trên loop riêng qua asyncio.run() — tách biệt khỏi tg_loop.
     Trả về (translated_text, new_entities, engine_used).
-    - new_entities: list entity đã cập nhật offset/length đúng UTF-16
-    - engine_used: alias string
     """
-    import asyncio
-    from copy import deepcopy
-
     if not raw_text or not raw_text.strip():
         return raw_text, [], 'none'
-
-    if not entities:
-        # Không có entity → plain text, gọi engine sync qua executor
-        loop = asyncio.get_event_loop()
-        result, _, eng = await loop.run_in_executor(
-            None,
-            lambda: translate_with_entities(raw_text, None, force_google)
-        )
-        return result, [], eng
 
     # Mask URL để bảo vệ link khỏi bị dịch
     url_ph: dict = {}
@@ -1099,11 +1126,7 @@ async def _ast_translate_with_entities(raw_text: str, entities: list, force_goog
         return tok
 
     NL = '⏎NL⏎'
-
-    # Build segments từ entities gốc
     segments = _ast_build_segments(raw_text, entities)
-
-    # Chuẩn bị list text để dịch (chỉ segment có text thật)
     translatable_idx = [i for i, s in enumerate(segments) if s['text'].strip()]
     segs_masked = []
     for i in translatable_idx:
@@ -1113,81 +1136,88 @@ async def _ast_translate_with_entities(raw_text: str, entities: list, force_goog
 
     segs_out = None
     engine_used = 'none'
+    loop = asyncio.get_running_loop()
 
-    # ── Gemini (async, 1 request) ──────────────────────────────
-    if not force_google and GEMINI_API_KEYS:
-        tried_slots: set = set()
-        with _gemini_pool.translate_context():
-            while True:
-                slot = _gemini_pool.pick_slot()
-                if not slot:
-                    break
-                alias, ki, api_key = slot
-                if (alias, ki) in tried_slots:
-                    break
-                tried_slots.add((alias, ki))
-                try:
-                    segs_out = await _ast_batch_translate_gemini(segs_masked, alias, ki, api_key)
-                    _gemini_pool.record_success(alias, ki)
-                    engine_used = alias
-                    break
-                except Exception as _ge:
-                    is_rl = '429' in str(_ge) or 'quota' in str(_ge).lower()
-                    _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl)
-                    if is_rl:
-                        break
-                    print(f'[AST] Gemini {alias}[key{ki}] lỗi: {_ge} — thử slot khác')
-
-    # ── DeepL fallback (sync qua executor) ────────────────────
-    if segs_out is None and not force_google and DEEPL_API_KEY:
-        loop = asyncio.get_event_loop()
+    # ── Gemini — wrap toàn bộ vào executor vì semaphore là blocking ──
+    if not force_google and GEMINI_API_KEYS and segs_masked:
+        def _gemini_sync_call():
+            tried = set()
+            with _gemini_pool.translate_context():
+                while True:
+                    slot = _gemini_pool.pick_slot()
+                    if not slot:
+                        return None, 'none'
+                    alias, ki, api_key = slot
+                    if (alias, ki) in tried:
+                        return None, 'none'
+                    tried.add((alias, ki))
+                    try:
+                        result = _ast_batch_translate_gemini_sync(segs_masked, alias, ki, api_key)
+                        _gemini_pool.record_success(alias, ki)
+                        return result, alias
+                    except Exception as _ge:
+                        is_rl = '429' in str(_ge) or 'quota' in str(_ge).lower()
+                        _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl)
+                        if is_rl:
+                            return None, 'none'
+                        print(f'[AST] Gemini {alias}[key{ki}] lỗi: {_ge} — thử slot khác')
+            return None, 'none'
         try:
+            segs_out, engine_used = await loop.run_in_executor(None, _gemini_sync_call)
+        except Exception as _ge_outer:
+            print(f'[AST] Gemini outer lỗi: {_ge_outer}')
+            segs_out = None
+
+    # ── DeepL fallback ─────────────────────────────────────────
+    if segs_out is None and not force_google and DEEPL_API_KEY and segs_masked:
+        def _deepl_sync_call():
             _base = 'api-free.deepl.com' if DEEPL_API_KEY.endswith(':fx') else 'api.deepl.com'
-            dl_results = []
-            for _seg in segs_masked:
-                def _dl_call(seg=_seg):
-                    pl = urllib.parse.urlencode({
-                        'auth_key': DEEPL_API_KEY,
-                        'text': seg[:4000],
-                        'target_lang': translate_target_lang.upper(),
-                        'source_lang': 'auto',
-                    }).encode('utf-8')
-                    req = urllib.request.Request(
-                        f'https://{_base}/v2/translate', data=pl,
-                        headers={'Content-Type': 'application/x-www-form-urlencoded'}
-                    )
-                    with urllib.request.urlopen(req, timeout=15) as r:
-                        return json.loads(r.read())['translations'][0]['text']
-                dl_results.append(await loop.run_in_executor(None, _dl_call))
-            segs_out = dl_results
+            results = []
+            for seg in segs_masked:
+                pl = urllib.parse.urlencode({
+                    'auth_key': DEEPL_API_KEY,
+                    'text': seg[:4000],
+                    'target_lang': translate_target_lang.upper(),
+                    'source_lang': 'auto',
+                }).encode('utf-8')
+                req = urllib.request.Request(
+                    f'https://{_base}/v2/translate', data=pl,
+                    headers={'Content-Type': 'application/x-www-form-urlencoded'}
+                )
+                with urllib.request.urlopen(req, timeout=15) as r:
+                    results.append(json.loads(r.read())['translations'][0]['text'])
+            return results
+        try:
+            segs_out = await loop.run_in_executor(None, _deepl_sync_call)
             engine_used = 'DL'
         except Exception as _dle:
             print(f'[AST] DeepL lỗi: {_dle}')
             segs_out = None
 
-    # ── Google fallback (sync qua executor) ───────────────────
-    if segs_out is None:
-        loop = asyncio.get_event_loop()
+    # ── Google fallback ────────────────────────────────────────
+    if segs_out is None and segs_masked:
         _gtarget = _GOOGLE_LANG_CODE.get(translate_target_lang, translate_target_lang)
-        gt_results = []
-        for _seg in segs_masked:
-            def _gt_call(seg=_seg):
+        def _google_sync_call():
+            results = []
+            for seg in segs_masked:
                 try:
-                    return _GoogleTranslator(source='auto', target=_gtarget).translate(seg) or seg
+                    results.append(
+                        _GoogleTranslator(source='auto', target=_gtarget).translate(seg) or seg
+                    )
                 except Exception:
-                    return seg
-            gt_results.append(await loop.run_in_executor(None, _gt_call))
-        segs_out = gt_results
+                    results.append(seg)
+            return results
+        segs_out = await loop.run_in_executor(None, _google_sync_call)
         engine_used = 'GT'
 
-    # Restore URL và newline vào kết quả dịch
-    for k, orig_idx in enumerate(translatable_idx):
-        restored = segs_out[k].replace(NL, '\n')
-        for tok, url_val in url_ph.items():
-            restored = restored.replace(tok, url_val)
-        segments[orig_idx]['text'] = restored or segments[orig_idx]['text']
+    # Restore URL + newline
+    if segs_out:
+        for k, orig_idx in enumerate(translatable_idx):
+            restored = segs_out[k].replace(NL, '\n')
+            for tok, url_val in url_ph.items():
+                restored = restored.replace(tok, url_val)
+            segments[orig_idx]['text'] = restored or segments[orig_idx]['text']
 
-    # Render thành text + entities đúng UTF-16 offset
     final_text, new_entities = _ast_render(segments)
     return final_text, new_entities, engine_used
 
@@ -1442,17 +1472,15 @@ def translate_with_entities(raw_text, entities=None, force_google=False):
 
     # ── Entity-based translate → delegate sang AST engine (UTF-16 safe) ──
     if entities:
-        # Chạy async AST engine trên tg_loop, block thread hiện tại chờ kết quả.
-        # An toàn vì hàm này luôn được gọi từ sync worker thread, không bao giờ
-        # gọi từ bên trong tg_loop (tránh deadlock).
+        # asyncio.run() tạo event loop riêng trên worker thread hiện tại —
+        # hoàn toàn tách biệt khỏi tg_loop, không block Telethon.
         try:
-            _txt, _ents, _eng = tg_run(
+            _txt, _ents, _eng = asyncio.run(
                 _ast_translate_with_entities(raw_text, entities, force_google)
             )
             return _txt, _ents if _ents else None, _eng
         except Exception as _ast_err:
             print(f'[AST] Lỗi, fallback plain text: {_ast_err}')
-            # Nếu AST engine lỗi → fallback dịch plain text, mất format nhưng không crash
             result = _translate_segment(raw_text)
             return result, None, _engine_used[0]
 

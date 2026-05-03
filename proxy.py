@@ -874,8 +874,9 @@ class BatchPipeline:
                 continue
 
             # 1. Broadcast lên UI ngay
+            _ws_extra = ('text', 'text_translated', '_tg_has_media')
             ws_items = [{k: v for k, v in it.items()
-                         if k not in ('_tg_has_media', 'text', 'text_translated')}
+                         if k not in _WS_STRIP and k not in _ws_extra}
                         for it in processed]
             broadcast({'type': 'new_items', 'url': feed_url, 'items': ws_items})
 
@@ -4803,11 +4804,32 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
             if group_msgs:
                 media_list = [m.media for m in group_msgs[:10]]
 
-                # Nếu caption truyền vào rỗng (media-only), thử lấy text từ msg nguồn
-                if not caption.strip():
+                # Luôn kiểm tra text thật từ album — không chỉ khi caption rỗng.
+                # Pipeline có thể truyền vào caption sai (dịch nhầm [Media] @channel)
+                # khi trigger event là message trong album không có caption.
+                # → Ưu tiên text/entities từ album nếu caption hiện tại không có text thật.
+                def _caption_has_real_text(cap):
+                    """True nếu caption có nội dung thật, không phải [Media] pattern"""
+                    plain = re.sub(r'<[^>]+>', '', cap).strip()
+                    # Loại bỏ prefix engine (GM3.1:, DL:, GT:)
+                    plain = re.sub(r'^[A-Z0-9.]+:\s*', '', plain).strip()
+                    return bool(plain) and not plain.startswith('[Media]')
+
+                if not _caption_has_real_text(caption):
+                    # Tìm message trong album có text thật + entities
                     for gm in group_msgs:
                         if gm and gm.message and gm.message.strip():
-                            caption = gm.message
+                            gm_text = gm.message.strip()
+                            gm_ents = gm.entities or []
+                            # Build HTML nếu có entities, dùng parse_mode='html' khi gửi
+                            if gm_ents:
+                                import telethon.extensions.html as _tg_html_mod
+                                caption = _tg_html_mod.unparse(gm_text, gm_ents)
+                            else:
+                                caption = gm_text
+                            # Clear entity-based path vì caption lấy từ nguồn gốc
+                            item['_tg_translated_entities'] = None
+                            item['_tg_translated_text']     = ''
                             break
 
                 # Chỉ treat là audio group khi TẤT CẢ file đều là pure audio (DocumentAttributeAudio).
@@ -5600,7 +5622,12 @@ def _process_tg_queue():
                 _raw_text = re.sub(r'<[^>]+>', '', _raw_text)
             else:
                 _raw_text = _raw_desc
-            _raw_text = _raw_text or it.get('title', '')
+            # Không fallback vào title khi tin là media-only (title là [Media] @channel)
+            # Nếu desc rỗng → text rỗng → pipeline không dịch → caption rỗng
+            # → _tg_send_item sẽ tự lấy text thật từ album messages
+            _title_fallback = it.get('title', '')
+            if _raw_text or not _title_fallback.startswith('[Media]'):
+                _raw_text = _raw_text or _title_fallback
             pipeline_item = {
                 'text': _raw_text,
                 'feed_url': feed_url,

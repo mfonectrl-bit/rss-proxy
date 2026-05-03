@@ -711,9 +711,11 @@ def _gemini_translate_inner(text, is_html=False):
                 is_rl = '429' in str(e) or 'quota' in str(e).lower()
                 _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl)
                 if is_rl:
-                    # 429 → không retry sang slot khác, fallback Google ngay
-                    # Pool đã cooldown key này, request tiếp theo tự pick key còn tốt
-                    raise RuntimeError(f'GeminiPool: {alias}[key{ki}] rate_limit — fallback')
+                    # 429 là per-API-key — pool đã cooldown toàn bộ model trên key này.
+                    # KHÔNG raise ngay: tiếp tục loop để pick_slot() chọn key khác còn tốt.
+                    # Chỉ raise khi đã thử tất cả slot hoặc pick_slot() trả None.
+                    print(f'[Translate] {alias}[key{ki}] 429 — thử key khác')
+                    continue
                 print(f'[Translate] {alias}[key{ki}] loi: {e} — thu slot tiep')
 
 
@@ -846,12 +848,16 @@ class BatchPipeline:
 
                     if new_entities is not None:
                         # Entity-based result → dùng formatting_entities khi gửi
+                        # KHÔNG xóa _tg_html_text ở đây — _do_forward vẫn cần đọc
+                        # nó để build caption fallback. _tg_send_item ưu tiên
+                        # _tg_translated_entities nên _tg_html_text không gây conflict.
                         item['_tg_translated_text']     = translated_text
                         item['_tg_translated_entities'] = new_entities
-                        item['_tg_html_text']           = ''
                     else:
-                        # Plain text result
-                        item['_tg_html_text'] = ''
+                        # Plain text result — vẫn set _tg_translated_text để
+                        # _tg_send_item biết dùng text đã dịch thay vì caption gốc.
+                        item['_tg_translated_text']     = translated_text
+                        item['_tg_translated_entities'] = None
 
                     item['_translate_engine_used'] = _eng
                     translated = translated_text
@@ -1507,176 +1513,7 @@ def translate_with_entities(raw_text, entities=None, force_google=False):
             result = _translate_segment(raw_text)
             return result, None, _engine_used[0]
 
-        # ── (code cũ bên dưới đã được thay thế bởi AST engine) ──
-        # Giữ lại block này dưới dạng dead-code phòng khi cần rollback nhanh.
-        # DEAD CODE BEGIN (không bao giờ chạy tới)
-        from copy import deepcopy
-        ents = sorted(entities, key=lambda e: e.offset)
-        non_overlap_ents = []
-        _last_end = 0
-        for ent in ents:
-            if ent.offset >= _last_end:
-                non_overlap_ents.append(ent)
-                _last_end = ent.offset + ent.length
-
-        # Split text thành segments dựa trên non_overlap_ents
-        parts = []
-        last = 0
-        for ent in non_overlap_ents:
-            start = ent.offset
-            end   = ent.offset + ent.length
-            if start > last:
-                parts.append({'text': raw_text[last:start], 'entity': None})
-            parts.append({'text': raw_text[start:end], 'entity': ent})
-            last = end
-        if last < len(raw_text):
-            parts.append({'text': raw_text[last:], 'entity': None})
-
-        # ── Batch translate: gom tất cả segments thành 1 JSON request ──
-        # Dùng JSON array thay separator — tránh separator bị dịch mất/biến dạng
-
-        # Chỉ dịch segments có text thật, whitespace/newline giữ nguyên
-        translatable = [(i, p['text']) for i, p in enumerate(parts) if p['text'].strip()]
-        translated_parts = [p['text'] for p in parts]  # default: giữ nguyên
-
-        if translatable:
-            # Mask URL và newline trong từng segment trước khi gửi
-            url_ph = {}
-            def _mask_url(m):
-                tok = f'URLTOK{len(url_ph)}END'
-                url_ph[tok] = m.group(0)
-                return tok
-            NL = '⏎NL⏎'
-
-            segs_masked = []
-            for _, seg in translatable:
-                s = re.sub(r'https?://[^\s\)<>]+', _mask_url, seg)
-                s = s.replace('\n', NL)
-                segs_masked.append(s)
-
-            segs_out = None  # list[str] kết quả, len == len(translatable)
-
-            # ── Gemini: gửi JSON array, nhận JSON array ──────────────
-            if not force_google and GEMINI_API_KEYS:
-                try:
-                    _lang = _LANG_NAME.get(translate_target_lang, translate_target_lang)
-                    _batch_prompt = (
-                        f'Translate every string in the JSON array below to {_lang}.\n'
-                        'RULES:\n'
-                        '- Return a JSON array only, same number of elements, same order.\n'
-                        '- No markdown, no code block, no explanation.\n'
-                        '- Preserve newlines, emoji, special characters exactly.\n'
-                        '- Do NOT translate tokens matching URLTOK\\d+END — keep them verbatim.\n\n'
-                        'INPUT:\n' + json.dumps(segs_masked, ensure_ascii=False)
-                    )
-                    # Dùng GeminiPool qua _gemini_translate_inner nhưng override prompt
-                    # Thực ra ta gọi thẳng _translate_gemini với prompt tùy chỉnh
-                    tried_slots = set()
-                    _alias_used = None
-                    with _gemini_pool.translate_context():
-                        while True:
-                            slot = _gemini_pool.pick_slot()
-                            if not slot:
-                                break
-                            alias, ki, api_key = slot
-                            slot_key = (alias, ki)
-                            if slot_key in tried_slots:
-                                break
-                            tried_slots.add(slot_key)
-                            model_name = _GPOOL_MODELS[alias]
-                            _key = api_key or GEMINI_API_KEY
-                            _payload = json.dumps({
-                                'contents': [{'parts': [{'text': _batch_prompt}]}],
-                                'generationConfig': {'temperature': 0.1, 'maxOutputTokens': 8192},
-                            }).encode('utf-8')
-                            _url = f'https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={_key}'
-                            _req = urllib.request.Request(_url, data=_payload, headers={'Content-Type': 'application/json'})
-                            try:
-                                with urllib.request.urlopen(_req, timeout=45) as _resp:
-                                    _rdata = json.loads(_resp.read())
-                                _raw = _rdata['candidates'][0]['content']['parts'][0]['text'].strip()
-                                # Strip markdown fence nếu model trả về
-                                _raw = re.sub(r'^```json\s*', '', _raw)
-                                _raw = re.sub(r'^```\s*', '', _raw)
-                                _raw = re.sub(r'\s*```$', '', _raw).strip()
-                                _parsed = json.loads(_raw)
-                                if isinstance(_parsed, list) and len(_parsed) == len(segs_masked):
-                                    segs_out = [str(x) for x in _parsed]
-                                    _alias_used = alias
-                                    _gemini_pool.record_success(alias, ki)
-                                    _engine_used[0] = alias
-                                    break
-                                else:
-                                    # Count mismatch → thử slot khác
-                                    print(f'[Translate] Gemini JSON batch count mismatch '
-                                          f'({len(_parsed) if isinstance(_parsed, list) else "?"} vs {len(segs_masked)}) — thử slot khác')
-                                    _gemini_pool.record_failure(alias, ki, is_rate_limit=False)
-                            except Exception as _ge:
-                                is_rl = '429' in str(_ge) or 'quota' in str(_ge).lower()
-                                _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl)
-                                if is_rl:
-                                    break  # rate limit → sang DeepL/Google
-                                print(f'[Translate] Gemini JSON batch {alias}[key{ki}] lỗi: {_ge} — thử slot khác')
-                except Exception as _outer:
-                    print(f'[Translate] Gemini JSON batch outer lỗi: {_outer}')
-                    segs_out = None
-
-            # ── DeepL: gửi từng segment riêng (DeepL không hỗ trợ JSON batch) ──
-            if segs_out is None and not force_google and DEEPL_API_KEY:
-                try:
-                    _base = 'api-free.deepl.com' if DEEPL_API_KEY.endswith(':fx') else 'api.deepl.com'
-                    _dl_results = []
-                    for _seg in segs_masked:
-                        _pl = urllib.parse.urlencode({
-                            'auth_key': DEEPL_API_KEY,
-                            'text': _seg[:4000],
-                            'target_lang': translate_target_lang.upper(),
-                            'source_lang': 'auto',
-                        }).encode('utf-8')
-                        _req = urllib.request.Request(
-                            f'https://{_base}/v2/translate', data=_pl,
-                            headers={'Content-Type': 'application/x-www-form-urlencoded'}
-                        )
-                        with urllib.request.urlopen(_req, timeout=15) as _resp:
-                            _dl_results.append(json.loads(_resp.read())['translations'][0]['text'])
-                    segs_out = _dl_results
-                    _engine_used[0] = 'DL'
-                except Exception:
-                    segs_out = None
-
-            # ── Google: dịch từng segment riêng ──────────────────────
-            if segs_out is None:
-                _gt_results = []
-                for _seg in segs_masked:
-                    try:
-                        _t = _GoogleTranslator(source='auto', target=_gtarget).translate(_seg) or _seg
-                    except Exception:
-                        _t = _seg
-                    _gt_results.append(_t)
-                segs_out = _gt_results
-                _engine_used[0] = 'GT'
-
-            # Restore URL và newline, ghi vào translated_parts
-            for k, (orig_idx, _) in enumerate(translatable):
-                _restored = segs_out[k].replace(NL, '\n')
-                for tok, _url_val in url_ph.items():
-                    _restored = _restored.replace(tok, _url_val)
-                translated_parts[orig_idx] = _restored or parts[orig_idx]['text']
-
-        # Rebuild entities với offset/length mới
-        new_entities = []
-        cursor = 0
-        for i, p in enumerate(parts):
-            t = translated_parts[i]
-            if p['entity'] is not None:
-                ent = deepcopy(p['entity'])
-                ent.offset = cursor
-                ent.length = len(t)
-                new_entities.append(ent)
-            cursor += len(t)
-
-        final_text = ''.join(translated_parts)
-        return final_text, new_entities, _engine_used[0]
+        # ── (dead code cũ đã được xóa — AST engine là implementation duy nhất) ──
 
     # ── Plain text translate (không có entity) ────────────────────
     result = _translate_segment(raw_text)
@@ -5630,11 +5467,15 @@ def _run_read_all_bg(url, feed_cfg):
                     translated = msg_text
                     _eng = 'none'
                 if new_ents is not None:
+                    # Entity-based: format (bold/italic/link ẩn) được bảo toàn đầy đủ
+                    # KHÔNG xóa _tg_html_text — _do_forward có thể cần đọc để build caption
                     item["_tg_translated_text"]     = translated
                     item["_tg_translated_entities"] = new_ents
-                    item["_tg_html_text"]           = ''
                 else:
-                    item["_tg_html_text"] = ''
+                    # Plain text: không có entity nhưng vẫn set translated_text
+                    # để _tg_send_item biết dùng text đã dịch.
+                    item["_tg_translated_text"]     = translated
+                    item["_tg_translated_entities"] = None
                 item["_translate_engine_used"] = _eng
                 item["desc"] = translated
                 item["title"] = (translated[:80] + "...") if len(translated) > 80 else translated

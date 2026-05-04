@@ -5411,6 +5411,7 @@ def _do_forward(processed, category, url):
                 _eng_prefix = {
                     'gemini-2.5': 'GM2.5', 'gemini-2.5-lite': 'GM2.5L', 'gemini-3.0': 'GM3.0', 'gemini-3.1': 'GM3.1',
                     'gemini': 'GM', 'deepl': 'DL', 'google': 'GT',
+                    'GT': 'GT', 'DL': 'DL',
                 }.get(_eng_used, '')
                 if _eng_prefix and caption.strip():
                     caption = f'<b>{_eng_prefix}:</b> ' + caption

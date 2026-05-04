@@ -2366,6 +2366,10 @@ async def _register_handler(channels_list):
             handled_groups.add(msg.grouped_id)
 
         guid     = f'tg_@{chat_username}_{msg.id}'
+        # Bỏ qua nếu đã xử lý (edit event hoặc duplicate fire)
+        with lock:
+            if guid in known_guids.get(feed_url, set()):
+                return
         link     = f'https://t.me/{chat_username}/{msg.id}'
         msg_text = msg.message or ''  # an toàn khi tin chỉ có media, không có text
         desc     = msg_text  # giữ \n thật — nhất quán với read_all_bg

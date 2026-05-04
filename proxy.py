@@ -5809,23 +5809,16 @@ def _poll_one(url_obj):
 
         # ==================== DEDUP ====================
         if prev is None or len(prev) == 0:
-            # Lần đầu hoặc bị reset → kiểm tra Redis trước để không forward tin cũ
-            if _deduplicator:
-                new_after_redis = [it for it in items if not _deduplicator.is_duplicate(it)]
-                skipped = len(items) - len(new_after_redis)
-                if skipped:
-                    print(f'[INIT] Lọc {skipped} tin đã biết (Redis) khi init: {url}')
-                # Nếu còn tin mới thật sự → forward, không broadcast như tin cũ
-                forward_on_init = new_after_redis
-            else:
-                forward_on_init = []  # không có Redis → không thể biết tin nào cũ, không forward
-
+            # Lần đầu hoặc bị reset → init known_guids
             with lock:
                 known_guids[url] = {it['guid'] for it in items if it['guid']}
             _forward_ready_feeds.add(url)
             print(f'[INIT] known_guids khởi tạo lần đầu cho: {url} ({len(items)} items)')
-
-            # Broadcast toàn bộ lên UI để hiển thị (không dịch, không forward tin cũ)
+            # Seed Redis dedup với các item hiện tại — để poll sau không forward lại
+            if _deduplicator:
+                for it in items:
+                    _deduplicator.is_duplicate(it)  # ghi vào Redis (side-effect của is_duplicate)
+            # Broadcast lên UI để hiển thị ngay — không dịch, không forward
             ws_items = []
             for it in items:
                 ws_it = {k: v for k, v in it.items() if k not in _WS_STRIP and k not in ('text', 'text_translated')}
@@ -5834,20 +5827,6 @@ def _poll_one(url_obj):
                 ws_items.append(ws_it)
             if ws_items:
                 broadcast({'type': 'new_items', 'url': url, 'items': ws_items})
-
-            # Forward những tin mới thật sự (lọc qua Redis) nếu có
-            if forward_on_init:
-                _do_translate = url_obj.get('do_translate', True)
-                for it in forward_on_init:
-                    it['show_link']    = show_link
-                    it['feed_url']     = url
-                    it['do_translate'] = _do_translate
-                    it['_is_history']  = False
-                    if _do_translate:
-                        _pipeline.put(it)
-                    else:
-                        _forward_pool.submit(_do_forward, [it], category, url)
-
             return True   # Không forward tin cũ
 
         # Bình thường: tìm tin mới

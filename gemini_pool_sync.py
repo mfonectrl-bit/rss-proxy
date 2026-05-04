@@ -241,10 +241,12 @@ class GeminiPool:
 
     def _build_cycle(self) -> List[Tuple[str, int]]:
         """Xây weighted cycle: model có weight cao → xuất hiện nhiều lần hơn"""
+        import random as _random
         cycle: List[Tuple[str, int]] = []
         for alias, weight in BASE_WEIGHTS.items():
             for ki in range(len(self._keys)):
                 cycle.extend([(alias, ki)] * weight)
+        _random.shuffle(cycle)
         return cycle
 
     def _refresh_cycle_if_needed(self, now: float) -> None:

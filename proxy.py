@@ -5989,10 +5989,17 @@ def _process_tg_queue():
                     show_link    = u.get('show_link', True)
                     do_translate = u.get('do_translate', True)
                     break
-            prev = known_guids.get(feed_url)
+            # Atomic check+add — tránh race condition giữa event handler thread và poller thread
+            existing = known_guids.get(feed_url)
+            if existing is None:
+                existing = set()
+                known_guids[feed_url] = existing
+            new_items = []
+            for it in items:
+                if it['guid'] and it['guid'] not in existing:
+                    existing.add(it['guid'])
+                    new_items.append(it)
 
-        # Dedup — lọc trùng trước khi vào pipeline
-        new_items = [it for it in items if not prev or it['guid'] not in prev]
         if not new_items:
             continue
 

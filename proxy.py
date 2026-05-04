@@ -5422,6 +5422,7 @@ def _do_forward(processed, category, url):
 
                 # Nếu tin có entity-based translation → build _fmt_text + entities đầy đủ.
                 # Prefix/suffix đều là entity thật: không URL nổi, không duplicate.
+                send_item = it  # default: no entity translation
                 if it.get('_tg_translated_entities') is not None and it.get('_tg_translated_text'):
                     from copy import deepcopy as _dc
                     try:
@@ -5476,10 +5477,12 @@ def _do_forward(processed, category, url):
                                      length=_u16len(channel_name))
                             )
 
-                    # ── Ghép lại ─────────────────────────────────────────
-                    it['_tg_translated_text']     = _prefix_plain + _body_text + _suffix_text
-                    it['_tg_translated_entities'] = _prefix_ents + _new_body_ents + _suffix_ents
 
+                    # Dung send_item (shallow copy) thay vi ghi de it in-place
+                    # tranh prefix/suffix tich luy khi nhieu dest hoac topic
+                    send_item = dict(it,
+                        _tg_translated_text=_prefix_plain + _body_text + _suffix_text,
+                        _tg_translated_entities=_prefix_ents + _new_body_ents + _suffix_ents)
 
                 # Dedup per guid+dest+topic — tránh gửi trùng khi nhiều job song song
                 _fwd_key = f'{it.get("guid","")}|{dest}|{topic_id}'
@@ -5493,13 +5496,13 @@ def _do_forward(processed, category, url):
                 if not acquired:
                     print(f'[Forward] Bỏ qua tin — _send_semaphore timeout')
                     continue
+                    continue
                 try:
-                    ok = tg_run(_tg_send_item(dest, it, caption, topic_id=topic_id, desc_has_link=desc_has_link))
+                    ok = tg_run(_tg_send_item(dest, send_item, caption, topic_id=topic_id, desc_has_link=desc_has_link))
                 except Exception as e:
-                    print(f'[Forward] tg_run lỗi: {e}')
+                    print(f'[Forward] tg_run loi: {e}')
                     ok = False
-                    _notify_error(f'❌ Forward thất bại → {channel_name}\n{e}', feed_url=url)
-                finally:
+                    _notify_error(f'Forward that bai {channel_name}\n{e}', feed_url=url)
                     _send_semaphore.release()
                 if ok:
                     total_sent += 1

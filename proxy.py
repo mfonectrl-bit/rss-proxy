@@ -6650,9 +6650,32 @@ class HttpHandler(BaseHTTPRequestHandler):
                         else:
                             imgs, _ = extract_media(it.get('desc',''))
                             send_item['_rss_media_url'] = imgs[0] if imgs else None
-                        # Dich lai bang Gemini -- nhat quan voi auto-forward
-                        _raw  = it.get('_tg_raw_text', '') or it.get('text', '') or desc_plain
-                        _ents = it.get('_tg_entities') or None
+
+                        # Fetch message gốc từ Telegram để lấy raw_text + entities sạch.
+                        # Bản tin trên UI đã bị GT dịch khi load history → không thể dùng
+                        # _tg_raw_text từ UI vì entities có thể đã bị mangle.
+                        _raw  = None
+                        _ents = None
+                        _msg_id_for_fetch = send_item.get('_tg_msg_id')
+                        _chat_for_fetch   = send_item.get('_tg_chat')
+                        if is_tg_source(feed_url) and _msg_id_for_fetch and _chat_for_fetch:
+                            try:
+                                async def _fetch_orig_msg(_chat, _mid):
+                                    msgs = await tg_client.get_messages(_chat, ids=_mid)
+                                    return msgs
+                                _orig = tg_run(_fetch_orig_msg(_chat_for_fetch, _msg_id_for_fetch))
+                                if _orig and getattr(_orig, 'message', None):
+                                    _raw  = _orig.message
+                                    _ents = _orig.entities or None
+                                    print(f'[ManualFwd] Fetched gốc msg_id={_msg_id_for_fetch} từ @{_chat_for_fetch} ({len(_raw)} chars)')
+                            except Exception as _fe:
+                                print(f'[ManualFwd] Fetch gốc thất bại — fallback UI data: {_fe}')
+
+                        # Fallback về data từ UI nếu fetch gốc thất bại hoặc không phải TG
+                        if not _raw:
+                            _raw  = it.get('_tg_raw_text', '') or it.get('text', '') or desc_plain
+                            _ents = it.get('_tg_entities') or None
+
                         if _raw.strip():
                             try:
                                 _txt, _new_ents, _eng = translate_with_entities(_raw, _ents, force_google=False)

@@ -184,6 +184,7 @@ class RSSDeduplicator:
         self.max_items  = max_items
         self.similarity_threshold = similarity_threshold
         self.time_window = time_window_hours * 3600
+        self._last_error_time = 0
 
     def _normalize_url(self, url):
         try:
@@ -232,7 +233,7 @@ class RSSDeduplicator:
             if title:
                 recent = self.r.lrange(self.key_titles, 0, 50)
                 for t in recent:
-                    t_decoded = t.decode()
+                    t_decoded = t.decode('utf-8', errors='ignore')
                     if t_decoded and self._is_similar(title, t_decoded):
                         return True
             pipe = self.r.pipeline()
@@ -245,7 +246,9 @@ class RSSDeduplicator:
             pipe.execute()
             return False
         except Exception as e:
-            print(f'[Dedup] Redis lỗi (bỏ qua): {e}')
+            if time.time() - self._last_error_time > 60:
+                print(f'[Dedup] Redis lỗi (bỏ qua): {type(e).__name__}: {e}')
+                self._last_error_time = time.time()
             return False
 
 
@@ -708,7 +711,8 @@ def _gemini_translate_inner(text, is_html=False):
                 _gemini_pool.record_success(alias, ki)
                 return result, alias
             except Exception as e:
-                is_rl = '429' in str(e) or 'quota' in str(e).lower()
+                err_str = str(e).upper()
+                is_rl = any(x in err_str for x in ['429', 'RESOURCE_EXHAUSTED', 'QUOTA', 'RATE LIMIT'])
                 _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl)
                 if is_rl:
                     # 429 → không retry sang slot khác, fallback Google ngay
@@ -1227,7 +1231,7 @@ async def _ast_translate_with_entities(raw_text: str, entities: list, force_goog
         engine_used = 'GT'
 
     # Restore URL + newline
-    if segs_out:
+    if segs_out and translatable_idx:
         for k, orig_idx in enumerate(translatable_idx):
             restored = segs_out[k].replace(NL, '\n')
             for tok, url_val in url_ph.items():
@@ -5124,9 +5128,11 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
                                 caption = _tg_html_mod.unparse(gm_text, gm_ents)
                             else:
                                 caption = gm_text
-                            # Clear entity-based path vì caption lấy từ nguồn gốc
-                            item['_tg_translated_entities'] = None
-                            item['_tg_translated_text']     = ''
+                            # Clear entity-based path locally — không mutate item gốc
+                            # (item có thể được forward tới nhiều dest)
+                            item = dict(item,
+                                        _tg_translated_entities=None,
+                                        _tg_translated_text='')
                             break
 
                 # Chỉ treat là audio group khi TẤT CẢ file đều là pure audio (DocumentAttributeAudio).
@@ -5289,7 +5295,7 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
             # Kiểm tra xem có entity-based translation không (bảo toàn bold/italic)
             _fmt_entities = item.get('_tg_translated_entities')
             _fmt_text     = item.get('_tg_translated_text', '')
-            if _fmt_entities and _fmt_text:
+            if _fmt_entities is not None and _fmt_text:
                 # Dùng formatting_entities — không cần parse_mode, format bảo toàn 100%
                 for chunk in _split_text(_fmt_text, 4096):
                     await tg_client.send_message(dest, chunk,
@@ -6093,7 +6099,11 @@ def poller():
                             tg_loop_thread = t
                             time.sleep(1)
 
-                        ok = tg_run(_tg_check_auth())
+                        ok = False
+                        try:
+                            ok = tg_run(_tg_check_auth())
+                        except Exception as _auth_e:
+                            print(f'[TG Watchdog] _tg_check_auth lỗi: {_auth_e}')
                         if ok:
                             # Chỉ re-register nếu handler bị mất (không còn handler nào)
                             handlers = tg_client.list_event_handlers()
@@ -6115,7 +6125,7 @@ def poller():
                         print(f'[TG Watchdog] Lỗi: {type(e).__name__}: {e}')
                     finally:
                         _watchdog_running = False
-                threading.Thread(target=_watchdog, daemon=True).start()
+                threading.Thread(target=_watchdog, daemon=True, name='TG-Watchdog').start()
 
 
             # --- Init history cho TG feed mới ---
@@ -6173,6 +6183,20 @@ def poller():
                 _last_cleanup = now
                 _cleanup_known_guids()
                 _memory_cleanup()
+
+                # === PATCH #3: READ_ALL JOBS CLEANUP ===
+                with _read_all_job_lock:
+                    for url in list(_read_all_jobs.keys()):
+                        if _read_all_jobs[url].get('status') in ('done', 'error', 'stopped'):
+                            _read_all_jobs.pop(url, None)
+                    # Chỉ xóa stop flags của url không còn job running
+                    running_urls = {url for url, job in _read_all_jobs.items()
+                                    if job.get('status') == 'running'}
+                    _read_all_stop_urls.difference_update(
+                        _read_all_stop_urls - running_urls
+                    )
+                # === END PATCH #3 ===
+
                 # Trim fast_next — xóa URLs không còn trong watched_urls
                 with lock:
                     active_urls = {u['url'] for u in watched_urls}
@@ -6953,8 +6977,10 @@ class HttpHandler(BaseHTTPRequestHandler):
                 if existing and existing.get('status') in ('done', 'error', 'stopped'):
                     with lock:
                         known_guids.pop(url, None)
+                # === PATCH B: reset stop flag trong lock trước khi tạo job — tránh race condition ===
+                _read_all_stop_urls.discard(url)
                 _read_all_jobs[url] = {'url': url, 'name': feed_cfg.get('name', url), 'done': 0, 'total': 0, 'status': 'running', 'current': 'Đang khởi động...'}
-            _read_all_stop_urls.discard(url)  # reset stop flag cho url này
+                # === END PATCH B ===
             threading.Thread(target=_run_read_all_bg, args=(url, feed_cfg), daemon=True, name='ReadAllBG').start()
             self._json({'ok': True, 'msg': 'Job chạy ngầm đã bắt đầu'})
 

@@ -2069,7 +2069,7 @@
       "url": "https://t.me/DismantlingTheCabal",
       "name": "Dismantling The Cabal",
       "show_link": false,
-      "auto_fwd": true,
+      "auto_fwd": false,
       "destinations": [
         {
           "ch_idx": 4,

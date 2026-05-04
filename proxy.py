@@ -6608,6 +6608,9 @@ class HttpHandler(BaseHTTPRequestHandler):
             if not TELETHON_AVAILABLE or tg_client is None:
                 self._json({'error': 'Telethon chưa kết nối'}, 503); return
 
+            async def _fetch_orig_msg(_chat, _mid):
+                return await tg_client.get_messages(_chat, ids=_mid)
+
             all_results = []
             for dest_cfg in destinations:
                 dest = dest_cfg.get('username') or dest_cfg.get('channel_id', '')
@@ -6665,8 +6668,6 @@ class HttpHandler(BaseHTTPRequestHandler):
                         _chat_for_fetch   = send_item.get('_tg_chat')
                         if is_tg_source(feed_url) and _msg_id_for_fetch and _chat_for_fetch:
                             try:
-                                async def _fetch_orig_msg(_chat, _mid):
-                                    return await tg_client.get_messages(_chat, ids=_mid)
                                 _orig = tg_run(_fetch_orig_msg(_chat_for_fetch, _msg_id_for_fetch))
                                 if _orig and getattr(_orig, 'message', None):
                                     _raw  = _orig.message
@@ -6688,6 +6689,7 @@ class HttpHandler(BaseHTTPRequestHandler):
                                         'gemini-2.5':'GM2.5','gemini-2.5-lite':'GM2.5L',
                                         'gemini-3.0':'GM3.0','gemini-3.1':'GM3.1',
                                         'gemini':'GM','deepl':'DL','google':'GT',
+                                        'GT':'GT','DL':'DL',
                                     }.get(_eng, "")
                                     send_item['_translate_engine_used'] = _eng
 

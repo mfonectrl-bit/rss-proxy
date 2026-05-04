@@ -5493,7 +5493,6 @@ def _do_forward(processed, category, url):
                     _fwd_sent_keys.add(_fwd_key)
 
                 acquired = _send_semaphore.acquire(timeout=10)
-                acquired = _send_semaphore.acquire(timeout=10)
                 if not acquired:
                     continue
                 try:

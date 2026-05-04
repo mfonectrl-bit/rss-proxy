@@ -5493,21 +5493,19 @@ def _do_forward(processed, category, url):
                     _fwd_sent_keys.add(_fwd_key)
 
                 acquired = _send_semaphore.acquire(timeout=10)
+                acquired = _send_semaphore.acquire(timeout=10)
                 if not acquired:
-                    print(f'[Forward] Bỏ qua tin — _send_semaphore timeout')
-                    continue
                     continue
                 try:
                     ok = tg_run(_tg_send_item(dest, send_item, caption, topic_id=topic_id, desc_has_link=desc_has_link))
                 except Exception as e:
-                    print(f'[Forward] tg_run loi: {e}')
                     ok = False
                     _notify_error(f'Forward that bai {channel_name}\n{e}', feed_url=url)
+                finally:
                     _send_semaphore.release()
                 if ok:
                     total_sent += 1
                 time.sleep(0.3)
-
     if total_sent > 0:
         # Cập nhật forward count
         with _fwd_count_lock:

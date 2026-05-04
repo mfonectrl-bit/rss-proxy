@@ -5,6 +5,7 @@
       "name": "Uncut News",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 1,
@@ -16,7 +17,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -24,6 +24,7 @@
       "name": "RFI Tiếng Việt",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": false,
       "destinations": [
         {
           "ch_idx": 1,
@@ -35,7 +36,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -43,6 +43,7 @@
       "name": "Geopolitics",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 1,
@@ -54,7 +55,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -62,6 +62,7 @@
       "name": "Uncut News",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 1,
@@ -73,7 +74,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -81,6 +81,7 @@
       "name": "Inside Paper",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 1,
@@ -92,7 +93,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -100,6 +100,7 @@
       "name": "ABCD news",
       "show_link": false,
       "auto_fwd": true,
+      "do_translate": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -107,7 +108,6 @@
         }
       ],
       "history_limit": 1,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -115,6 +115,7 @@
       "name": "RT News",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 1,
@@ -126,7 +127,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -134,6 +134,7 @@
       "name": "Thuyết Âm U",
       "show_link": false,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -141,7 +142,6 @@
         }
       ],
       "history_limit": 1,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -149,6 +149,7 @@
       "name": "Natural Cures",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 2,
@@ -160,7 +161,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -168,6 +168,7 @@
       "name": "Peter A. McCullough, MD, MPH™",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -179,7 +180,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -187,6 +187,7 @@
       "name": "Dr. Tenpenny",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -198,7 +199,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -206,6 +206,7 @@
       "name": "Dr. Judy Mikovits",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -217,7 +218,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -225,6 +225,7 @@
       "name": "Barbara O'Neill",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -236,7 +237,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -244,6 +244,7 @@
       "name": "Edward Dowd",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -255,7 +256,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -263,6 +263,7 @@
       "name": "Dr Naomi R Wolf",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -274,7 +275,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -282,6 +282,7 @@
       "name": "Dr. Simone Gold",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -293,7 +294,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -301,6 +301,7 @@
       "name": "Nicolas Hulscher",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -312,7 +313,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -320,6 +320,7 @@
       "name": "Dr. Shankara Chetty",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -331,7 +332,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -339,6 +339,7 @@
       "name": "Dr. Paul Marik",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -350,7 +351,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -358,6 +358,7 @@
       "name": "Dr Roger Hodkinson",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -369,7 +370,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -377,6 +377,7 @@
       "name": "Dr Mike Yeadon",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -388,7 +389,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -396,6 +396,7 @@
       "name": "Robert W Malone, MD",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -407,7 +408,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -415,6 +415,7 @@
       "name": "America’s Doctors",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -426,7 +427,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -434,6 +434,7 @@
       "name": "Natural News",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -445,7 +446,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -453,6 +453,7 @@
       "name": "Dr. John Campbell",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -464,7 +465,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -472,6 +472,7 @@
       "name": "Dr Peter McCullough™ Channel",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -483,7 +484,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -491,6 +491,7 @@
       "name": "Dr. Aseem Malhotra",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -502,7 +503,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -510,6 +510,7 @@
       "name": "Dr. Simone Gold",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -521,7 +522,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -529,6 +529,7 @@
       "name": "Robert F. Kennedy Jr.",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -540,7 +541,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -548,6 +548,7 @@
       "name": "Zelenko Freedom Foundation",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -559,7 +560,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -567,6 +567,7 @@
       "name": "Dr. Lee Merritt",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -578,7 +579,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -586,6 +586,7 @@
       "name": "Mary Talley Bowden MD",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -597,7 +598,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -605,6 +605,7 @@
       "name": "BREAKING HEADLINES",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 1,
@@ -616,7 +617,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -624,6 +624,7 @@
       "name": "Real World News",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 1,
@@ -635,7 +636,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -643,6 +643,7 @@
       "name": "Conspiracy Theory",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -654,7 +655,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -662,6 +662,7 @@
       "name": "Covid Vaccine Injuries",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -673,7 +674,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -681,6 +681,7 @@
       "name": "Gesund und Gut",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -692,7 +693,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -700,6 +700,7 @@
       "name": "Jim Caviezel",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -711,7 +712,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -719,6 +719,7 @@
       "name": "FREE ENERGY",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -730,7 +731,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -738,6 +738,7 @@
       "name": "Midwestern Doctor",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -749,7 +750,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -757,6 +757,7 @@
       "name": "LauraAboli",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -768,7 +769,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -776,6 +776,7 @@
       "name": "TruthAboutCOVID",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -787,7 +788,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -795,6 +795,7 @@
       "name": "UNN",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -806,7 +807,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -814,6 +814,7 @@
       "name": "NVIC.org",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -825,7 +826,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -833,6 +833,7 @@
       "name": "Cruel History",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -844,7 +845,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -852,6 +852,7 @@
       "name": "Insider Amigo",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -863,7 +864,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -871,6 +871,7 @@
       "name": "Vaccine Choice Canada",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -882,7 +883,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -890,6 +890,7 @@
       "name": "COVID19 VACCINE VICTIMS",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -901,7 +902,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -909,6 +909,7 @@
       "name": "Schwurbelfunk",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -920,7 +921,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -928,6 +928,7 @@
       "name": "History by Jack Raven",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -939,7 +940,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -947,6 +947,7 @@
       "name": "Das darfst du nicht sehen",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -958,7 +959,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -966,6 +966,7 @@
       "name": "COVID-19 Up",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -977,7 +978,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -985,6 +985,7 @@
       "name": "The Awakened Species",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -996,7 +997,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1004,6 +1004,7 @@
       "name": "Exiled Medic Unzensiert",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -1015,7 +1016,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1023,6 +1023,7 @@
       "name": "TRADITIONAL MEDICINE",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -1034,7 +1035,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1042,6 +1042,7 @@
       "name": "INSIDER | News | Politics | USA",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 1,
@@ -1053,7 +1054,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1061,6 +1061,7 @@
       "name": "INSIDER USA | News",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 1,
@@ -1072,7 +1073,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1080,6 +1080,7 @@
       "name": "Telegram Tips",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -1091,7 +1092,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1099,6 +1099,7 @@
       "name": "Telegram News",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -1110,7 +1111,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1118,6 +1118,7 @@
       "name": "Trending Apps",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -1129,7 +1130,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1137,6 +1137,7 @@
       "name": "Bloomberg",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 1,
@@ -1148,7 +1149,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1156,6 +1156,7 @@
       "name": "CNBC",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 1,
@@ -1167,7 +1168,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1175,6 +1175,7 @@
       "name": "Financial Times",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 1,
@@ -1186,7 +1187,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1194,6 +1194,7 @@
       "name": "BBC News",
       "show_link": true,
       "auto_fwd": false,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 1,
@@ -1205,7 +1206,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1213,6 +1213,7 @@
       "name": "NewYork Times",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 1,
@@ -1224,7 +1225,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1232,6 +1232,7 @@
       "name": "NewYork TimesNewYork Technology",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 1,
@@ -1243,7 +1244,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1251,6 +1251,7 @@
       "name": "Aktuell360",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -1262,7 +1263,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1270,6 +1270,7 @@
       "name": "VN Wall Street",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": false,
       "destinations": [
         {
           "ch_idx": 1,
@@ -1281,7 +1282,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1289,6 +1289,7 @@
       "name": "Discover • Tech News",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1296,7 +1297,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1304,6 +1304,7 @@
       "name": "AI News IT",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1311,7 +1312,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1319,6 +1319,7 @@
       "name": "GitHub Trends",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1326,7 +1327,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1334,6 +1334,7 @@
       "name": "TechCrunch RSS",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1341,7 +1342,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1349,6 +1349,7 @@
       "name": "Wired",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1356,7 +1357,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1364,6 +1364,7 @@
       "name": "Technology Review",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1371,7 +1372,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1379,6 +1379,7 @@
       "name": "International Geographic",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1386,7 +1387,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1394,6 +1394,7 @@
       "name": "The place to be",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1401,7 +1402,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1409,6 +1409,7 @@
       "name": "Voyage.Travel.Tourism",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1416,7 +1417,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1424,6 +1424,7 @@
       "name": "Nation Geographic",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1431,7 +1432,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1439,6 +1439,7 @@
       "name": "The Hacker News",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1446,7 +1447,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1454,6 +1454,7 @@
       "name": "LiveLeak",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1461,7 +1462,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1469,6 +1469,7 @@
       "name": "iPapkorn",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1476,7 +1477,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1484,6 +1484,7 @@
       "name": "Nấu Ăn",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1491,7 +1492,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1499,6 +1499,7 @@
       "name": "Мамины Рецепты",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1506,7 +1507,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1514,6 +1514,7 @@
       "name": "Words of the Buddha",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1521,7 +1522,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1529,6 +1529,7 @@
       "name": "Tricycle",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1536,7 +1537,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1544,6 +1544,7 @@
       "name": "Time Machine",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1551,7 +1552,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1559,6 +1559,7 @@
       "name": "Wisdom of Buddha",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1566,7 +1567,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1574,6 +1574,7 @@
       "name": "History photo",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1581,7 +1582,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1589,6 +1589,7 @@
       "name": "History In Art & Photos",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1596,7 +1597,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1604,6 +1604,7 @@
       "name": "Buddha Dhamma Talks & Quotes",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1611,7 +1612,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1619,6 +1619,7 @@
       "name": "Buddha Dharma books",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1626,7 +1627,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1634,6 +1634,7 @@
       "name": "Phật giáo nguyên thủy",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1641,7 +1642,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1649,6 +1649,7 @@
       "name": "UFOs Channel",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1656,7 +1657,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1664,6 +1664,7 @@
       "name": "Dishes Cooking Food",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1671,7 +1672,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1679,6 +1679,7 @@
       "name": "All About Food & Cooking",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1686,7 +1687,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1694,6 +1694,7 @@
       "name": "Thanh Niên",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": false,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1701,7 +1702,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1709,6 +1709,7 @@
       "name": "CafeF",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": false,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1716,7 +1717,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1724,6 +1724,7 @@
       "name": "AlexClay - Trading Analyzes & Tips",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1731,7 +1732,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1739,6 +1739,7 @@
       "name": "Tommy Chartist",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1746,7 +1747,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1754,6 +1754,7 @@
       "name": "Mr. Benjamin Anderson",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1761,7 +1762,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1769,6 +1769,7 @@
       "name": "Yahoo GOLD news",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1776,7 +1777,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1784,6 +1784,7 @@
       "name": "BBC Tiếng Việt",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": false,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1791,7 +1792,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1799,6 +1799,7 @@
       "name": "IT und Sicherheit",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1806,7 +1807,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1814,6 +1814,7 @@
       "name": "🌀MEDITATIVEMIND",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1821,7 +1822,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1829,6 +1829,7 @@
       "name": "Nature",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1836,7 +1837,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1844,6 +1844,7 @@
       "name": "AI Post — Artificial Intelligence",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1851,7 +1852,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1859,6 +1859,7 @@
       "name": "AROUND THE WORLD",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1866,7 +1867,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1874,6 +1874,7 @@
       "name": "Funny Videos",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1881,7 +1882,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1889,6 +1889,7 @@
       "name": "Real Nature",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1896,7 +1897,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1904,6 +1904,7 @@
       "name": "WELT DER VIDEOS",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1911,7 +1912,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1919,6 +1919,7 @@
       "name": "Chemtrails/Haarp/Wettermanipulation",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -1930,7 +1931,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1938,6 +1938,7 @@
       "name": "Health & Doctor",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -1949,7 +1950,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1957,6 +1957,7 @@
       "name": "Crypto Jokes 😋₿",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1964,7 +1965,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1972,6 +1972,7 @@
       "name": "VnExpress",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": false,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1979,7 +1980,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -1987,6 +1987,7 @@
       "name": "🎻 | Playlist Instrumental",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -1994,7 +1995,6 @@
         }
       ],
       "history_limit": 2,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -2002,6 +2002,7 @@
       "name": "USEFUL TIPS | LIFEHACKS💡",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -2009,7 +2010,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -2017,6 +2017,7 @@
       "name": "Lifehacks — Ideas, Tips & Lifestyle",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -2024,7 +2025,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -2032,6 +2032,7 @@
       "name": "Рецепты 🧑‍🍳| Десерты Супы Закуски",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 3,
@@ -2039,7 +2040,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -2047,6 +2047,7 @@
       "name": "The Exposé News (Official)",
       "show_link": true,
       "auto_fwd": true,
+      "do_translate": true,
       "destinations": [
         {
           "ch_idx": 0,
@@ -2062,7 +2063,6 @@
         }
       ],
       "history_limit": 5,
-      "do_translate": true,
       "read_all": false
     },
     {
@@ -2070,6 +2070,7 @@
       "name": "Dismantling The Cabal",
       "show_link": false,
       "auto_fwd": false,
+      "do_translate": false,
       "destinations": [
         {
           "ch_idx": 4,
@@ -2077,7 +2078,6 @@
         }
       ],
       "history_limit": 10,
-      "do_translate": true,
       "read_all": false
     }
   ],
@@ -2179,6 +2179,12 @@
           "name": "Tài Liệu"
         }
       ]
+    },
+    {
+      "username": "@saynofakenews",
+      "name": "Say no fake news",
+      "is_group": false,
+      "topics": []
     }
   ],
   "translate_engine": "gemini"

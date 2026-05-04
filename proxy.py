@@ -5809,12 +5809,23 @@ def _poll_one(url_obj):
 
         # ==================== DEDUP ====================
         if prev is None or len(prev) == 0:
-            # Lần đầu hoặc bị reset → init known_guids
+            # Lần đầu hoặc bị reset → kiểm tra Redis trước để không forward tin cũ
+            if _deduplicator:
+                new_after_redis = [it for it in items if not _deduplicator.is_duplicate(it)]
+                skipped = len(items) - len(new_after_redis)
+                if skipped:
+                    print(f'[INIT] Lọc {skipped} tin đã biết (Redis) khi init: {url}')
+                # Nếu còn tin mới thật sự → forward, không broadcast như tin cũ
+                forward_on_init = new_after_redis
+            else:
+                forward_on_init = []  # không có Redis → không thể biết tin nào cũ, không forward
+
             with lock:
                 known_guids[url] = {it['guid'] for it in items if it['guid']}
             _forward_ready_feeds.add(url)
             print(f'[INIT] known_guids khởi tạo lần đầu cho: {url} ({len(items)} items)')
-            # Broadcast lên UI để hiển thị ngay — không dịch, không forward
+
+            # Broadcast toàn bộ lên UI để hiển thị (không dịch, không forward tin cũ)
             ws_items = []
             for it in items:
                 ws_it = {k: v for k, v in it.items() if k not in _WS_STRIP and k not in ('text', 'text_translated')}
@@ -5823,6 +5834,20 @@ def _poll_one(url_obj):
                 ws_items.append(ws_it)
             if ws_items:
                 broadcast({'type': 'new_items', 'url': url, 'items': ws_items})
+
+            # Forward những tin mới thật sự (lọc qua Redis) nếu có
+            if forward_on_init:
+                _do_translate = url_obj.get('do_translate', True)
+                for it in forward_on_init:
+                    it['show_link']    = show_link
+                    it['feed_url']     = url
+                    it['do_translate'] = _do_translate
+                    it['_is_history']  = False
+                    if _do_translate:
+                        _pipeline.put(it)
+                    else:
+                        _forward_pool.submit(_do_forward, [it], category, url)
+
             return True   # Không forward tin cũ
 
         # Bình thường: tìm tin mới
@@ -6650,80 +6675,47 @@ class HttpHandler(BaseHTTPRequestHandler):
                         else:
                             imgs, _ = extract_media(it.get('desc',''))
                             send_item['_rss_media_url'] = imgs[0] if imgs else None
-
-                        # Fetch message gốc từ Telegram để lấy raw_text + entities sạch.
-                        # Bản tin trên UI đã bị GT dịch khi load history → không thể dùng
-                        # _tg_raw_text từ UI vì entities có thể đã bị mangle.
-                        _raw  = None
-                        _ents = None
-                        _msg_id_for_fetch = send_item.get('_tg_msg_id')
-                        _chat_for_fetch   = send_item.get('_tg_chat')
-                        if is_tg_source(feed_url) and _msg_id_for_fetch and _chat_for_fetch:
-                            try:
-                                async def _fetch_orig_msg(_chat, _mid):
-                                    msgs = await tg_client.get_messages(_chat, ids=_mid)
-                                    return msgs
-                                _orig = tg_run(_fetch_orig_msg(_chat_for_fetch, _msg_id_for_fetch))
-                                if _orig and getattr(_orig, 'message', None):
-                                    _raw  = _orig.message
-                                    _ents = _orig.entities or None
-                                    print(f'[ManualFwd] Fetched gốc msg_id={_msg_id_for_fetch} từ @{_chat_for_fetch} ({len(_raw)} chars)')
-                            except Exception as _fe:
-                                print(f'[ManualFwd] Fetch gốc thất bại — fallback UI data: {_fe}')
-
-                        # Fallback về data từ UI nếu fetch gốc thất bại hoặc không phải TG
-                        if not _raw:
-                            _raw  = it.get('_tg_raw_text', '') or it.get('text', '') or desc_plain
-                            _ents = it.get('_tg_entities') or None
-
+                        # Dich lai bang Gemini -- nhat quan voi auto-forward
+                        _raw  = it.get('_tg_raw_text', '') or it.get('text', '') or desc_plain
+                        _ents = it.get('_tg_entities') or None
                         if _raw.strip():
                             try:
                                 _txt, _new_ents, _eng = translate_with_entities(_raw, _ents, force_google=False)
                                 if _txt and _txt.strip():
+                                    # Build prefix/suffix entities giong _do_forward
+                                    from copy import deepcopy as _dc
+                                    from telethon.tl.types import (
+                                        MessageEntityBold as _MEB,
+                                        MessageEntityItalic as _MEI,
+                                        MessageEntityTextUrl as _METU,
+                                    )
                                     _eng_prefix = {
                                         'gemini-2.5':'GM2.5','gemini-2.5-lite':'GM2.5L',
                                         'gemini-3.0':'GM3.0','gemini-3.1':'GM3.1',
                                         'gemini':'GM','deepl':'DL','google':'GT',
                                     }.get(_eng, "")
-                                    send_item['_translate_engine_used'] = _eng
-
-                                    if _new_ents is not None:
-                                        # ── Entity path (Gemini/DeepL): giữ full formatting ──
-                                        from copy import deepcopy as _dc
-                                        from telethon.tl.types import (
-                                            MessageEntityBold as _MEB,
-                                            MessageEntityItalic as _MEI,
-                                            MessageEntityTextUrl as _METU,
-                                        )
-                                        _pfx   = f"{_eng_prefix}: " if _eng_prefix and _txt.strip() else ""
-                                        _pfx_e = [_MEB(offset=0, length=_u16len(_pfx))] if _pfx else []
-                                        _shift = _u16len(_pfx)
-                                        _body_e = []
-                                        for _e in _new_ents:
-                                            _ec = _dc(_e); _ec.offset += _shift; _body_e.append(_ec)
-                                        _cur = _shift + _u16len(_txt)
-                                        _sfx_text = ""; _sfx_e = []
-                                        if show_link and it.get("link"):
-                                            _lbl = "Xem b\u00e0i g\u1ed1c \u2192"
-                                            _sfx_text += "\n\n" + _lbl
-                                            _sfx_e.append(_METU(offset=_cur+2, length=_u16len(_lbl), url=it["link"]))
-                                            _cur += 2 + _u16len(_lbl)
-                                        if channel_name:
-                                            _sfx_text += "\n\n" + channel_name
-                                            _sfx_e.append(_MEI(offset=_cur+2, length=_u16len(channel_name)))
-                                        send_item['_tg_translated_text']     = _pfx + _txt + _sfx_text
-                                        send_item['_tg_translated_entities'] = _pfx_e + _body_e + _sfx_e
-                                        caption = desc_plain  # entities path sẽ lo phần hiển thị
-                                    else:
-                                        # ── Plain text path (Google Translate): dùng HTML caption ──
-                                        _pfx_html = f"<b>{_eng_prefix}:</b> " if _eng_prefix and _txt.strip() else ""
-                                        caption = _pfx_html + _txt.rstrip()
-                                        if show_link and it.get("link"):
-                                            caption += f'\n\n<a href="{it["link"]}">Xem b\u00e0i g\u1ed1c \u2192</a>'
-                                        if channel_name:
-                                            caption += f'\n\n<i>{channel_name}</i>'
+                                    _pfx   = f"{_eng_prefix}: " if _eng_prefix and _txt.strip() else ""
+                                    _pfx_e = [_MEB(offset=0, length=_u16len(_pfx))] if _pfx else []
+                                    _shift = _u16len(_pfx)
+                                    _body_e = []
+                                    for _e in (_new_ents or []):
+                                        _ec = _dc(_e); _ec.offset += _shift; _body_e.append(_ec)
+                                    _cur = _shift + _u16len(_txt)
+                                    _sfx_text = ""; _sfx_e = []
+                                    if show_link and it.get("link"):
+                                        _lbl = "Xem b\u00e0i g\u1ed1c \u2192"
+                                        _sfx_text += "\n\n" + _lbl
+                                        _sfx_e.append(_METU(offset=_cur+2, length=_u16len(_lbl), url=it["link"]))
+                                        _cur += 2 + _u16len(_lbl)
+                                    if channel_name:
+                                        _sfx_text += "\n\n" + channel_name
+                                        _sfx_e.append(_MEI(offset=_cur+2, length=_u16len(channel_name)))
+                                    send_item['_tg_translated_text']     = _pfx + _txt + _sfx_text
+                                    send_item['_tg_translated_entities'] = _pfx_e + _body_e + _sfx_e
+                                    send_item['_translate_engine_used']  = _eng
+                                    caption = desc_plain  # entities path se xu ly hien thi
                             except Exception:
-                                pass  # fallback: dung caption gốc nhu cu
+                                pass  # fallback: dung caption GT nhu cu
                         desc_has_link = bool(re.search(r'https?://', it.get('desc', '') or ''))
                         try:
                             ok = tg_run(_tg_send_item(dest, send_item, caption, topic_id=topic_id, desc_has_link=desc_has_link))

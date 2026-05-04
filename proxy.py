@@ -4873,9 +4873,7 @@ def parse_items(xml_bytes, category_hint='', limit=None):
         if media_url and f'src="{media_url}"' not in desc and f"src='{media_url}'" not in desc:
             desc = f'<img src="{media_url}"/>' + ('\n' if desc else '') + desc
 
-        items.append({'guid': guid, 'title': title, 'link': link, 'pubDate': pub, 'desc': desc,
-                      'translated': False, 'category': category_hint,
-                      '_rss_media_url': media_url or None})
+        items.append({'guid': guid, 'title': title, 'link': link, 'pubDate': pub, 'desc': desc, 'translated': False, 'category': category_hint})
     return items
 
 def process_items(items):
@@ -5886,15 +5884,14 @@ def _poll_one(url_obj):
                 it['text']    = raw_text.strip()
                 it['_source'] = 'rss'
 
-                if '_rss_media_url' not in it:
-                    imgs, videos = extract_media(it.get('desc', ''))
-                    if videos:
-                        v = videos[0].lower()
-                        it['_rss_media_url'] = videos[0] if any(v.endswith(e) for e in ('.mp4','.webm','.mov','.mkv')) else None
-                    elif imgs:
-                        it['_rss_media_url'] = imgs[0]
-                    else:
-                        it['_rss_media_url'] = None
+                imgs, videos = extract_media(it.get('desc', ''))
+                if videos:
+                    v = videos[0].lower()
+                    it['_rss_media_url'] = videos[0] if any(v.endswith(e) for e in ('.mp4','.webm','.mov','.mkv')) else None
+                elif imgs:
+                    it['_rss_media_url'] = imgs[0]
+                else:
+                    it['_rss_media_url'] = None
 
                 if not _do_translate:
                     # Bypass pipeline — broadcast UI + forward trực tiếp, không qua dịch
@@ -6029,6 +6026,7 @@ def _process_tg_queue():
                 _raw_text = _raw_text or _title_fallback
             pipeline_item = {
                 'text': _raw_text,
+                'desc': _raw_text,
                 'feed_url': feed_url,
                 'category': category,
                 'show_link': show_link,

@@ -5144,48 +5144,92 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
 
                 is_audio_group = len(media_list) > 1 and all(_is_pure_audio(m) for m in media_list)
 
+                # Resolve caption + entities: uu tien formatting_entities (bao toan bold/italic/link an)
+                # neu khong co -> fallback caption HTML nhu cu
+                _fmt_ents = item.get("_tg_translated_entities")
+                _fmt_text = item.get("_tg_translated_text", "")
+                _use_ents = _fmt_ents is not None and bool(_fmt_text)
                 if len(media_list) == 1:
-                    # Tin đơn: gắn caption vào media
-                    caption_plain_len = len(re.sub(r'<[^>]+>', '', caption))
-                    caption_val = caption if caption.strip() else None
-                    if caption_plain_len <= 1024:
-                        await tg_client.send_file(dest, media_list[0], caption=caption_val,
-                                                  parse_mode='html', reply_to=thread_reply,
-                                                  link_preview=show_preview)
+                    # Tin don: gan caption vao media
+                    if _use_ents:
+                        cap_len = len(_fmt_text)
+                        if cap_len <= 1024:
+                            await tg_client.send_file(dest, media_list[0],
+                                                      caption=_fmt_text,
+                                                      formatting_entities=_fmt_ents,
+                                                      reply_to=thread_reply,
+                                                      link_preview=show_preview)
+                        else:
+                            sent = await tg_client.send_file(dest, media_list[0], caption=None,
+                                                             reply_to=thread_reply)
+                            reply_to_id = sent.id if not isinstance(sent, list) else sent[0].id
+                            await tg_client.send_message(dest, _fmt_text,
+                                                         formatting_entities=_fmt_ents,
+                                                         reply_to=reply_to_id,
+                                                         link_preview=show_preview)
                     else:
-                        sent = await tg_client.send_file(dest, media_list[0], caption=None,
-                                                         reply_to=thread_reply)
-                        reply_to_id = sent.id if not isinstance(sent, list) else sent[0].id
-                        for chunk in _split_text(caption, 4096):
-                            await tg_client.send_message(dest, chunk, parse_mode='html',
-                                                         reply_to=reply_to_id, link_preview=show_preview)
+                        caption_plain_len = len(re.sub(r'<[^>]+>', '', caption))
+                        caption_val = caption if caption.strip() else None
+                        if caption_plain_len <= 1024:
+                            await tg_client.send_file(dest, media_list[0], caption=caption_val,
+                                                      parse_mode='html', reply_to=thread_reply,
+                                                      link_preview=show_preview)
+                        else:
+                            sent = await tg_client.send_file(dest, media_list[0], caption=None,
+                                                             reply_to=thread_reply)
+                            reply_to_id = sent.id if not isinstance(sent, list) else sent[0].id
+                            for chunk in _split_text(caption, 4096):
+                                await tg_client.send_message(dest, chunk, parse_mode='html',
+                                                             reply_to=reply_to_id, link_preview=show_preview)
                 elif is_audio_group:
-                    # Audio/document group: gửi từng file riêng không caption,
-                    # sau đó gửi caption thành tin nhắn text riêng
+                    # Audio/document group: media rieng, caption la text message sau
                     for audio_media in media_list:
                         await tg_client.send_file(dest, audio_media, caption=None,
                                                   reply_to=thread_reply)
-                    if caption.strip():
-                        for chunk in _split_text(caption, 4096):
-                            await tg_client.send_message(dest, chunk, parse_mode='html',
+                    _txt_cap = _fmt_text if _use_ents else caption
+                    _txt_cap_strip = _txt_cap.strip()
+                    if _txt_cap_strip:
+                        if _use_ents:
+                            await tg_client.send_message(dest, _fmt_text,
+                                                         formatting_entities=_fmt_ents,
                                                          reply_to=thread_reply,
                                                          link_preview=show_preview)
+                        else:
+                            for chunk in _split_text(caption, 4096):
+                                await tg_client.send_message(dest, chunk, parse_mode='html',
+                                                             reply_to=thread_reply,
+                                                             link_preview=show_preview)
                 else:
-                    # Photo/video album: Telegram hỗ trợ caption trên album
-                    caption_plain_len = len(re.sub(r'<[^>]+>', '', caption))
-                    caption_val = caption if caption.strip() else None
-                    if caption_plain_len <= 1024:
-                        await tg_client.send_file(dest, media_list, caption=caption_val,
-                                                  parse_mode='html', reply_to=thread_reply,
-                                                  link_preview=show_preview)
-                    else:
-                        # Caption dài: gửi album trước, rồi text sau
-                        await tg_client.send_file(dest, media_list, caption=None,
-                                                  reply_to=thread_reply)
-                        for chunk in _split_text(caption, 4096):
-                            await tg_client.send_message(dest, chunk, parse_mode='html',
+                    # Photo/video album
+                    if _use_ents:
+                        cap_len = len(_fmt_text)
+                        if cap_len <= 1024:
+                            await tg_client.send_file(dest, media_list,
+                                                      caption=_fmt_text,
+                                                      formatting_entities=_fmt_ents,
+                                                      reply_to=thread_reply,
+                                                      link_preview=show_preview)
+                        else:
+                            await tg_client.send_file(dest, media_list, caption=None,
+                                                      reply_to=thread_reply)
+                            await tg_client.send_message(dest, _fmt_text,
+                                                         formatting_entities=_fmt_ents,
                                                          reply_to=thread_reply,
                                                          link_preview=show_preview)
+                    else:
+                        caption_plain_len = len(re.sub(r'<[^>]+>', '', caption))
+                        caption_val = caption if caption.strip() else None
+                        if caption_plain_len <= 1024:
+                            await tg_client.send_file(dest, media_list, caption=caption_val,
+                                                      parse_mode='html', reply_to=thread_reply,
+                                                      link_preview=show_preview)
+                        else:
+                            await tg_client.send_file(dest, media_list, caption=None,
+                                                      reply_to=thread_reply)
+                            for chunk in _split_text(caption, 4096):
+                                await tg_client.send_message(dest, chunk, parse_mode='html',
+                                                             reply_to=thread_reply,
+                                                             link_preview=show_preview)
                 return True
             # Không lấy được media → fallback text
             for chunk in _split_text(caption, 4096):

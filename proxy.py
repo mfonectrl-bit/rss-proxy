@@ -1488,18 +1488,23 @@ def translate_with_entities(raw_text, entities=None, force_google=False):
 
     # ── Entity-based translate → delegate sang AST engine (UTF-16 safe) ──
     if entities:
-        # asyncio.run() tạo event loop riêng trên worker thread hiện tại —
-        # hoàn toàn tách biệt khỏi tg_loop, không block Telethon.
+        # Dung new_event_loop() tuong minh -- asyncio.run() raise RuntimeError
+        # neu thread da co loop dang chay (ThreadPoolExecutor worker co the
+        # duoc reuse voi loop cu) -> catch -> fallback plain text -> mat format.
         try:
-            _txt, _ents, _eng = asyncio.run(
-                _ast_translate_with_entities(raw_text, entities, force_google)
-            )
-            # Bug fix: khong convert [] thanh None
-            # [] = valid (khong co entity sau render) -- van set _tg_translated_entities
+            _loop = asyncio.new_event_loop()
+            try:
+                _txt, _ents, _eng = _loop.run_until_complete(
+                    _ast_translate_with_entities(raw_text, entities, force_google)
+                )
+            finally:
+                _loop.close()
+            # Khong convert [] thanh None:
+            # [] = hop le (khong co entity sau render) -- van set _tg_translated_entities
             # None = exception path -- moi fallback plain text
             return _txt, _ents, _eng
         except Exception as _ast_err:
-            print(f'[AST] Lỗi, fallback plain text: {_ast_err}')
+            print(f'[AST] Exception -> fallback plain: {type(_ast_err).__name__}: {_ast_err}')
             result = _translate_segment(raw_text)
             return result, None, _engine_used[0]
 

@@ -2687,6 +2687,16 @@ class WsConn:
             print(f'[WS] recv lỗi: {type(e).__name__}: {e}')
             return None
 
+    def ping(self):
+        """Gửi WebSocket ping frame (opcode 0x89) — giữ Render proxy không timeout."""
+        if self._closed:
+            return
+        with self._send_lock:
+            try:
+                self._sock.sendall(bytes([0x89, 0x00]))  # ping, no payload
+            except Exception:
+                self._closed = True
+
     def close(self):
         self._closed = True
         try:
@@ -4533,8 +4543,9 @@ function connectWS(){
 
     ws.onopen=()=>{
         wsReady=true;
+        _wsRetryDelay=3000;
         document.getElementById('ws-dot').className='ws-dot on';
-        document.getElementById('ws-lbl').textContent='Đang kết nối...';
+        document.getElementById('ws-lbl').textContent='Đang theo dõi';
         feedsPayload=feeds.map(f=>({url:f.url,name:f.name,
             show_link:f.show_link!==false,
             auto_fwd:f.auto_fwd===true,
@@ -4670,9 +4681,6 @@ function connectWS(){
         _wsRetryDelay = Math.min((_wsRetryDelay||3000) * 2, 60000);
         setTimeout(connectWS, _wsRetryDelay);
     };
-    ws.onopen=ws.onopen||(()=>{});
-    const _origOnOpen = ws.onopen;
-    ws.onopen = function(e){ _wsRetryDelay=3000; if(_origOnOpen) _origOnOpen(e); };
 }
 function wsSend(obj){if(ws&&wsReady)ws.send(JSON.stringify(obj));}
 
@@ -4865,7 +4873,9 @@ def parse_items(xml_bytes, category_hint='', limit=None):
         if media_url and f'src="{media_url}"' not in desc and f"src='{media_url}'" not in desc:
             desc = f'<img src="{media_url}"/>' + ('\n' if desc else '') + desc
 
-        items.append({'guid': guid, 'title': title, 'link': link, 'pubDate': pub, 'desc': desc, 'translated': False, 'category': category_hint})
+        items.append({'guid': guid, 'title': title, 'link': link, 'pubDate': pub, 'desc': desc,
+                      'translated': False, 'category': category_hint,
+                      '_rss_media_url': media_url or None})
     return items
 
 def process_items(items):
@@ -5876,14 +5886,15 @@ def _poll_one(url_obj):
                 it['text']    = raw_text.strip()
                 it['_source'] = 'rss'
 
-                imgs, videos = extract_media(it.get('desc', ''))
-                if videos:
-                    v = videos[0].lower()
-                    it['_rss_media_url'] = videos[0] if any(v.endswith(e) for e in ('.mp4','.webm','.mov','.mkv')) else None
-                elif imgs:
-                    it['_rss_media_url'] = imgs[0]
-                else:
-                    it['_rss_media_url'] = None
+                if '_rss_media_url' not in it:
+                    imgs, videos = extract_media(it.get('desc', ''))
+                    if videos:
+                        v = videos[0].lower()
+                        it['_rss_media_url'] = videos[0] if any(v.endswith(e) for e in ('.mp4','.webm','.mov','.mkv')) else None
+                    elif imgs:
+                        it['_rss_media_url'] = imgs[0]
+                    else:
+                        it['_rss_media_url'] = None
 
                 if not _do_translate:
                     # Bypass pipeline — broadcast UI + forward trực tiếp, không qua dịch
@@ -6229,11 +6240,11 @@ def ws_handler(ws):
         # Gửi heartbeat định kỳ trong thread riêng để giữ Render proxy không đóng connection
         def keepalive():
             while not getattr(ws, '_closed', False):
-                time.sleep(5)
+                time.sleep(30)
                 if getattr(ws, '_closed', False):
                     break
                 try:
-                    ws.send(json.dumps({'type': 'heartbeat', 'ts': time.time()}, ensure_ascii=False))
+                    ws.ping()  # WebSocket protocol-level ping — giữ Render proxy không timeout
                 except:
                     break
         threading.Thread(target=keepalive, daemon=True).start()

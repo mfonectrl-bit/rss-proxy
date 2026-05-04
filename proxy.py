@@ -3729,7 +3729,8 @@ async function forwardSelected(){
         const feedCfg=feeds.find(f=>f.url===it.feedUrl)||{};
         return {guid:it.guid,title:it.title,desc:it.desc,link:it.link,
                 category:it.category,feedUrl:it.feedUrl,
-                show_link:feedCfg.show_link!==false};
+                show_link:feedCfg.show_link!==false,
+                do_translate:feedCfg.do_translate!==false};
     });
     try{
         const r=await fetch('/tg_forward',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -6725,7 +6726,7 @@ class HttpHandler(BaseHTTPRequestHandler):
                             _raw  = it.get('_tg_raw_text', '') or it.get('text', '') or desc_plain
                             _ents = it.get('_tg_entities') or None
 
-                        if _raw.strip():
+                        if it.get('do_translate', True) and _raw.strip():
                             try:
                                 _txt, _new_ents, _eng = translate_with_entities(_raw, _ents, force_google=False)
                                 if _txt and _txt.strip():

@@ -725,6 +725,40 @@ def _gemini_translate_inner(text, is_html=False):
                 print(f'[Translate] {alias}[key{ki}] loi: {e} — thu slot tiep')
 
 
+def _gemini_combined_inner(text, style_hint, lang_instruction):
+    """
+    Gom dịch + bình luận thành 1 Gemini request qua pool.
+    Trả về (translated, comment, alias) hoặc raise RuntimeError khi hết slot.
+    """
+    tried = set()
+    with _gemini_pool.translate_context():
+        while True:
+            slot = _gemini_pool.pick_slot()
+            if not slot:
+                if tried:
+                    raise RuntimeError(f'GeminiPool combined: đã thử {len(tried)} slot(s), exhausted')
+                raise RuntimeError('GeminiPool combined: không có slot khả dụng')
+            alias, ki, api_key = slot
+            slot_key = (alias, ki)
+            if slot_key in tried:
+                raise RuntimeError(f'GeminiPool combined: đã thử hết {len(tried)} slot(s)')
+            tried.add(slot_key)
+            model_name = _GPOOL_MODELS[alias]
+            try:
+                translated, comment = _gemini_translate_and_comment(
+                    text, style_hint, lang_instruction, model_name, api_key
+                )
+                _gemini_pool.record_success(alias, ki)
+                return translated, comment, alias
+            except Exception as e:
+                err_str = str(e).upper()
+                is_rl = any(x in err_str for x in ['429', 'RESOURCE_EXHAUSTED', 'QUOTA', 'RATE LIMIT'])
+                _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl)
+                if is_rl:
+                    raise RuntimeError(f'GeminiPool combined: {alias}[key{ki}] rate_limit')
+                print(f'[AIComment] {alias}[key{ki}] lỗi combined: {e} — thử slot tiếp')
+
+
 def _dispatcher_translate(text, preferred=None):
     """
     Drop-in replacement cho _engine_dispatcher.translate() cũ.
@@ -831,48 +865,52 @@ class BatchPipeline:
 
         for feed_url, items in by_feed.items():
             processed = []
+            # Đọc feed_cfg 1 lần cho cả batch
+            with lock:
+                _batch_feed_cfg = next((u for u in watched_urls if u['url'] == feed_url), {})
+            _batch_want_comment = _batch_feed_cfg.get('ai_comment', False) and GEMINI_API_KEYS
+            _batch_style_hint   = (_batch_feed_cfg.get('ai_comment_style') or '').strip()
+
             for item in items:
                 text = item.get('text', '')
                 should_translate = item.get('do_translate', True)
                 # Auto-skip nếu text đã là ngôn ngữ đích — tránh dịch thừa
                 if should_translate and text and is_same_as_target(text[:200]):
                     should_translate = False
+                _ai_cmt = ''
                 if should_translate:
                     is_history  = item.get('_is_history', False)
                     raw_text    = item.get('_tg_raw_text', '') or text
                     entities    = item.get('_tg_entities') or None
 
-                    with lock:
-                        _pb_feed_cfg = next((u for u in watched_urls if u['url'] == item.get('feed_url', '')), {})
-                    _pb_ai_comment = _pb_feed_cfg.get('ai_comment', False)
-
-                    # ── Gom dịch + comment khi: plain text, Gemini available, feed bật ai_comment ──
-                    _combined_done = False
-                    if (_pb_ai_comment and not is_history and not entities and GEMINI_API_KEYS):
-                        _cmt, _combined_translation = _generate_ai_comment(raw_text, _pb_feed_cfg, text_to_translate=raw_text)
-                        if _combined_translation:
-                            translated_text = _combined_translation
+                    # ── UNIFIED TRANSLATE — entity-aware, engine-adaptive ──
+                    # force_google=True khi là history item (Gemini chưa enable)
+                    # Combined (plain-text + bình luận 1 request) khi có thể
+                    if _batch_want_comment and not is_history and not entities and GEMINI_API_KEYS:
+                        _lang_name  = _LANG_NAME.get(translate_target_lang, translate_target_lang)
+                        _lang_instr = f'Bình luận bằng {_lang_name}.'
+                        try:
+                            translated_text, _ai_cmt, _eng = _gemini_combined_inner(
+                                raw_text, _batch_style_hint, _lang_instr
+                            )
+                            if not translated_text or not translated_text.strip():
+                                translated_text = text; _eng = 'none'; _ai_cmt = ''
                             new_entities = None
-                            _eng = 'gemini'
-                            item['_ai_comment'] = _cmt
-                            _combined_done = True
-
-                    if not _combined_done:
-                        # ── UNIFIED TRANSLATE — entity-aware, engine-adaptive ──
-                        # force_google=True khi là history item (Gemini chưa enable)
+                        except RuntimeError:
+                            translated_text, new_entities, _eng = translate_with_entities(
+                                raw_text, entities, force_google=is_history
+                            )
+                            if not translated_text or not translated_text.strip():
+                                translated_text = text; _eng = 'none'
+                    else:
                         translated_text, new_entities, _eng = translate_with_entities(
                             raw_text, entities, force_google=is_history
                         )
-                        if _pb_ai_comment:
-                            # Entity path hoặc fallback: comment gọi riêng
-                            _cmt, _ = _generate_ai_comment(raw_text, _pb_feed_cfg)
-                            item['_ai_comment'] = _cmt
-                        else:
-                            item['_ai_comment'] = ''
-
-                    if not translated_text or not translated_text.strip():
-                        translated_text = text
-                        _eng = 'none'
+                        if not translated_text or not translated_text.strip():
+                            translated_text = text; _eng = 'none'
+                        # Bình luận riêng khi có entities
+                        if _batch_want_comment and not is_history and entities:
+                            _ai_cmt = _generate_ai_comment_only(raw_text, _batch_feed_cfg)
 
                     if new_entities is not None:
                         # Entity-based result → dùng formatting_entities khi gửi
@@ -887,12 +925,12 @@ class BatchPipeline:
                     translated = translated_text
                 else:
                     translated = text  # Không dịch — giữ nguyên bản gốc
-                    item['_translate_engine_used'] = ''  # Không gán prefix engine
-                    # Feed không dịch: comment gọi riêng bình thường
-                    with lock:
-                        _pb_feed_cfg = next((u for u in watched_urls if u['url'] == item.get('feed_url', '')), {})
-                    _cmt, _ = _generate_ai_comment(text, _pb_feed_cfg)
-                    item['_ai_comment'] = _cmt
+                    item['_translate_engine_used'] = ''
+                    # Bình luận riêng bằng ngôn ngữ gốc
+                    if _batch_want_comment and not item.get('_is_history', False):
+                        _ai_cmt = _generate_ai_comment_only(text, _batch_feed_cfg)
+
+                item['_ai_comment'] = _ai_cmt
                 if not item.get('category'):
                     item['category'] = item.get('category') or 'Khác'
                 item['text_translated'] = translated
@@ -1830,123 +1868,99 @@ def _translate_deepl_html(html_text):
     return data['translations'][0]['text'].strip()
 
 
-def _generate_ai_comment(content_text, feed_cfg, text_to_translate=None):
+# ── AI COMMENT HELPERS ────────────────────────────────────────────────────────
+
+_CMT_DELIM = '<<<COMMENT>>>'
+
+def _gemini_translate_and_comment(text, style_hint, lang_instruction, model, api_key):
     """
-    Sinh bình luận ngắn từ Gemini cho 1 bản tin.
-    Dùng chung cho auto-forward, manual forward, và forward nguyên kênh.
+    Gom dịch + bình luận thành 1 Gemini request duy nhất.
+    Trả về (translated_text, comment_text) — cả 2 đều có thể là ''.
+    Dùng delimiter cố định để tách 2 phần output.
+    """
+    _key = api_key or GEMINI_API_KEY
+    if not _key:
+        raise ValueError('GEMINI_API_KEY chưa set')
+    _lang = _LANG_NAME.get(translate_target_lang, translate_target_lang)
+    style_part = f'Yêu cầu phong cách bình luận: {style_hint}\n' if style_hint else ''
+    prompt = (
+        f'Thực hiện 2 việc với bản tin sau:\n'
+        f'1. Dịch toàn bộ sang {_lang} tự nhiên, giữ nguyên format xuống dòng, emoji và ký tự đặc biệt.\n'
+        f'2. Viết 1 bình luận ngắn, súc tích về bản tin. {lang_instruction}\n'
+        f'{style_part}'
+        f'Trả về đúng định dạng sau, không thêm bất kỳ nội dung nào khác:\n'
+        f'[BẢN DỊCH]\n<bản dịch ở đây>\n{_CMT_DELIM}\n<bình luận ở đây>\n\n'
+        f'BẢN TIN GỐC:\n{text[:12000]}'
+    )
+    payload = json.dumps({
+        'contents': [{'parts': [{'text': prompt}]}],
+        'generationConfig': {'temperature': 0.2, 'maxOutputTokens': 8192},
+    }).encode('utf-8')
+    url = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={_key}'
+    req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
+    with urllib.request.urlopen(req, timeout=55) as resp:
+        data = json.loads(resp.read())
+    raw = data['candidates'][0]['content']['parts'][0]['text'].strip()
+    # Tách theo delimiter
+    if _CMT_DELIM in raw:
+        parts = raw.split(_CMT_DELIM, 1)
+        translated = parts[0].strip()
+        comment    = parts[1].strip()
+        # Strip header [BẢN DỊCH] nếu Gemini trả về
+        translated = re.sub(r'^\[BẢN DỊCH\]\s*', '', translated).strip()
+    else:
+        # Gemini không theo format — coi toàn bộ là bản dịch, không có bình luận
+        translated = re.sub(r'^\[BẢN DỊCH\]\s*', '', raw).strip()
+        comment    = ''
+    return translated, comment
 
-    - feed_cfg['ai_comment']       : bool — feed có bật bình luận không
-    - feed_cfg['ai_comment_style'] : str  — prompt chỉ dẫn phong cách
-    - feed_cfg['do_translate']     : bool — True → bình luận theo translate_target_lang
-                                            False → bình luận theo ngôn ngữ gốc
-    - text_to_translate            : str  — nếu truyền vào, gom dịch + bình luận trong
-                                            1 request Gemini duy nhất, trả về
-                                            (comment, translated_text).
-                                            Nếu None → chỉ sinh bình luận, trả về
-                                            (comment, None).
 
-    Trả về tuple (comment: str, translation: str|None).
-    comment = '' nếu bị tắt / lỗi / không có Gemini key.
-    translation = None khi không gom dịch.
+def _generate_ai_comment_only(content_text, feed_cfg):
+    """
+    Sinh bình luận riêng (không kèm dịch) — dùng khi do_translate=False.
+    Bình luận bằng ngôn ngữ gốc của bản tin.
+    Trả về string bình luận hoặc '' nếu bị tắt / lỗi / không có key.
     """
     if not feed_cfg.get('ai_comment', False):
-        return '', None
+        return ''
     if not GEMINI_API_KEYS:
-        return '', None
+        return ''
     text = (content_text or '').strip()
     if not text or len(text) < 10:
-        return '', None
-
+        return ''
     style_hint = (feed_cfg.get('ai_comment_style') or '').strip()
-
-    if feed_cfg.get('do_translate', True):
-        _lang = _LANG_NAME.get(translate_target_lang, translate_target_lang)
-        lang_instruction = f'Viết bình luận bằng {_lang}.'
-    else:
-        lang_instruction = 'Viết bình luận bằng ngôn ngữ của bản tin.'
-
-    if style_hint:
-        style_part = f'Yêu cầu phong cách: {style_hint}\n'
-    else:
-        style_part = ''
-
+    style_part = f'Yêu cầu phong cách: {style_hint}\n' if style_hint else ''
+    prompt = (
+        f'Đọc bản tin sau và viết 1 bình luận ngắn, súc tích bằng ngôn ngữ của bản tin.\n'
+        f'{style_part}'
+        f'Chỉ trả về nội dung bình luận, không giải thích, không tiêu đề.\n\n'
+        f'BẢN TIN:\n{text[:3000]}'
+    )
     try:
         slot = _gemini_pool.pick_slot()
         if not slot:
-            return '', None
+            return ''
         alias, ki, api_key = slot
         model_name = _GPOOL_MODELS[alias]
-
-        if text_to_translate:
-            # ── Gom dịch + bình luận trong 1 request ──────────────────────
-            _tlang = _LANG_NAME.get(translate_target_lang, translate_target_lang)
-            prompt = (
-                f'Thực hiện 2 nhiệm vụ sau với bản tin bên dưới và trả về JSON hợp lệ duy nhất, '
-                f'không markdown, không giải thích.\n\n'
-                f'1. "translation": Dịch toàn bộ nội dung sang {_tlang}, giữ nguyên format xuống dòng, '
-                f'emoji và ký tự đặc biệt.\n'
-                f'2. "comment": Viết 1 bình luận ngắn, súc tích về bản tin. '
-                f'{style_part}'
-                f'{lang_instruction} Không dùng dấu nháy kép bao ngoài.\n\n'
-                f'Định dạng trả về:\n'
-                f'{{"translation": "...", "comment": "..."}}\n\n'
-                f'BẢN TIN:\n{text_to_translate[:3000]}'
-            )
-            payload = json.dumps({
-                'contents': [{'parts': [{'text': prompt}]}],
-                'generationConfig': {'temperature': 0.1, 'maxOutputTokens': 8192},
-            }).encode('utf-8')
-            url = (
-                f'https://generativelanguage.googleapis.com/v1beta/models/'
-                f'{model_name}:generateContent?key={api_key}'
-            )
-            req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
-            with urllib.request.urlopen(req, timeout=45) as resp:
-                data = json.loads(resp.read())
-            raw = data['candidates'][0]['content']['parts'][0]['text'].strip()
-            raw = re.sub(r'^```json\s*', '', raw)
-            raw = re.sub(r'^```\s*', '', raw)
-            raw = re.sub(r'\s*```$', '', raw).strip()
-            parsed = json.loads(raw)
-            _gemini_pool.record_success(alias, ki)
-            translation = (parsed.get('translation') or '').strip()
-            comment = (parsed.get('comment') or '').strip()
-            if _is_error_result(comment):
-                comment = ''
-            if _is_error_result(translation):
-                translation = ''
-            return comment, translation or None
-        else:
-            # ── Chỉ sinh bình luận (feed không dịch) ──────────────────────
-            prompt = (
-                f'Đọc bản tin sau và viết 1 bình luận ngắn, súc tích.\n'
-                f'{style_part}'
-                f'{lang_instruction}\n'
-                f'Chỉ trả về nội dung bình luận, không giải thích, không tiêu đề, không dấu nháy kép bao ngoài.\n\n'
-                f'BẢN TIN:\n{text[:3000]}'
-            )
-            payload = json.dumps({
-                'contents': [{'parts': [{'text': prompt}]}],
-                'generationConfig': {'temperature': 0.7, 'maxOutputTokens': 512},
-            }).encode('utf-8')
-            url = (
-                f'https://generativelanguage.googleapis.com/v1beta/models/'
-                f'{model_name}:generateContent?key={api_key}'
-            )
-            req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                data = json.loads(resp.read())
-            comment = data['candidates'][0]['content']['parts'][0]['text'].strip()
-            _gemini_pool.record_success(alias, ki)
-            if _is_error_result(comment):
-                return '', None
-            return comment, None
+        payload = json.dumps({
+            'contents': [{'parts': [{'text': prompt}]}],
+            'generationConfig': {'temperature': 0.7, 'maxOutputTokens': 512},
+        }).encode('utf-8')
+        _url = (
+            f'https://generativelanguage.googleapis.com/v1beta/models/'
+            f'{model_name}:generateContent?key={api_key}'
+        )
+        req = urllib.request.Request(_url, data=payload, headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read())
+        comment = data['candidates'][0]['content']['parts'][0]['text'].strip()
+        _gemini_pool.record_success(alias, ki)
+        return '' if _is_error_result(comment) else comment
     except Exception as e:
         print(f'[AIComment] Lỗi sinh bình luận: {e}')
-        return '', None
+        return ''
 
 
-def _fix_html_spacing(html):
     """
     Post-process HTML sau khi dịch (Gemini/DeepL) — đảm bảo có space
     trước opening tag và sau closing tag, tránh text bị dính vào tag.
@@ -3201,7 +3215,7 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
   </label>
 </div>
 <div style="margin-bottom:10px;padding:8px 12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px">
-  <label style="font-size:12px;color:#0369a1;font-weight:600;display:block;margin-bottom:6px">📢 Bình luận AI (Gemini)</label>
+  <label style="font-size:12px;color:#0369a1;font-weight:600;display:block;margin-bottom:6px">📣 Bình luận AI (Gemini)</label>
   <textarea id="new-ai-comment-style" placeholder="Phong cách bình luận — VD: Bình luận ngắn 1-2 câu theo góc nhìn nhà đầu tư chứng khoán"
     style="width:100%;padding:7px;border:1px solid #7dd3fc;border-radius:7px;font-size:12px;resize:vertical;min-height:56px;box-sizing:border-box;font-family:inherit"></textarea>
   <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;margin-top:6px">
@@ -5601,14 +5615,10 @@ def _do_forward(processed, category, url):
                 if _eng_prefix and caption.strip():
                     caption = f'<b>{_eng_prefix}:</b> ' + caption
 
-                # Bình luận AI — đọc từ item (đã được gom lúc dịch hoặc gọi riêng)
-                _comment_text = it.get('_tg_raw_text', '') or it.get('desc', '') or ''
-                _ai_cmt = it.get('_ai_comment')
-                if _ai_cmt is None:
-                    # Fallback: item cũ chưa có _ai_comment (vd: từ _do_forward trực tiếp)
-                    _ai_cmt, _ = _generate_ai_comment(_comment_text, feed_cfg)
+                # Bình luận AI — chèn sau bản tin, trước "Xem bài gốc"
+                _ai_cmt = it.get('_ai_comment', '')
                 if _ai_cmt:
-                    caption += f'\n\n\u201c{_ai_cmt}\u201d'
+                    caption += f'\n\n📣 {_ai_cmt}'
 
                 if show_link and it.get('link'):
                     caption += f'\n\n<a href="{it["link"]}">Xem bài gốc \u2192</a>'
@@ -5648,13 +5658,12 @@ def _do_forward(processed, category, url):
                         _ec.offset += _shift
                         _new_body_ents.append(_ec)
 
-                    # ── Suffix: AI comment → plain text, trước show_link ──
+                    # ── Suffix: AI comment → plain text, trước "Xem bài gốc" ─
                     _cur = _shift + _u16len(_body_text)
                     if _ai_cmt:
-                        _cmt_pre = '\n\n'
-                        _cmt_wrapped = f'\u201c{_ai_cmt}\u201d'
-                        _suffix_text += _cmt_pre + _cmt_wrapped
-                        _cur += _u16len(_cmt_pre + _cmt_wrapped)
+                        _cmt_pre = '\n\n📣 '
+                        _suffix_text += _cmt_pre + _ai_cmt
+                        _cur += _u16len(_cmt_pre + _ai_cmt)
 
                     # ── Suffix: "Xem bài gốc →" → TextUrl entity (hidden) ─
                     if show_link and it.get('link'):
@@ -5678,7 +5687,6 @@ def _do_forward(processed, category, url):
                                 _MEI(offset=_cur + _u16len(_cpre),
                                      length=_u16len(channel_name))
                             )
-                            _cur += _u16len(_cpre + channel_name)
 
                     # Dung send_item (shallow copy) thay vi ghi de it in-place
                     # tranh prefix/suffix tich luy khi nhieu dest hoac topic
@@ -5846,33 +5854,36 @@ def _run_read_all_bg(url, feed_cfg):
 
             # Auto-skip nếu text đã là ngôn ngữ đích — tránh dịch thừa cho feed tiếng Việt
             _effective_translate = do_translate and msg_text and not is_same_as_target(msg_text[:200])
+            _want_comment  = feed_cfg.get('ai_comment', False) and GEMINI_API_KEYS
+            _style_hint    = (feed_cfg.get('ai_comment_style') or '').strip()
 
             if _effective_translate:
                 item["text"] = msg_text
                 _raw_entities = msg.entities if msg.entities else None
 
-                # Gom dịch + comment khi: plain text, Gemini available, feed bật ai_comment
-                _rab_combined_done = False
-                if (feed_cfg.get('ai_comment') and not _raw_entities and GEMINI_API_KEYS):
-                    _rab_cmt, _rab_translation = _generate_ai_comment(msg_text, feed_cfg, text_to_translate=msg_text)
-                    if _rab_translation:
-                        translated = _rab_translation
+                # ── Combined: dịch + bình luận 1 request (chỉ khi plain-text, không entity) ──
+                _ai_cmt = ''
+                if _want_comment and not _raw_entities:
+                    _lang_name = _LANG_NAME.get(translate_target_lang, translate_target_lang)
+                    _lang_instr = f'Bình luận bằng {_lang_name}.'
+                    try:
+                        translated, _ai_cmt, _eng = _gemini_combined_inner(msg_text, _style_hint, _lang_instr)
+                        if not translated or not translated.strip():
+                            translated = msg_text; _eng = 'none'; _ai_cmt = ''
                         new_ents = None
-                        _eng = 'gemini'
-                        item['_ai_comment'] = _rab_cmt
-                        _rab_combined_done = True
-
-                if not _rab_combined_done:
+                    except RuntimeError:
+                        # Fallback: dịch thường, không bình luận
+                        translated, new_ents, _eng = translate_with_entities(msg_text, None)
+                        if not translated or not translated.strip():
+                            translated = msg_text; _eng = 'none'
+                else:
                     translated, new_ents, _eng = translate_with_entities(msg_text, _raw_entities)
-                    if feed_cfg.get('ai_comment'):
-                        _rab_cmt, _ = _generate_ai_comment(msg_text, feed_cfg)
-                        item['_ai_comment'] = _rab_cmt
-                    else:
-                        item['_ai_comment'] = ''
+                    if not translated or not translated.strip():
+                        translated = msg_text; _eng = 'none'
+                    # Bình luận riêng khi có entities (không thể gom)
+                    if _want_comment and _raw_entities:
+                        _ai_cmt = _generate_ai_comment_only(msg_text, feed_cfg)
 
-                if not translated or not translated.strip():
-                    translated = msg_text
-                    _eng = 'none'
                 if new_ents is not None:
                     item["_tg_translated_text"]     = translated
                     item["_tg_translated_entities"] = new_ents
@@ -5880,17 +5891,14 @@ def _run_read_all_bg(url, feed_cfg):
                 else:
                     item["_tg_html_text"] = ''
                 item["_translate_engine_used"] = _eng
-                item["desc"] = translated
-                item["title"] = (translated[:80] + "...") if len(translated) > 80 else translated
+                item["desc"]      = translated
+                item["title"]     = (translated[:80] + "...") if len(translated) > 80 else translated
                 item["translated"] = True
+                item["_ai_comment"] = _ai_cmt
             else:
-                item["_translate_engine_used"] = ''  # Không gán prefix engine
-                # Feed không dịch: comment gọi riêng
-                if feed_cfg.get('ai_comment'):
-                    _rab_cmt, _ = _generate_ai_comment(msg_text, feed_cfg)
-                    item['_ai_comment'] = _rab_cmt
-                else:
-                    item['_ai_comment'] = ''
+                item["_translate_engine_used"] = ''
+                # Không dịch — bình luận riêng bằng ngôn ngữ gốc nếu feed bật
+                item["_ai_comment"] = _generate_ai_comment_only(msg_text, feed_cfg) if _want_comment else ''
 
             # Đánh dấu grouped_id đã xử lý (guid đã được ghi atomic ở trên)
             if grouped:
@@ -6229,6 +6237,10 @@ def _process_tg_queue():
         _route = 'pipeline' if do_translate else 'direct'
         print(f'[+] {len(new_items)} bài mới → {_route}: {feed_url}')
 
+        # Đọc feed_cfg để truyền vào AI comment (no-translate path)
+        with lock:
+            _tq_feed_cfg = next((u for u in watched_urls if u['url'] == feed_url), {})
+
         for it in new_items:
             # Khôi phục newline từ <br> trước khi dịch — strip_html thay <br> bằng space
             _raw_desc = it.get('desc', '') or ''
@@ -6268,8 +6280,11 @@ def _process_tg_queue():
 
             if not do_translate:
                 # Bypass pipeline — broadcast UI + forward trực tiếp, không qua dịch
-                pipeline_item['text_translated'] = _raw_text
-                pipeline_item['translated']      = False
+                # Bình luận riêng bằng ngôn ngữ gốc nếu feed bật
+                _tq_ai_cmt = _generate_ai_comment_only(_raw_text, _tq_feed_cfg)
+                pipeline_item['_ai_comment']           = _tq_ai_cmt
+                pipeline_item['text_translated']       = _raw_text
+                pipeline_item['translated']            = False
                 pipeline_item['_translate_engine_used'] = ''
                 ws_item = {k: v for k, v in pipeline_item.items()
                            if k not in _WS_STRIP and k not in ('text', 'text_translated', '_tg_has_media')}
@@ -6885,14 +6900,18 @@ class HttpHandler(BaseHTTPRequestHandler):
                         feed_url  = it.get('feedUrl', '')
                         show_link = it.get('show_link', True)
 
+                        # Đọc feed_cfg để lấy ai_comment settings
+                        with lock:
+                            _mf_feed_cfg = next((u for u in watched_urls if u['url'] == feed_url), {})
+                        _mf_want_cmt  = _mf_feed_cfg.get('ai_comment', False) and GEMINI_API_KEYS
+                        _mf_style     = (_mf_feed_cfg.get('ai_comment_style') or '').strip()
+
                         desc_raw   = it.get('desc', '') or ''
                         desc_plain = re.sub(r'<br\s*/?>', '\n', desc_raw, flags=re.I)
                         desc_plain = re.sub(r'<[^>]+>', '', desc_plain).strip()
                         # Nếu có link ẩn → dùng text đã expand
                         _expanded = _expand_hidden_links_to_text(it)
                         caption   = _expanded if _expanded else desc_plain
-                        # show_link và channel_name được append bên dưới sau khi dịch/comment
-                        # caption này chỉ là fallback khi exception xảy ra
 
                         send_item = {**it, '_source': 'telethon' if is_tg_source(feed_url) else 'rss'}
                         if is_tg_source(feed_url):
@@ -6931,26 +6950,29 @@ class HttpHandler(BaseHTTPRequestHandler):
                             _raw  = it.get('_tg_raw_text', '') or it.get('text', '') or desc_plain
                             _ents = it.get('_tg_entities') or None
 
+                        _mf_ai_cmt = ''
                         if it.get('do_translate', True) and _raw.strip():
                             try:
-                                with lock:
-                                    _mfwd_feed_cfg = next((u for u in watched_urls if u['url'] == feed_url), {})
-                                _mfwd_cmt_text = _raw or desc_plain
-
-                                # Gom dịch + comment nếu plain text path + feed bật ai_comment
-                                _mfwd_combined_done = False
-                                if (_mfwd_feed_cfg.get('ai_comment') and not _ents and GEMINI_API_KEYS):
-                                    _mfwd_ai_cmt, _mfwd_translation = _generate_ai_comment(
-                                        _mfwd_cmt_text, _mfwd_feed_cfg, text_to_translate=_raw)
-                                    if _mfwd_translation:
-                                        _txt = _mfwd_translation
+                                # Combined (1 request) nếu plain-text + bình luận bật
+                                if _mf_want_cmt and not _ents and GEMINI_API_KEYS:
+                                    _lang_name  = _LANG_NAME.get(translate_target_lang, translate_target_lang)
+                                    _lang_instr = f'Bình luận bằng {_lang_name}.'
+                                    try:
+                                        _txt, _mf_ai_cmt, _eng = _gemini_combined_inner(_raw, _mf_style, _lang_instr)
+                                        if not _txt or not _txt.strip():
+                                            _txt = _raw; _eng = 'none'; _mf_ai_cmt = ''
                                         _new_ents = None
-                                        _eng = 'gemini'
-                                        _mfwd_combined_done = True
-
-                                if not _mfwd_combined_done:
+                                    except RuntimeError:
+                                        _txt, _new_ents, _eng = translate_with_entities(_raw, _ents, force_google=False)
+                                        if not _txt or not _txt.strip():
+                                            _txt = _raw; _eng = 'none'
+                                else:
                                     _txt, _new_ents, _eng = translate_with_entities(_raw, _ents, force_google=False)
-                                    _mfwd_ai_cmt, _ = _generate_ai_comment(_mfwd_cmt_text, _mfwd_feed_cfg)
+                                    if not _txt or not _txt.strip():
+                                        _txt = _raw; _eng = 'none'
+                                    # Bình luận riêng khi có entities
+                                    if _mf_want_cmt and _ents:
+                                        _mf_ai_cmt = _generate_ai_comment_only(_raw, _mf_feed_cfg)
 
                                 if _txt and _txt.strip():
                                     _eng_prefix = {
@@ -6962,7 +6984,7 @@ class HttpHandler(BaseHTTPRequestHandler):
                                     send_item['_translate_engine_used'] = _eng
 
                                     if _new_ents is not None:
-                                        # ── Entity path: giữ full formatting ──
+                                        # ── Entity path (Gemini/DeepL): giữ full formatting ──
                                         from copy import deepcopy as _dc
                                         from telethon.tl.types import (
                                             MessageEntityBold as _MEB,
@@ -6977,11 +6999,11 @@ class HttpHandler(BaseHTTPRequestHandler):
                                             _ec = _dc(_e); _ec.offset += _shift; _body_e.append(_ec)
                                         _cur = _shift + _u16len(_txt)
                                         _sfx_text = ""; _sfx_e = []
-                                        # AI comment trước show_link
-                                        if _mfwd_ai_cmt:
-                                            _cmt_wrapped = f'\u201c{_mfwd_ai_cmt}\u201d'
-                                            _sfx_text += "\n\n" + _cmt_wrapped
-                                            _cur += 2 + _u16len(_cmt_wrapped)
+                                        # AI comment trước "Xem bài gốc"
+                                        if _mf_ai_cmt:
+                                            _cmt_pre = '\n\n📣 '
+                                            _sfx_text += _cmt_pre + _mf_ai_cmt
+                                            _cur += _u16len(_cmt_pre + _mf_ai_cmt)
                                         if show_link and it.get("link"):
                                             _lbl = "Xem b\u00e0i g\u1ed1c \u2192"
                                             _sfx_text += "\n\n" + _lbl
@@ -6990,7 +7012,6 @@ class HttpHandler(BaseHTTPRequestHandler):
                                         if channel_name:
                                             _sfx_text += "\n\n" + channel_name
                                             _sfx_e.append(_MEI(offset=_cur+2, length=_u16len(channel_name)))
-                                            _cur += 2 + _u16len(channel_name)
                                         send_item['_tg_translated_text']     = _pfx + _txt + _sfx_text
                                         send_item['_tg_translated_entities'] = _pfx_e + _body_e + _sfx_e
                                         caption = desc_plain  # entities path sẽ lo phần hiển thị
@@ -6998,25 +7019,22 @@ class HttpHandler(BaseHTTPRequestHandler):
                                         # ── Plain text path: dùng HTML caption ──
                                         _pfx_html = f"<b>{_eng_prefix}:</b> " if _eng_prefix and _txt.strip() else ""
                                         caption = _pfx_html + _txt.rstrip()
-                                        # AI comment trước show_link
-                                        if _mfwd_ai_cmt:
-                                            caption += f'\n\n\u201c{_mfwd_ai_cmt}\u201d'
+                                        if _mf_ai_cmt:
+                                            caption += f'\n\n📣 {_mf_ai_cmt}'
                                         if show_link and it.get("link"):
                                             caption += f'\n\n<a href="{it["link"]}">Xem b\u00e0i g\u1ed1c \u2192</a>'
                                         if channel_name:
                                             caption += f'\n\n<i>{channel_name}</i>'
                             except Exception:
-                                pass  # fallback: dùng caption gốc như cũ
+                                pass  # fallback: dung caption gốc nhu cu
                         else:
-                            # Không dịch — vẫn append AI comment nếu feed bật
-                            with lock:
-                                _mfwd_feed_cfg = next((u for u in watched_urls if u['url'] == feed_url), {})
-                            _mfwd_cmt_text = _raw or desc_plain
-                            _mfwd_ai_cmt, _ = _generate_ai_comment(_mfwd_cmt_text, _mfwd_feed_cfg)
-                            if _mfwd_ai_cmt:
-                                caption += f'\n\n\u201c{_mfwd_ai_cmt}\u201d'
-                            if show_link and it.get("link"):
-                                caption += f'\n\n<a href="{it["link"]}">Xem b\u00e0i g\u1ed1c \u2192</a>'
+                            # Không dịch — bình luận riêng bằng ngôn ngữ gốc
+                            if _mf_want_cmt:
+                                _mf_ai_cmt = _generate_ai_comment_only(_raw or desc_plain, _mf_feed_cfg)
+                            if _mf_ai_cmt:
+                                caption += f'\n\n📣 {_mf_ai_cmt}'
+                            if show_link and it.get('link'):
+                                caption += f'\n\n<a href="{it["link"]}">Xem bài gốc →</a>'
                             if channel_name:
                                 caption += f'\n\n<i>{channel_name}</i>'
                         desc_has_link = bool(re.search(r'https?://', it.get('desc', '') or ''))

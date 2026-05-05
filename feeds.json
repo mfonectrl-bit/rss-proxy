@@ -17,7 +17,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "@RFI_Vi",
@@ -36,7 +38,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "@geopolitics_prime",
@@ -55,7 +59,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "@uncut_news",
@@ -74,7 +80,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "@InsiderPaper",
@@ -93,7 +101,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "@abcdnewstest",
@@ -108,7 +118,9 @@
         }
       ],
       "history_limit": 1,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "@rtnews",
@@ -127,7 +139,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "@tempvaxscam",
@@ -142,7 +156,9 @@
         }
       ],
       "history_limit": 1,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/naturalcuresforbody",
@@ -161,7 +177,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/P_McCulloughMD",
@@ -180,7 +198,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/DrTenpenny",
@@ -199,7 +219,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/dr_judymikovitss",
@@ -218,7 +240,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/BarbaraOneill_official",
@@ -237,7 +261,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/Edward_Dowd",
@@ -256,7 +282,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/naomirwolf",
@@ -275,7 +303,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/DrSimoneGold",
@@ -294,7 +324,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/NicHulscher",
@@ -313,7 +345,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/ShankaraChetty",
@@ -332,7 +366,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/DrPaulMarik",
@@ -351,7 +387,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/RogerHodkinson",
@@ -370,7 +408,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/DrMikeYeadon",
@@ -389,7 +429,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/RWMaloneMD",
@@ -408,7 +450,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/AmericasDoctors",
@@ -427,7 +471,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/NaturalNewsMedia",
@@ -446,7 +492,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/DrJohnCampbell",
@@ -465,7 +513,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/realpetermcculloughmd",
@@ -484,7 +534,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/AseemMalhotra",
@@ -503,7 +555,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/DrSimoneGold",
@@ -522,7 +576,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/RobertKennedyChannell",
@@ -541,7 +597,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/ZFoundation",
@@ -560,7 +618,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/LeeMerritt",
@@ -579,7 +639,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/MdBreathe",
@@ -598,7 +660,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/BREAKINGHEADLINES",
@@ -617,7 +681,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/RealWorldNewsChannel",
@@ -636,7 +702,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/conspiracy_theory3",
@@ -655,7 +723,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/covid_vaccine_injuries",
@@ -674,7 +744,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/GesundUndGut",
@@ -693,7 +765,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/JimCaviezel_TG",
@@ -712,7 +786,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/free_energyyy",
@@ -731,7 +807,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/midwesterndoc",
@@ -750,7 +828,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/LauraAbolichannel",
@@ -769,7 +849,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/TruthAboutCOVID",
@@ -788,7 +870,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/unabhaengig_neutral",
@@ -807,7 +891,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/NVIC_VaccineFreedom",
@@ -826,7 +912,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/cruel_historyy",
@@ -845,7 +933,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/insider_amigo",
@@ -864,7 +954,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/vaccinechoicecanada",
@@ -883,7 +975,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/COVID19VACCINEVICTIMSANDFAMILIES",
@@ -902,7 +996,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/schwurbelfunk",
@@ -921,7 +1017,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/History_JackRaven",
@@ -940,7 +1038,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/Medienzensur",
@@ -959,7 +1059,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/COVID19Up",
@@ -978,7 +1080,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/awakenedspecies",
@@ -997,7 +1101,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/ExiledMedicFabian",
@@ -1016,7 +1122,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/Traditional_Medicine_folk",
@@ -1035,7 +1143,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/INSIDERR_POLITIC",
@@ -1054,7 +1164,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/INSIDER_USA_NEWS",
@@ -1073,7 +1185,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/TelegramTips",
@@ -1092,7 +1206,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/telegram",
@@ -1111,7 +1227,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/trendingapps",
@@ -1130,7 +1248,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://feeds.bloomberg.com/markets/news.rss",
@@ -1149,7 +1269,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://www.cnbc.com/id/100003114/device/rss/rss.html",
@@ -1168,7 +1290,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://www.ft.com/rss/home/international",
@@ -1187,7 +1311,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://feeds.bbci.co.uk/news/world/rss.xml",
@@ -1206,7 +1332,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
@@ -1225,7 +1353,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml",
@@ -1244,7 +1374,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/antiilluminaten",
@@ -1263,7 +1395,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "@tintucvnws",
@@ -1282,7 +1416,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/perplexity",
@@ -1297,7 +1433,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/ArtificialIntelligenceAINews",
@@ -1312,7 +1450,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/githubtrending",
@@ -1327,7 +1467,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://techcrunch.com/feed/",
@@ -1342,7 +1484,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://www.wired.com/feed/rss",
@@ -1357,7 +1501,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://www.technologyreview.com/feed",
@@ -1372,7 +1518,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/internationalgeographic",
@@ -1387,7 +1535,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/theplacetobe1",
@@ -1402,7 +1552,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/voyage",
@@ -1417,7 +1569,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/NationGeographic",
@@ -1432,7 +1586,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/thehackernews",
@@ -1447,7 +1603,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/leaklive",
@@ -1462,7 +1620,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/iPapkorn",
@@ -1477,7 +1637,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/Kulinariya_retsept",
@@ -1492,7 +1654,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/mama_recepti",
@@ -1507,7 +1671,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/wordsofbuddha",
@@ -1522,7 +1688,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://tricycle.org/feed/",
@@ -1537,7 +1705,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/whichtimes",
@@ -1552,7 +1722,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/buddhistchanneljoinin",
@@ -1567,7 +1739,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/history_photo_look",
@@ -1582,7 +1756,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/HistoryInArtAndPhotos",
@@ -1597,7 +1773,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/buddhadhamma",
@@ -1612,7 +1790,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/buddha_ebooks",
@@ -1627,7 +1807,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/TheravadaBuddhists",
@@ -1642,7 +1824,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/ufoschannel",
@@ -1657,7 +1841,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/dishes",
@@ -1672,7 +1858,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/culinaryd",
@@ -1687,7 +1875,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://thanhnien.vn/rss/home.rss",
@@ -1702,7 +1892,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://cafef.vn/thi-truong-chung-khoan.rss",
@@ -1717,7 +1909,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/ClayTrading",
@@ -1732,7 +1926,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/tommychartist",
@@ -1747,7 +1943,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/benjaminanderson",
@@ -1762,7 +1960,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://feeds.finance.yahoo.com/rss/2.0/headline?s=GC=F&region=US&lang=en-US",
@@ -1777,7 +1977,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/bbcvn",
@@ -1792,7 +1994,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/ITundSicherheit",
@@ -1807,7 +2011,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/meditative_mind",
@@ -1822,7 +2028,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/Nature",
@@ -1837,7 +2045,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/aipost",
@@ -1852,7 +2062,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/discovery_video1",
@@ -1867,7 +2079,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/memes_comedy",
@@ -1882,7 +2096,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/tgrealnature",
@@ -1897,7 +2113,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/WELT_DER_VIDEOS",
@@ -1912,7 +2130,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/KanalChemtrailsHaarp",
@@ -1931,7 +2151,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/health",
@@ -1950,7 +2172,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/Jokes",
@@ -1965,7 +2189,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://vnexpress.net/rss/tin-moi-nhat.rss",
@@ -1980,7 +2206,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/playlist_instrumental",
@@ -1995,7 +2223,9 @@
         }
       ],
       "history_limit": 2,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/Useful_Tips_Lifehacks",
@@ -2010,7 +2240,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/lifehacksadvice",
@@ -2025,7 +2257,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/Kulinar9",
@@ -2040,7 +2274,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/dailyexpose",
@@ -2063,7 +2299,9 @@
         }
       ],
       "history_limit": 5,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     },
     {
       "url": "https://t.me/DismantlingTheCabal",
@@ -2078,7 +2316,9 @@
         }
       ],
       "history_limit": 10,
-      "read_all": false
+      "read_all": false,
+      "ai_comment": false,
+      "ai_comment_style": ""
     }
   ],
   "auto_fwd": true,

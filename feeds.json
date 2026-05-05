@@ -6,6 +6,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 1,
@@ -16,8 +17,7 @@
           "topic_ids": "5663"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "@RFI_Vi",
@@ -25,6 +25,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": false,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 1,
@@ -35,8 +36,7 @@
           "topic_ids": "5663"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "@geopolitics_prime",
@@ -44,6 +44,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 1,
@@ -54,8 +55,7 @@
           "topic_ids": "5663"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "@uncut_news",
@@ -63,6 +63,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 1,
@@ -73,8 +74,7 @@
           "topic_ids": "5663"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "@InsiderPaper",
@@ -82,6 +82,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 1,
@@ -92,8 +93,7 @@
           "topic_ids": "24987"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "@abcdnewstest",
@@ -101,14 +101,14 @@
       "show_link": false,
       "auto_fwd": false,
       "do_translate": false,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 4,
           "topic_ids": ""
         }
       ],
-      "history_limit": 1,
-      "read_all": false
+      "history_limit": 1
     },
     {
       "url": "@rtnews",
@@ -116,6 +116,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 1,
@@ -126,8 +127,7 @@
           "topic_ids": "5663"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "@tempvaxscam",
@@ -135,14 +135,14 @@
       "show_link": false,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
           "topic_ids": ""
         }
       ],
-      "history_limit": 1,
-      "read_all": false
+      "history_limit": 1
     },
     {
       "url": "https://t.me/naturalcuresforbody",
@@ -150,6 +150,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 2,
@@ -160,8 +161,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/P_McCulloughMD",
@@ -169,6 +169,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -179,8 +180,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/DrTenpenny",
@@ -188,6 +188,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -198,8 +199,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/dr_judymikovitss",
@@ -207,6 +207,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -217,8 +218,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/BarbaraOneill_official",
@@ -226,6 +226,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -236,8 +237,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/Edward_Dowd",
@@ -245,6 +245,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -255,8 +256,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/naomirwolf",
@@ -264,6 +264,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -274,8 +275,7 @@
           "topic_ids": "6"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/DrSimoneGold",
@@ -283,6 +283,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -293,8 +294,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/NicHulscher",
@@ -302,6 +302,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -312,8 +313,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/ShankaraChetty",
@@ -321,6 +321,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -331,8 +332,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/DrPaulMarik",
@@ -340,6 +340,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -350,8 +351,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/RogerHodkinson",
@@ -359,6 +359,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -369,8 +370,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/DrMikeYeadon",
@@ -378,6 +378,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -388,8 +389,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/RWMaloneMD",
@@ -397,6 +397,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -407,8 +408,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/AmericasDoctors",
@@ -416,6 +416,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -426,8 +427,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/NaturalNewsMedia",
@@ -435,6 +435,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -445,8 +446,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/DrJohnCampbell",
@@ -454,6 +454,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -464,8 +465,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/realpetermcculloughmd",
@@ -473,6 +473,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -483,8 +484,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/AseemMalhotra",
@@ -492,6 +492,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -502,8 +503,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/DrSimoneGold",
@@ -511,6 +511,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -521,8 +522,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/RobertKennedyChannell",
@@ -530,6 +530,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -540,8 +541,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/ZFoundation",
@@ -549,6 +549,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -559,8 +560,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/LeeMerritt",
@@ -568,6 +568,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -578,8 +579,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/MdBreathe",
@@ -587,6 +587,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -597,8 +598,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/BREAKINGHEADLINES",
@@ -606,6 +606,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 1,
@@ -616,8 +617,7 @@
           "topic_ids": "24987"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/RealWorldNewsChannel",
@@ -625,6 +625,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 1,
@@ -635,8 +636,7 @@
           "topic_ids": "5663"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/conspiracy_theory3",
@@ -644,6 +644,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -654,8 +655,7 @@
           "topic_ids": "6"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/covid_vaccine_injuries",
@@ -663,6 +663,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -673,8 +674,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/GesundUndGut",
@@ -682,6 +682,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -692,8 +693,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/JimCaviezel_TG",
@@ -701,6 +701,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -711,8 +712,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/free_energyyy",
@@ -720,6 +720,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -730,8 +731,7 @@
           "topic_ids": "7"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/midwesterndoc",
@@ -739,6 +739,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -749,8 +750,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/LauraAbolichannel",
@@ -758,6 +758,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -768,8 +769,7 @@
           "topic_ids": "6"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/TruthAboutCOVID",
@@ -777,6 +777,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -787,8 +788,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/unabhaengig_neutral",
@@ -796,6 +796,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -806,8 +807,7 @@
           "topic_ids": "5663"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/NVIC_VaccineFreedom",
@@ -815,6 +815,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -825,8 +826,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/cruel_historyy",
@@ -834,6 +834,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -844,8 +845,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/insider_amigo",
@@ -853,6 +853,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -863,8 +864,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/vaccinechoicecanada",
@@ -872,6 +872,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -882,8 +883,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/COVID19VACCINEVICTIMSANDFAMILIES",
@@ -891,6 +891,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -901,8 +902,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/schwurbelfunk",
@@ -910,6 +910,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -920,8 +921,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/History_JackRaven",
@@ -929,6 +929,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -939,8 +940,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/Medienzensur",
@@ -948,6 +948,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -958,8 +959,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/COVID19Up",
@@ -967,6 +967,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -977,8 +978,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/awakenedspecies",
@@ -986,6 +986,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -996,8 +997,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/ExiledMedicFabian",
@@ -1005,6 +1005,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -1015,8 +1016,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/Traditional_Medicine_folk",
@@ -1024,6 +1024,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -1034,8 +1035,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/INSIDERR_POLITIC",
@@ -1043,6 +1043,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 1,
@@ -1053,8 +1054,7 @@
           "topic_ids": "5663"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/INSIDER_USA_NEWS",
@@ -1062,6 +1062,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 1,
@@ -1072,8 +1073,7 @@
           "topic_ids": "5663"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/TelegramTips",
@@ -1081,6 +1081,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -1091,8 +1092,7 @@
           "topic_ids": "7"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/telegram",
@@ -1100,6 +1100,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -1110,8 +1111,7 @@
           "topic_ids": "7"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/trendingapps",
@@ -1119,6 +1119,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -1129,8 +1130,7 @@
           "topic_ids": "7"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://feeds.bloomberg.com/markets/news.rss",
@@ -1138,6 +1138,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 1,
@@ -1148,8 +1149,7 @@
           "topic_ids": "24987"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://www.cnbc.com/id/100003114/device/rss/rss.html",
@@ -1157,6 +1157,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 1,
@@ -1167,8 +1168,7 @@
           "topic_ids": "24987"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://www.ft.com/rss/home/international",
@@ -1176,6 +1176,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 1,
@@ -1186,8 +1187,7 @@
           "topic_ids": "24987"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://feeds.bbci.co.uk/news/world/rss.xml",
@@ -1195,6 +1195,7 @@
       "show_link": true,
       "auto_fwd": false,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 1,
@@ -1205,8 +1206,7 @@
           "topic_ids": "5663"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
@@ -1214,6 +1214,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 1,
@@ -1224,8 +1225,7 @@
           "topic_ids": "5663"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml",
@@ -1233,6 +1233,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 1,
@@ -1243,8 +1244,7 @@
           "topic_ids": "7"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/antiilluminaten",
@@ -1252,6 +1252,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -1262,8 +1263,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "@tintucvnws",
@@ -1271,6 +1271,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": false,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 1,
@@ -1281,8 +1282,7 @@
           "topic_ids": "24987"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/perplexity",
@@ -1290,14 +1290,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "7"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/ArtificialIntelligenceAINews",
@@ -1305,14 +1305,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "7"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/githubtrending",
@@ -1320,14 +1320,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "7"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://techcrunch.com/feed/",
@@ -1335,14 +1335,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "7"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://www.wired.com/feed/rss",
@@ -1350,14 +1350,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "7"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://www.technologyreview.com/feed",
@@ -1365,14 +1365,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "7"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/internationalgeographic",
@@ -1380,14 +1380,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "8"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/theplacetobe1",
@@ -1395,14 +1395,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "8"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/voyage",
@@ -1410,14 +1410,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "8"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/NationGeographic",
@@ -1425,14 +1425,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "8"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/thehackernews",
@@ -1440,14 +1440,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "7"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/leaklive",
@@ -1455,14 +1455,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "6"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/iPapkorn",
@@ -1470,14 +1470,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "13032"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/Kulinariya_retsept",
@@ -1485,14 +1485,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "41248"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/mama_recepti",
@@ -1500,14 +1500,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "13227"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/wordsofbuddha",
@@ -1515,14 +1515,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "19111"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://tricycle.org/feed/",
@@ -1530,14 +1530,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "19111"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/whichtimes",
@@ -1545,14 +1545,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "19266"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/buddhistchanneljoinin",
@@ -1560,14 +1560,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "19111"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/history_photo_look",
@@ -1575,14 +1575,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "19266"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/HistoryInArtAndPhotos",
@@ -1590,14 +1590,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "19266"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/buddhadhamma",
@@ -1605,14 +1605,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "19111"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/buddha_ebooks",
@@ -1620,14 +1620,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "19111"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/TheravadaBuddhists",
@@ -1635,14 +1635,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "19111"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/ufoschannel",
@@ -1650,14 +1650,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "17588"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/dishes",
@@ -1665,14 +1665,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "41248"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/culinaryd",
@@ -1680,14 +1680,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "41248"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://thanhnien.vn/rss/home.rss",
@@ -1695,14 +1695,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": false,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "32692"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://cafef.vn/thi-truong-chung-khoan.rss",
@@ -1710,14 +1710,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": false,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "32692"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/ClayTrading",
@@ -1725,14 +1725,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "33014"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/tommychartist",
@@ -1740,14 +1740,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "33014"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/benjaminanderson",
@@ -1755,14 +1755,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "33014"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://feeds.finance.yahoo.com/rss/2.0/headline?s=GC=F&region=US&lang=en-US",
@@ -1770,14 +1770,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "33014,24987"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/bbcvn",
@@ -1785,14 +1785,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": false,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "5663"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/ITundSicherheit",
@@ -1800,14 +1800,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "7"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/meditative_mind",
@@ -1815,14 +1815,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "33142"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/Nature",
@@ -1830,14 +1830,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "8"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/aipost",
@@ -1845,14 +1845,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "7"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/discovery_video1",
@@ -1860,14 +1860,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "8"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/memes_comedy",
@@ -1875,14 +1875,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "33153"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/tgrealnature",
@@ -1890,14 +1890,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "8"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/WELT_DER_VIDEOS",
@@ -1905,14 +1905,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "33153"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/KanalChemtrailsHaarp",
@@ -1920,6 +1920,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -1930,8 +1931,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/health",
@@ -1939,6 +1939,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -1949,8 +1950,7 @@
           "topic_ids": "3"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/Jokes",
@@ -1958,14 +1958,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "33153"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://vnexpress.net/rss/tin-moi-nhat.rss",
@@ -1973,14 +1973,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": false,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "32692"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/playlist_instrumental",
@@ -1988,14 +1988,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "33142"
         }
       ],
-      "history_limit": 2,
-      "read_all": false
+      "history_limit": 2
     },
     {
       "url": "https://t.me/Useful_Tips_Lifehacks",
@@ -2003,14 +2003,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "43910"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/lifehacksadvice",
@@ -2018,14 +2018,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": true,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "43910"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/Kulinar9",
@@ -2033,14 +2033,14 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 3,
           "topic_ids": "41248"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/dailyexpose",
@@ -2048,6 +2048,7 @@
       "show_link": true,
       "auto_fwd": true,
       "do_translate": true,
+      "read_all": false,
       "destinations": [
         {
           "ch_idx": 0,
@@ -2062,23 +2063,22 @@
           "topic_ids": "3, 5663"
         }
       ],
-      "history_limit": 5,
-      "read_all": false
+      "history_limit": 5
     },
     {
       "url": "https://t.me/DismantlingTheCabal",
       "name": "Dismantling The Cabal",
       "show_link": false,
-      "auto_fwd": false,
+      "auto_fwd": true,
       "do_translate": false,
+      "read_all": true,
       "destinations": [
         {
           "ch_idx": 4,
           "topic_ids": ""
         }
       ],
-      "history_limit": 10,
-      "read_all": false
+      "history_limit": 10
     }
   ],
   "auto_fwd": true,

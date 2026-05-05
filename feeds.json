@@ -108,9 +108,9 @@
     {
       "url": "@abcdnewstest",
       "name": "ABCD news",
-      "show_link": false,
+      "show_link": true,
       "auto_fwd": true,
-      "do_translate": false,
+      "do_translate": true,
       "read_all": false,
       "ai_comment": true,
       "ai_comment_style": "Bình luận 1, 2 câu nếu bản tin nói về sức khỏe, y tế. Bình luận mang phong cách nghi ngờ, mỉa mai, khịa đỉnh cao.",

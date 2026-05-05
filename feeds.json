@@ -112,8 +112,8 @@
       "auto_fwd": true,
       "do_translate": false,
       "read_all": false,
-      "ai_comment": false,
-      "ai_comment_style": "Hãy bình luận 1, 2 câu mang phong cách nghi ngờ, mỉa mai, khịa đỉnh cao hoặc dí dỏm để trả lời cho bất kỳ nội dung nào của bản tin.",
+      "ai_comment": true,
+      "ai_comment_style": "Hãy bình luận 1, 2 câu mang phong cách nghi ngờ, mỉa mai, khịa đỉnh cao hoặc dí dỏm để trả lời cho bất kỳ nội dung nào của các bản tin.",
       "destinations": [
         {
           "ch_idx": 0,

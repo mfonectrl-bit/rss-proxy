@@ -3215,7 +3215,7 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
   </label>
 </div>
 <div style="margin-bottom:10px;padding:8px 12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px">
-  <label style="font-size:12px;color:#0369a1;font-weight:600;display:block;margin-bottom:6px">📢 Bình luận AI (Gemini)</label>
+  <label style="font-size:12px;color:#0369a1;font-weight:600;display:block;margin-bottom:6px">🔅 Bình luận AI (Gemini)</label>
   <textarea id="new-ai-comment-style" placeholder="Phong cách bình luận — VD: Bình luận ngắn 1-2 câu theo góc nhìn nhà đầu tư chứng khoán"
     style="width:100%;padding:7px;border:1px solid #7dd3fc;border-radius:7px;font-size:12px;resize:vertical;min-height:56px;box-sizing:border-box;font-family:inherit"></textarea>
   <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;margin-top:6px">
@@ -5618,7 +5618,7 @@ def _do_forward(processed, category, url):
                 # Bình luận AI — chèn sau bản tin, trước "Xem bài gốc"
                 _ai_cmt = it.get('_ai_comment', '')
                 if _ai_cmt:
-                    caption += f'\n\n📢 {_ai_cmt}'
+                    caption += f'\n\n🔅 {_ai_cmt}'
 
                 if show_link and it.get('link'):
                     caption += f'\n\n<a href="{it["link"]}">Xem bài gốc \u2192</a>'
@@ -5661,7 +5661,7 @@ def _do_forward(processed, category, url):
                     # ── Suffix: AI comment → plain text, trước "Xem bài gốc" ─
                     _cur = _shift + _u16len(_body_text)
                     if _ai_cmt:
-                        _cmt_pre = '\n\n📢 '
+                        _cmt_pre = '\n\n🔅 '
                         _suffix_text += _cmt_pre + _ai_cmt
                         _cur += _u16len(_cmt_pre + _ai_cmt)
 
@@ -7001,7 +7001,7 @@ class HttpHandler(BaseHTTPRequestHandler):
                                         _sfx_text = ""; _sfx_e = []
                                         # AI comment trước "Xem bài gốc"
                                         if _mf_ai_cmt:
-                                            _cmt_pre = '\n\n📢 '
+                                            _cmt_pre = '\n\n🔅 '
                                             _sfx_text += _cmt_pre + _mf_ai_cmt
                                             _cur += _u16len(_cmt_pre + _mf_ai_cmt)
                                         if show_link and it.get("link"):
@@ -7020,7 +7020,7 @@ class HttpHandler(BaseHTTPRequestHandler):
                                         _pfx_html = f"<b>{_eng_prefix}:</b> " if _eng_prefix and _txt.strip() else ""
                                         caption = _pfx_html + _txt.rstrip()
                                         if _mf_ai_cmt:
-                                            caption += f'\n\n📢 {_mf_ai_cmt}'
+                                            caption += f'\n\n🔅 {_mf_ai_cmt}'
                                         if show_link and it.get("link"):
                                             caption += f'\n\n<a href="{it["link"]}">Xem b\u00e0i g\u1ed1c \u2192</a>'
                                         if channel_name:
@@ -7032,7 +7032,7 @@ class HttpHandler(BaseHTTPRequestHandler):
                             if _mf_want_cmt:
                                 _mf_ai_cmt = _generate_ai_comment_only(_raw or desc_plain, _mf_feed_cfg)
                             if _mf_ai_cmt:
-                                caption += f'\n\n📢 {_mf_ai_cmt}'
+                                caption += f'\n\n🔅 {_mf_ai_cmt}'
                             if show_link and it.get('link'):
                                 caption += f'\n\n<a href="{it["link"]}">Xem bài gốc →</a>'
                             if channel_name:

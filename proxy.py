@@ -3859,6 +3859,8 @@ function syncFeedsHttp(){
     const payload=feeds.map(f=>({url:f.url,name:f.name,
         show_link:f.show_link!==false,
         auto_fwd:f.auto_fwd===true,
+        do_translate:f.do_translate!==false,
+        read_all:f.read_all===true,
         destinations:f.destinations||[],
         history_limit:f.history_limit!=null?f.history_limit:20}));
     fetch('/sync_feeds',{method:'POST',headers:{'Content-Type':'application/json'},

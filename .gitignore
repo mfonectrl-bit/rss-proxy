@@ -1,0 +1,13 @@
+﻿__pycache__/
+*.pyc
+*.pyo
+*.pyd
+Old OK/
+*.zip
+*.docx
+*.md
+gemini_pool_v*.py
+proxy*.py
+test_*.py
+.vscode/
+.env

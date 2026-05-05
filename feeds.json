@@ -113,7 +113,7 @@
       "do_translate": true,
       "read_all": false,
       "ai_comment": true,
-      "ai_comment_style": "Bình luận 1, 2 câu nếu bản tin liên quan tới về sức khỏe, y tế. Bình luận mang phong cách nghi ngờ, mỉa mai, khịa đỉnh cao và dí dỏm.",
+      "ai_comment_style": "Bình luận 1, 2 câu nếu bản tin liên quan tới về sức khỏe, y tế. Bình luận mang phong cách anti vaccine và big pharma, nghi ngờ, mỉa mai, khịa đỉnh cao và dí dỏm.",
       "destinations": [
         {
           "ch_idx": 0,

@@ -1929,12 +1929,13 @@ def _generate_ai_comment_only(content_text, feed_cfg):
     if not text or len(text) < 10:
         return ''
     style_hint = (feed_cfg.get('ai_comment_style') or '').strip()
-    style_part = f'Yêu cầu phong cách: {style_hint}\n' if style_hint else ''
+    style_part = f'Style requirement: {style_hint}\n' if style_hint else ''
     prompt = (
-        f'Đọc bản tin sau và viết 1 bình luận ngắn, súc tích bằng ngôn ngữ của bản tin.\n'
+        f'Read the following article and write a short, concise comment.\n'
+        f'Reply in the same language as the source text.\n'
         f'{style_part}'
-        f'Chỉ trả về nội dung bình luận, không giải thích, không tiêu đề.\n\n'
-        f'BẢN TIN:\n{text[:3000]}'
+        f'Return only the comment content, no explanation, no title.\n\n'
+        f'ARTICLE:\n{text[:3000]}'
     )
     try:
         slot = _gemini_pool.pick_slot()

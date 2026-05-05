@@ -203,8 +203,9 @@ class GeminiPool:
 
     def _build_cycle(self) -> List[Tuple[str, int]]:
         cycle: List[Tuple[str, int]] = []
+        n_keys = max(len(self._keys), 1)
         for alias, weight in BASE_WEIGHTS.items():
-            for ki in range(len(self._keys)):
+            for ki in range(n_keys):
                 cycle.extend([(alias, ki)] * weight)
         return cycle
 

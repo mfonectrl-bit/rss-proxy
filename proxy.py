@@ -106,7 +106,8 @@ def _normalize_feed(f: dict) -> dict:
     chưa có field hoặc lưu dạng string/số thay vì boolean thật.
     """
     for key, default in (('do_translate', True), ('show_link', True),
-                          ('auto_fwd', True), ('read_all', False)):
+                          ('auto_fwd', True), ('read_all', False),
+                          ('ai_comment', False)):
         val = f.get(key, default)
         # Chuẩn hoá: string "false"/"0" → False, còn lại → bool thật
         if isinstance(val, str):
@@ -118,6 +119,9 @@ def _normalize_feed(f: dict) -> dict:
         f['history_limit'] = int(f.get('history_limit', 20))
     except (TypeError, ValueError):
         f['history_limit'] = 20
+    # ai_comment_style là string tuỳ ý
+    if 'ai_comment_style' not in f:
+        f['ai_comment_style'] = ''
     return f
 
 def load_feeds_from_file():
@@ -1799,6 +1803,75 @@ def _translate_deepl_html(html_text):
     return data['translations'][0]['text'].strip()
 
 
+def _generate_ai_comment(content_text, feed_cfg):
+    """
+    Sinh bình luận ngắn từ Gemini cho 1 bản tin.
+    Dùng chung cho auto-forward, manual forward, và forward nguyên kênh.
+
+    - feed_cfg['ai_comment']       : bool — feed có bật bình luận không
+    - feed_cfg['ai_comment_style'] : str  — prompt chỉ dẫn phong cách
+    - feed_cfg['do_translate']     : bool — True → bình luận theo translate_target_lang
+                                            False → bình luận theo ngôn ngữ gốc
+
+    Trả về string bình luận (không có emoji loa — caller tự thêm),
+    hoặc '' nếu bị tắt / lỗi / không có Gemini key.
+    """
+    if not feed_cfg.get('ai_comment', False):
+        return ''
+    if not GEMINI_API_KEYS:
+        return ''
+    text = (content_text or '').strip()
+    if not text or len(text) < 10:
+        return ''
+
+    style_hint = (feed_cfg.get('ai_comment_style') or '').strip()
+
+    if feed_cfg.get('do_translate', True):
+        _lang = _LANG_NAME.get(translate_target_lang, translate_target_lang)
+        lang_instruction = f'Viết bình luận bằng {_lang}.'
+    else:
+        lang_instruction = 'Viết bình luận bằng ngôn ngữ của bản tin.'
+
+    if style_hint:
+        style_part = f'Yêu cầu phong cách: {style_hint}\n'
+    else:
+        style_part = ''
+
+    prompt = (
+        f'Đọc bản tin sau và viết 1 bình luận ngắn, súc tích.\n'
+        f'{style_part}'
+        f'{lang_instruction}\n'
+        f'Chỉ trả về nội dung bình luận, không giải thích, không tiêu đề, không dấu nháy kép bao ngoài.\n\n'
+        f'BẢN TIN:\n{text[:3000]}'
+    )
+
+    try:
+        slot = _gemini_pool.pick_slot()
+        if not slot:
+            return ''
+        alias, ki, api_key = slot
+        model_name = _GPOOL_MODELS[alias]
+        payload = json.dumps({
+            'contents': [{'parts': [{'text': prompt}]}],
+            'generationConfig': {'temperature': 0.7, 'maxOutputTokens': 512},
+        }).encode('utf-8')
+        url = (
+            f'https://generativelanguage.googleapis.com/v1beta/models/'
+            f'{model_name}:generateContent?key={api_key}'
+        )
+        req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read())
+        comment = data['candidates'][0]['content']['parts'][0]['text'].strip()
+        _gemini_pool.record_success(alias, ki)
+        if _is_error_result(comment):
+            return ''
+        return comment
+    except Exception as e:
+        print(f'[AIComment] Lỗi sinh bình luận: {e}')
+        return ''
+
+
 def _fix_html_spacing(html):
     """
     Post-process HTML sau khi dịch (Gemini/DeepL) — đảm bảo có space
@@ -3053,6 +3126,15 @@ aside{width:240px;flex-shrink:0;background:#fff;border-right:1px solid #e0e0d8;d
     </div>
   </label>
 </div>
+<div style="margin-bottom:10px;padding:8px 12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px">
+  <label style="font-size:12px;color:#0369a1;font-weight:600;display:block;margin-bottom:6px">📢 Bình luận AI (Gemini)</label>
+  <textarea id="new-ai-comment-style" placeholder="Phong cách bình luận — VD: Bình luận ngắn 1-2 câu theo góc nhìn nhà đầu tư chứng khoán"
+    style="width:100%;padding:7px;border:1px solid #7dd3fc;border-radius:7px;font-size:12px;resize:vertical;min-height:56px;box-sizing:border-box;font-family:inherit"></textarea>
+  <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;margin-top:6px">
+    <input type="checkbox" id="new-ai-comment" style="width:15px;height:15px;cursor:pointer">
+    <span>Thêm bình luận AI sau mỗi bản tin</span>
+  </label>
+</div>
 <div style="margin-bottom:10px">
   <label style="font-size:12px;color:#555;font-weight:600;display:block;margin-bottom:4px">Số bài lịch sử lấy về khi khởi động:</label>
   <input type="number" id="new-history-limit" min="0" max="200" value="20"
@@ -3861,6 +3943,8 @@ function syncFeedsHttp(){
         auto_fwd:f.auto_fwd===true,
         do_translate:f.do_translate!==false,
         read_all:f.read_all===true,
+        ai_comment:f.ai_comment===true,
+        ai_comment_style:f.ai_comment_style||'',
         destinations:f.destinations||[],
         history_limit:f.history_limit!=null?f.history_limit:20}));
     fetch('/sync_feeds',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -3887,6 +3971,8 @@ function openEditFeed(i){
     document.getElementById('new-auto-fwd').checked=f.auto_fwd===true;
     document.getElementById('new-translate').checked=f.do_translate!==false;
     document.getElementById('new-read-all').checked=f.read_all===true;
+    document.getElementById('new-ai-comment').checked=f.ai_comment===true;
+    document.getElementById('new-ai-comment-style').value=f.ai_comment_style||'';
     document.getElementById('read-all-wrap').style.display=isTgSource(f.url)?'block':'none';
     document.getElementById('new-history-limit').value=String(f.history_limit!=null?f.history_limit:20);
     document.getElementById('modal-title').textContent='Sửa feed';
@@ -3908,6 +3994,8 @@ function openModal(){
     document.getElementById('new-auto-fwd').checked=false;
     document.getElementById('new-translate').checked=true;
     document.getElementById('new-read-all').checked=false;
+    document.getElementById('new-ai-comment').checked=false;
+    document.getElementById('new-ai-comment-style').value='';
     document.getElementById('read-all-wrap').style.display='none';
     document.getElementById('new-history-limit').value='20';
     document.getElementById('modal-title').textContent='Thêm feed';
@@ -3925,13 +4013,15 @@ function addFeed(){
           auto_fwd=document.getElementById('new-auto-fwd').checked,
           do_translate=document.getElementById('new-translate').checked,
           read_all=document.getElementById('new-read-all').checked,
+          ai_comment=document.getElementById('new-ai-comment').checked,
+          ai_comment_style=document.getElementById('new-ai-comment-style').value.trim(),
           history_limit=parseInt(document.getElementById('new-history-limit').value)||20,
           destinations=getFeedDests();
     if(!name||!url){alert('Nhập đủ tên và URL');return;}
     // Kiểm tra trùng URL (backup check)
     const dupFeed=feeds.find((f,i)=>f.url.toLowerCase()===url.toLowerCase() && i!==editFeedIndex);
     if(dupFeed){alert('Feed "'+( dupFeed.name||dupFeed.url)+'" đã tồn tại trong danh sách!');return;}
-    const feedObj={name,url,show_link,auto_fwd,do_translate,read_all,destinations,history_limit};
+    const feedObj={name,url,show_link,auto_fwd,do_translate,read_all,ai_comment,ai_comment_style,destinations,history_limit};
     if(editFeedIndex>=0){feeds[editFeedIndex]=feedObj;}
     else{feeds.push(feedObj);}
     saveFeeds();
@@ -5442,6 +5532,12 @@ def _do_forward(processed, category, url):
                 if channel_name:
                     caption += f'\n\n<i>{channel_name}</i>'
 
+                # Bình luận AI — per-feed, chỉ khi feed bật ai_comment
+                _comment_text = it.get('_tg_raw_text', '') or it.get('desc', '') or ''
+                _ai_cmt = _generate_ai_comment(_comment_text, feed_cfg)
+                if _ai_cmt:
+                    caption += f'\n\n📢 {_ai_cmt}'
+
                 # Nếu tin có entity-based translation → build _fmt_text + entities đầy đủ.
                 # Prefix/suffix đều là entity thật: không URL nổi, không duplicate.
                 send_item = it  # default: no entity translation
@@ -5498,7 +5594,12 @@ def _do_forward(processed, category, url):
                                 _MEI(offset=_cur + _u16len(_cpre),
                                      length=_u16len(channel_name))
                             )
+                            _cur += _u16len(_cpre + channel_name)
 
+                    # ── Suffix: AI comment → plain text (không entity) ────
+                    if _ai_cmt:
+                        _cmt_pre = '\n\n📢 '
+                        _suffix_text += _cmt_pre + _ai_cmt
 
                     # Dung send_item (shallow copy) thay vi ghi de it in-place
                     # tranh prefix/suffix tich luy khi nhieu dest hoac topic
@@ -6764,6 +6865,14 @@ class HttpHandler(BaseHTTPRequestHandler):
                                         if channel_name:
                                             _sfx_text += "\n\n" + channel_name
                                             _sfx_e.append(_MEI(offset=_cur+2, length=_u16len(channel_name)))
+                                            _cur += 2 + _u16len(channel_name)
+                                        # AI comment — plain text append vào entity path
+                                        with lock:
+                                            _mfwd_feed_cfg = next((u for u in watched_urls if u['url'] == feed_url), {})
+                                        _mfwd_cmt_text = _raw or desc_plain
+                                        _mfwd_ai_cmt = _generate_ai_comment(_mfwd_cmt_text, _mfwd_feed_cfg)
+                                        if _mfwd_ai_cmt:
+                                            _sfx_text += f'\n\n📢 {_mfwd_ai_cmt}'
                                         send_item['_tg_translated_text']     = _pfx + _txt + _sfx_text
                                         send_item['_tg_translated_entities'] = _pfx_e + _body_e + _sfx_e
                                         caption = desc_plain  # entities path sẽ lo phần hiển thị
@@ -6775,8 +6884,23 @@ class HttpHandler(BaseHTTPRequestHandler):
                                             caption += f'\n\n<a href="{it["link"]}">Xem b\u00e0i g\u1ed1c \u2192</a>'
                                         if channel_name:
                                             caption += f'\n\n<i>{channel_name}</i>'
+                                        # AI comment — plain text path
+                                        with lock:
+                                            _mfwd_feed_cfg = next((u for u in watched_urls if u['url'] == feed_url), {})
+                                        _mfwd_cmt_text = _raw or desc_plain
+                                        _mfwd_ai_cmt = _generate_ai_comment(_mfwd_cmt_text, _mfwd_feed_cfg)
+                                        if _mfwd_ai_cmt:
+                                            caption += f'\n\n📢 {_mfwd_ai_cmt}'
                             except Exception:
                                 pass  # fallback: dung caption gốc nhu cu
+                        else:
+                            # Không dịch — vẫn append AI comment nếu feed bật
+                            with lock:
+                                _mfwd_feed_cfg = next((u for u in watched_urls if u['url'] == feed_url), {})
+                            _mfwd_cmt_text = _raw or desc_plain
+                            _mfwd_ai_cmt = _generate_ai_comment(_mfwd_cmt_text, _mfwd_feed_cfg)
+                            if _mfwd_ai_cmt:
+                                caption += f'\n\n📢 {_mfwd_ai_cmt}'
                         desc_has_link = bool(re.search(r'https?://', it.get('desc', '') or ''))
                         try:
                             ok = tg_run(_tg_send_item(dest, send_item, caption, topic_id=topic_id, desc_has_link=desc_has_link))

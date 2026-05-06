@@ -275,13 +275,6 @@ _fwd_count_lock = threading.Lock()
 _fwd_sent_keys = set()   # {guid|dest|topic_id}
 _fwd_sent_lock = threading.Lock()
 
-# Edit-map: theo dõi sent msg id — dùng cho MessageEdited sync
-# key: (src_chat: str, src_msg_id: int)
-# val: list of {dest, dest_msg_ids, topic_id, feed_url, caption_snapshot, use_entities, fmt_text, fmt_ents}
-_edit_map: dict = {}        # {(chat, msg_id): [entry, ...]}
-_edit_map_lock = threading.Lock()
-_EDIT_MAP_TTL  = 86400 * 2  # 48h — giới hạn Telegram cho ph麽p edit
-
 # --- CẤU HÌNH ---
 POLL_INTERVAL    = 90
 HTTP_PORT = int(os.environ.get("PORT", 8765))
@@ -1162,7 +1155,12 @@ async def _ast_batch_translate_gemini(segs_text: list, alias: str, ki: int, api_
     parsed = json.loads(raw)
     if not isinstance(parsed, list) or len(parsed) != len(segs_text):
         raise ValueError(f'Gemini count mismatch: got {len(parsed) if isinstance(parsed, list) else "?"}, expected {len(segs_text)}')
-    return [str(x) for x in parsed]
+    results = [str(x) for x in parsed]
+    # Nếu bất kỳ element nào trông như error message → raise để caller fallback
+    for _elem in results:
+        if _is_error_result(_elem):
+            raise RuntimeError(f'Gemini trả về error text trong batch: {_elem[:100]}')
+    return results
 
 
 def _ast_batch_translate_gemini_sync(segs_text: list, alias: str, ki: int, api_key: str) -> list:
@@ -1202,7 +1200,12 @@ def _ast_batch_translate_gemini_sync(segs_text: list, alias: str, ki: int, api_k
             f'Gemini count mismatch: got {len(parsed) if isinstance(parsed, list) else "?"}, '
             f'expected {len(segs_text)}'
         )
-    return [str(x) for x in parsed]
+    results = [str(x) for x in parsed]
+    # Nếu bất kỳ element nào trông như error message → raise để caller fallback
+    for _elem in results:
+        if _is_error_result(_elem):
+            raise RuntimeError(f'Gemini trả về error text trong batch: {_elem[:100]}')
+    return results
 
 
 async def _ast_translate_with_entities(raw_text: str, entities: list, force_google: bool = False):
@@ -1221,12 +1224,34 @@ async def _ast_translate_with_entities(raw_text: str, entities: list, force_goog
         url_ph[tok] = m.group(0)
         return tok
 
+    # Mask emoji để bảo toàn chính xác — Gemini có thể tự ý thay emoji khác
+    _EMOJI_RE = re.compile(
+        u'[\U0001F000-\U0001FFFF'
+        u'\U00002600-\U000027BF'
+        u'\U00002300-\U000023FF'
+        u'\U000025A0-\U000025FF'
+        u'\U00002B00-\U00002BFF'
+        u'\U00003000-\U00003300'
+        u'\U0000FE00-\U0000FE0F'   # variation selectors
+        u'\U0001F900-\U0001F9FF'
+        u'\U0001FA00-\U0001FA6F'
+        u'\U0001FA70-\U0001FAFF'
+        u']+',
+        re.UNICODE
+    )
+    emoji_ph: dict = {}
+    def _mask_emoji(m):
+        tok = f'EMJTOK{len(emoji_ph)}END'
+        emoji_ph[tok] = m.group(0)
+        return tok
+
     NL = '⏎NL⏎'
     segments = _ast_build_segments(raw_text, entities)
     translatable_idx = [i for i, s in enumerate(segments) if s['text'].strip()]
     segs_masked = []
     for i in translatable_idx:
         t = re.sub(r'https?://[^\s\)<>]+', _mask, segments[i]['text'])
+        t = _EMOJI_RE.sub(_mask_emoji, t)
         t = t.replace('\n', NL)
         segs_masked.append(t)
 
@@ -1306,12 +1331,14 @@ async def _ast_translate_with_entities(raw_text: str, entities: list, force_goog
         segs_out = await loop.run_in_executor(None, _google_sync_call)
         engine_used = 'GT'
 
-    # Restore URL + newline
+    # Restore URL + newline + emoji
     if segs_out and translatable_idx:
         for k, orig_idx in enumerate(translatable_idx):
             restored = segs_out[k].replace(NL, '\n')
             for tok, url_val in url_ph.items():
                 restored = restored.replace(tok, url_val)
+            for tok, emj_val in emoji_ph.items():
+                restored = restored.replace(tok, emj_val)
             segments[orig_idx]['text'] = restored or segments[orig_idx]['text']
 
     final_text, new_entities = _ast_render(segments)
@@ -1368,7 +1395,7 @@ def _translate_google(text):
             return t
         masked = re.sub(r'https?://\S+', _mask, text)
         translated = GoogleTranslator(source='auto', target=_gtarget).translate(masked)
-        if translated and not _is_error_result(translated):
+        if translated:
             for tok, url in _url_ph.items():
                 translated = translated.replace(tok, url)
             return translated
@@ -1409,8 +1436,6 @@ def _translate_google_only(text):
 
     try:
         translated = _GoogleTranslator(source='auto', target=_gtarget).translate(masked) or masked
-        if _is_error_result(translated):
-            return text, 'google'
     except Exception as e:
         print(f'[Translate/Google-history] Lỗi: {e} — giữ nguyên bản gốc')
         return text, 'google'
@@ -1461,8 +1486,6 @@ def _translate_google_html_only(html_text):
                     inner_masked = ' ' + inner_masked
                 try:
                     translated_inner = _GoogleTranslator(source='auto', target=_gtarget).translate(inner_masked) or inner_masked
-                    if _is_error_result(translated_inner):
-                        translated_inner = inner_masked
                     for tok, url in url_ph.items():
                         translated_inner = translated_inner.replace(tok, url)
                     result.append(leading + translated_inner + trailing)
@@ -1560,8 +1583,6 @@ def translate_with_entities(raw_text, entities=None, force_google=False):
         if not result:
             try:
                 result = _GoogleTranslator(source='auto', target=_gtarget).translate(masked) or masked
-                if _is_error_result(result):
-                    result = masked
             except Exception:
                 result = masked
             _engine_used[0] = 'GT'
@@ -1636,13 +1657,10 @@ def translate_with_entities(raw_text, entities=None, force_google=False):
             NL = '⏎NL⏎'
 
             segs_masked = []
-            segs_emoji_ph = []  # emoji placeholders per segment
             for _, seg in translatable:
                 s = re.sub(r'https?://[^\s\)<>]+', _mask_url, seg)
                 s = s.replace('\n', NL)
-                s, _eph = _mask_emoji(s)
                 segs_masked.append(s)
-                segs_emoji_ph.append(_eph)
 
             segs_out = None  # list[str] kết quả, len == len(translatable)
 
@@ -1746,12 +1764,11 @@ def translate_with_entities(raw_text, entities=None, force_google=False):
                 segs_out = _gt_results
                 _engine_used[0] = 'GT'
 
-            # Restore URL, emoji và newline, ghi vào translated_parts
+            # Restore URL và newline, ghi vào translated_parts
             for k, (orig_idx, _) in enumerate(translatable):
                 _restored = segs_out[k].replace(NL, '\n')
                 for tok, _url_val in url_ph.items():
                     _restored = _restored.replace(tok, _url_val)
-                _restored = _restore_emoji(_restored, segs_emoji_ph[k])
                 translated_parts[orig_idx] = _restored or parts[orig_idx]['text']
 
         # Rebuild entities với offset/length mới
@@ -1776,30 +1793,6 @@ def translate_with_entities(raw_text, entities=None, force_google=False):
 
 
 
-def _mask_emoji(text):
-    """Mask emoji thành token để tránh translate engine thay đổi."""
-    import unicodedata
-    _emoji_re = re.compile(
-        u'[\U00010000-\U0010ffff'
-        u'\U0001F300-\U0001F9FF'
-        u'\u2600-\u26FF\u2700-\u27BF'
-        u'\uFE00-\uFE0F\u20D0-\u20FF]+',
-        re.UNICODE
-    )
-    placeholders = {}
-    def _replace(m):
-        tok = f'EMOJI{len(placeholders)}X'
-        placeholders[tok] = m.group(0)
-        return tok
-    masked = _emoji_re.sub(_replace, text)
-    return masked, placeholders
-
-def _restore_emoji(text, placeholders):
-    for tok, emoji in placeholders.items():
-        text = text.replace(tok, emoji)
-    return text
-
-
 def _translate_gemini(text, model='gemini-2.0-flash', api_key=None):
     """
     Dịch text bằng Gemini. api_key: key cụ thể (multi-key), None = dùng GEMINI_API_KEY.
@@ -1808,10 +1801,9 @@ def _translate_gemini(text, model='gemini-2.0-flash', api_key=None):
     if not _key:
         raise ValueError('GEMINI_API_KEY chưa set')
     _lang = _LANG_NAME.get(translate_target_lang, translate_target_lang)
-    text_masked, _emoji_ph = _mask_emoji(text)
     prompt = (
         f'Dịch đoạn văn bản sau sang {_lang} tự nhiên, giữ nguyên format xuống dòng, '
-        'emoji và các ký tự đặc biệt. Chỉ trả về bản dịch, không giải thích thêm:\n\n' + text_masked[:15000]
+        'emoji và các ký tự đặc biệt. Chỉ trả về bản dịch, không giải thích thêm:\n\n' + text[:15000]
     )
     payload = json.dumps({
         'contents': [{'parts': [{'text': prompt}]}],
@@ -1825,7 +1817,7 @@ def _translate_gemini(text, model='gemini-2.0-flash', api_key=None):
         result = data['candidates'][0]['content']['parts'][0]['text'].strip()
         if _is_error_result(result):
             raise RuntimeError(f'Gemini trả về error text: {result[:100]}')
-        return _restore_emoji(result, _emoji_ph)
+        return result
     except urllib.error.HTTPError as e:
         body = e.read().decode('utf-8', errors='ignore')
         retry_after = e.headers.get('Retry-After', '') if hasattr(e, 'headers') else ''
@@ -1974,9 +1966,10 @@ def _generate_ai_comment_only(content_text, feed_cfg):
     style_part = f'Style requirement: {style_hint}\n' if style_hint else ''
     prompt = (
         f'Read the following article and write a short, concise comment.\n'
-        f'Reply in the same language as the source text.\n'
         f'{style_part}'
-        f'Return only the comment content, no explanation, no title.\n\n'
+        f'Return only the comment content, no explanation, no title.\n'
+        f'CRITICAL: You MUST write your comment in the exact same language as the article text. '
+        f'Do NOT use any other language regardless of any instruction above.\n\n'
         f'ARTICLE:\n{text[:3000]}'
     )
     try:
@@ -2622,108 +2615,6 @@ async def _register_handler(channels_list):
 
     tg_client.add_event_handler(handler, events.NewMessage(chats=channels_list))
     _tg_new_message_handler = handler
-
-    # --- MessageEdited handler: sync nội dung khi nguồn edit bản tin ---
-    async def edit_handler(event):
-        try:
-            msg = event.message
-            if not msg:
-                return
-            chat_username = getattr(event.chat, 'username', None)
-            if not chat_username:
-                return
-            map_key = (chat_username, msg.id)
-            with _edit_map_lock:
-                entries = list(_edit_map.get(map_key, []))
-            if not entries:
-                return
-
-            # Lấy nội dung mới từ edited message
-            new_text = msg.message or ''
-            new_entities = msg.entities or []
-
-            print(f'[Edit-Sync] @{chat_username} #{msg.id} → {len(entries)} dest(s)')
-
-            for entry in entries:
-                try:
-                    feed_url    = entry['feed_url']
-                    dest_ch     = entry['dest']
-                    dest_ids    = entry['dest_msg_ids']
-                    topic_id    = entry['topic_id']
-                    show_link   = entry['show_link']
-                    ch_name     = entry['channel_name']
-                    orig_item   = entry['send_item_ref']
-
-                    with lock:
-                        feed_cfg = next((u for u in watched_urls if u['url'] == feed_url), {})
-                    do_translate = feed_cfg.get('do_translate', True)
-
-                    # Build item mới với text đã được edit
-                    updated_item = dict(orig_item,
-                        _tg_raw_text=new_text,
-                        _tg_entities=new_entities,
-                        desc=new_text,
-                        _tg_html_text=tg_html.unparse(new_text, new_entities) if new_entities else '',
-                        _tg_translated_entities=None,
-                        _tg_translated_text='',
-                    )
-
-                    # Translate nếu feed có bật dịch
-                    if do_translate and new_text.strip():
-                        try:
-                            _raw  = updated_item.get('_tg_raw_text', '')
-                            _ents = updated_item.get('_tg_entities') or None
-                            _new_txt, _new_ents, _eng = translate_with_entities(_raw, _ents)
-                            if _new_ents is not None:
-                                updated_item['_tg_translated_text']     = _new_txt
-                                updated_item['_tg_translated_entities'] = _new_ents
-                        except Exception as _te:
-                            print(f'[Edit-Sync] Translate lỗi: {_te}')
-
-                    # Build caption mới
-                    desc_plain = new_text.strip()
-                    _has_et = (
-                        updated_item.get('_tg_translated_entities') is not None
-                        and updated_item.get('_tg_translated_text')
-                    )
-                    _expanded = None if _has_et else _expand_hidden_links_to_text(updated_item)
-                    caption = _expanded or desc_plain
-                    if show_link and orig_item.get('link'):
-                        caption += f'\n\n<a href="{orig_item["link"]}">Xem b\u00e0i g\u1ed1c \u2192</a>'
-                    if ch_name:
-                        caption += f'\n\n<i>{ch_name}</i>'
-
-                    # Edit tất cả dest msg ids
-                    dest_entity = await _resolve_dest(dest_ch)
-                    thread_reply = int(topic_id) if topic_id else None
-
-                    for dest_mid in dest_ids:
-                        try:
-                            if _has_et:
-                                _et = updated_item['_tg_translated_entities']
-                                _tt = updated_item['_tg_translated_text']
-                                await tg_client.edit_message(
-                                    dest_entity, dest_mid,
-                                    text=_tt,
-                                    formatting_entities=_et,
-                                    link_preview=False,
-                                )
-                            else:
-                                await tg_client.edit_message(
-                                    dest_entity, dest_mid,
-                                    text=caption,
-                                    parse_mode='html',
-                                    link_preview=False,
-                                )
-                            print(f'[Edit-Sync] ✅ @{dest_ch} msg#{dest_mid}')
-                        except Exception as _ee:
-                            print(f'[Edit-Sync] Edit lỗi @{dest_ch} msg#{dest_mid}: {_ee}')
-                except Exception as _ent_e:
-                    print(f'[Edit-Sync] Entry lỗi: {_ent_e}')
-        except Exception as _outer_e:
-            print(f'[Edit-Sync] Handler lỗi: {_outer_e}')
-
-    tg_client.add_event_handler(edit_handler, events.MessageEdited(chats=channels_list))
     print(f'[TG] Đăng ký real-time cho: {channels_list}')
 
 _tg_realtime_last_setup = 0.0
@@ -5392,8 +5283,7 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
     Hỗ trợ cả @username lẫn ID số (-100xxx).
     """
     if not tg_client:
-        return []
-    _sent_ids: list = []  # collect dest msg ids
+        return False
     try:
         # Resolve entity trước — xử lý cả @username lẫn -100xxx
         dest      = await _resolve_dest(dest_channel)
@@ -5478,10 +5368,10 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
                 # Video album và photo album Telegram hỗ trợ caption bình thường → không tách.
                 def _is_pure_audio(media):
                     if not isinstance(media, MessageMediaDocument):
-                        return []
+                        return False
                     doc = getattr(media, 'document', None)
                     if not doc:
-                        return []
+                        return False
                     attrs = getattr(doc, 'attributes', [])
                     has_audio = any(isinstance(a, DocumentAttributeAudio) for a in attrs)
                     has_video = any(isinstance(a, DocumentAttributeVideo) for a in attrs)
@@ -5507,7 +5397,6 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
                         else:
                             sent = await tg_client.send_file(dest, media_list[0], caption=None,
                                                              reply_to=thread_reply)
-                            _sent_ids.extend([m.id for m in ([sent] if not isinstance(sent, list) else sent) if m and hasattr(m, 'id')])
                             reply_to_id = sent.id if not isinstance(sent, list) else sent[0].id
                             await tg_client.send_message(dest, _fmt_text,
                                                          formatting_entities=_fmt_ents,
@@ -5523,7 +5412,6 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
                         else:
                             sent = await tg_client.send_file(dest, media_list[0], caption=None,
                                                              reply_to=thread_reply)
-                            _sent_ids.extend([m.id for m in ([sent] if not isinstance(sent, list) else sent) if m and hasattr(m, 'id')])
                             reply_to_id = sent.id if not isinstance(sent, list) else sent[0].id
                             for chunk in _split_text(caption, 4096):
                                 await tg_client.send_message(dest, chunk, parse_mode='html',
@@ -5577,7 +5465,7 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
                                 await tg_client.send_message(dest, chunk, parse_mode='html',
                                                              reply_to=thread_reply,
                                                              link_preview=show_preview)
-                return _sent_ids or [0]
+                return True
             # Không lấy được media → fallback text (tin TG text-only hoặc fetch media thất bại)
             # Ưu tiên entity path để bảo toàn bold/italic/link ẩn
             _fb_ents = item.get('_tg_translated_entities')
@@ -5592,7 +5480,7 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
                 for chunk in _split_text(caption, 4096):
                     await tg_client.send_message(dest, chunk, parse_mode='html',
                                                  reply_to=thread_reply, link_preview=show_preview)
-            return _sent_ids or [0]
+            return True
 
         elif rss_media:
             # Telegram giới hạn caption kèm media tối đa 1024 ký tự hiển thị (sau strip HTML)
@@ -5626,7 +5514,6 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
                     # Caption quá dài — gửi media không caption, reply text riêng
                     sent = await tg_client.send_file(dest, _media_to_send, caption='',
                                                       parse_mode='html', reply_to=thread_reply)
-                    _sent_ids.extend([m.id for m in ([sent] if not isinstance(sent, list) else sent) if m and hasattr(m, 'id')])
                     reply_to = sent.id if not isinstance(sent, list) else sent[0].id
                     for chunk in _split_text(caption, 4096):
                         await tg_client.send_message(dest, chunk, parse_mode='html',
@@ -5641,7 +5528,7 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
                                                      reply_to=thread_reply, link_preview=False)
                 else:
                     raise
-            return _sent_ids or [0]
+            return True
 
         else:
             # Kiểm tra xem có entity-based translation không (bảo toàn bold/italic)
@@ -5658,15 +5545,12 @@ async def _tg_send_item(dest_channel, item, caption, topic_id=None, desc_has_lin
                 for chunk in _split_text(caption, 4096):
                     await tg_client.send_message(dest, chunk, parse_mode='html',
                                                  reply_to=thread_reply, link_preview=show_preview)
-            return _sent_ids or [0]
+            return True
 
     except Exception as e:
         print(f'[TG Send] Lỗi gửi {dest_channel} topic={topic_id}: {e}')
-        return []
+        return False
 
-
-# Semaphore giới hạn số lượng Telethon send đồng thời — tránh flood MTProto
-_send_semaphore = threading.Semaphore(3)  # tối đa 3 send song song
 
 # Semaphore giới hạn số lượng Telethon send đồng thời — tránh flood MTProto
 _send_semaphore = threading.Semaphore(3)  # tối đa 3 send song song
@@ -5868,36 +5752,14 @@ def _do_forward(processed, category, url):
                 if not acquired:
                     continue
                 try:
-                    sent_ids = tg_run(_tg_send_item(dest, send_item, caption, topic_id=topic_id, desc_has_link=desc_has_link))
+                    ok = tg_run(_tg_send_item(dest, send_item, caption, topic_id=topic_id, desc_has_link=desc_has_link))
                 except Exception as e:
-                    sent_ids = []
+                    ok = False
                     _notify_error(f'Forward that bai {channel_name}\n{e}', feed_url=url)
                 finally:
                     _send_semaphore.release()
-                if sent_ids:
+                if ok:
                     total_sent += 1
-                    # Lưu vào edit-map nếu là TG source (dẹ sync khi nguồn edit)
-                    _src_chat = it.get('_tg_chat')
-                    _src_msg_id = it.get('_tg_msg_id')
-                    if _src_chat and _src_msg_id:
-                        _map_key = (_src_chat, _src_msg_id)
-                        _map_entry = {
-                            'dest': dest_channel,
-                            'dest_msg_ids': list(sent_ids),
-                            'topic_id': topic_id,
-                            'feed_url': url,
-                            'ts': time.time(),
-                            'show_link': show_link,
-                            'channel_name': channel_name,
-                            'send_item_ref': it,
-                        }
-                        with _edit_map_lock:
-                            _edit_map.setdefault(_map_key, []).append(_map_entry)
-                            _now = time.time()
-                            expired = [k for k, v in _edit_map.items()
-                                       if all(_now - e['ts'] > _EDIT_MAP_TTL for e in v)]
-                            for k in expired:
-                                del _edit_map[k]
                 time.sleep(0.3)
     if total_sent > 0:
         # Cập nhật forward count
@@ -6083,6 +5945,12 @@ def _run_read_all_bg(url, feed_cfg):
                 item["_translate_engine_used"] = ''
                 # Không dịch — bình luận riêng bằng ngôn ngữ gốc nếu feed bật
                 item["_ai_comment"] = _generate_ai_comment_only(msg_text, feed_cfg) if _want_comment else ''
+                # Bảo toàn bold/italic/underline/link ẩn từ entities gốc —
+                # inject vào _tg_translated_* để _do_forward đi vào nhánh entity path
+                _ra_ents = msg.entities if msg.entities else []
+                if _ra_ents:
+                    item["_tg_translated_text"]     = msg_text
+                    item["_tg_translated_entities"] = list(_ra_ents)
 
             # Đánh dấu grouped_id đã xử lý (guid đã được ghi atomic ở trên)
             if grouped:
@@ -6470,6 +6338,14 @@ def _process_tg_queue():
                 pipeline_item['text_translated']       = _raw_text
                 pipeline_item['translated']            = False
                 pipeline_item['_translate_engine_used'] = ''
+                # Bảo toàn bold/italic/underline/link ẩn từ entities gốc —
+                # inject vào _tg_translated_* để _do_forward đi vào nhánh entity path
+                # thay vì nhánh caption HTML (vốn strip hết tag → mất format)
+                _orig_ents = pipeline_item.get('_tg_entities') or []
+                _orig_raw  = pipeline_item.get('_tg_raw_text') or _raw_text
+                if _orig_ents:
+                    pipeline_item['_tg_translated_text']     = _orig_raw
+                    pipeline_item['_tg_translated_entities'] = list(_orig_ents)
                 ws_item = {k: v for k, v in pipeline_item.items()
                            if k not in _WS_STRIP and k not in ('text', 'text_translated', '_tg_has_media')}
                 broadcast({'type': 'new_items', 'url': feed_url, 'items': [ws_item]})

@@ -2200,7 +2200,7 @@
       "auto_fwd": true,
       "do_translate": false,
       "read_all": false,
-      "ai_comment": true,
+      "ai_comment": false,
       "ai_comment_style": "Bọn VnExpress này rất kệch cỡm và ngu suẩn, tự cao tự đại, ngáo rất nhiều. Hãy bình luận bất kỳ bản tin nào của nó nếu tiêu đề liên quan sức khỏe, giới tính, hoặc có những từ như \"nhất thế giới\". Link bài viết có sẵn rồi đó.",
       "destinations": [
         {

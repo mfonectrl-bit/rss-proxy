@@ -2160,7 +2160,7 @@
       "name": "Health & Doctor",
       "show_link": true,
       "auto_fwd": true,
-      "do_translate": true,
+      "do_translate": false,
       "read_all": false,
       "ai_comment": false,
       "ai_comment_style": "",

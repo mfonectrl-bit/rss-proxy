@@ -716,8 +716,9 @@ def _gemini_translate_inner(text, is_html=False):
                 return result, alias
             except Exception as e:
                 err_str = str(e).upper()
-                is_rl = any(x in err_str for x in ['429', 'RESOURCE_EXHAUSTED', 'QUOTA', 'RATE LIMIT'])
-                _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl)
+                is_rl  = any(x in err_str for x in ['429', 'RESOURCE_EXHAUSTED', 'QUOTA', 'RATE LIMIT'])
+                is_loc = any(x in err_str for x in ['FAILED_PRECONDITION', 'LOCATION IS NOT SUPPORTED', 'USER LOCATION'])
+                _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl, is_location_blocked=is_loc)
                 if is_rl:
                     # 429 → không retry sang slot khác, fallback Google ngay
                     # Pool đã cooldown key này, request tiếp theo tự pick key còn tốt
@@ -752,8 +753,9 @@ def _gemini_combined_inner(text, style_hint, lang_instruction):
                 return translated, comment, alias
             except Exception as e:
                 err_str = str(e).upper()
-                is_rl = any(x in err_str for x in ['429', 'RESOURCE_EXHAUSTED', 'QUOTA', 'RATE LIMIT'])
-                _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl)
+                is_rl  = any(x in err_str for x in ['429', 'RESOURCE_EXHAUSTED', 'QUOTA', 'RATE LIMIT'])
+                is_loc = any(x in err_str for x in ['FAILED_PRECONDITION', 'LOCATION IS NOT SUPPORTED', 'USER LOCATION'])
+                _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl, is_location_blocked=is_loc)
                 if is_rl:
                     raise RuntimeError(f'GeminiPool combined: {alias}[key{ki}] rate_limit')
                 print(f'[AIComment] {alias}[key{ki}] lỗi combined: {e} — thử slot tiếp')
@@ -1294,9 +1296,11 @@ async def _ast_translate_with_entities(raw_text: str, entities: list, force_goog
                         _gemini_pool.record_success(alias, ki)
                         return result, alias
                     except Exception as _ge:
-                        is_rl = '429' in str(_ge) or 'quota' in str(_ge).lower()
-                        _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl)
-                        if is_rl:
+                        _ge_str = str(_ge).upper()
+                        is_rl  = '429' in _ge_str or 'QUOTA' in _ge_str or 'RESOURCE_EXHAUSTED' in _ge_str
+                        is_loc = any(x in _ge_str for x in ['FAILED_PRECONDITION', 'LOCATION IS NOT SUPPORTED', 'USER LOCATION'])
+                        _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl, is_location_blocked=is_loc)
+                        if is_rl or is_loc:
                             return None, 'none'
                         print(f'[AST] Gemini {alias}[key{ki}] lỗi: {_ge} — thử slot khác')
             return None, 'none'
@@ -1737,8 +1741,10 @@ def translate_with_entities(raw_text, entities=None, force_google=False):
                                           f'({len(_parsed) if isinstance(_parsed, list) else "?"} vs {len(segs_masked)}) — thử slot khác')
                                     _gemini_pool.record_failure(alias, ki, is_rate_limit=False)
                             except Exception as _ge:
-                                is_rl = '429' in str(_ge) or 'quota' in str(_ge).lower()
-                                _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl)
+                                _ge_str2 = str(_ge).upper()
+                                is_rl  = '429' in _ge_str2 or 'QUOTA' in _ge_str2 or 'RESOURCE_EXHAUSTED' in _ge_str2
+                                is_loc = any(x in _ge_str2 for x in ['FAILED_PRECONDITION', 'LOCATION IS NOT SUPPORTED', 'USER LOCATION'])
+                                _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl, is_location_blocked=is_loc)
                                 if is_rl:
                                     break  # rate limit → sang DeepL/Google
                                 print(f'[Translate] Gemini JSON batch {alias}[key{ki}] lỗi: {_ge} — thử slot khác')

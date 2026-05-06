@@ -153,27 +153,36 @@ class GeminiPool:
             if slot:
                 slot.retry_after = 0.0
 
-    def record_failure(self, alias: str, ki: int, is_rate_limit: bool = False) -> None:
+    def record_failure(self, alias: str, ki: int, is_rate_limit: bool = False,
+                       is_location_blocked: bool = False) -> None:
         now = time.time()
         retry_until = now + RETRY_AFTER_ERROR
 
         with self._lock:
-            if is_rate_limit:
+            if is_location_blocked:
+                # Disable vinh vien tat ca keys cua model nay - location block khong tu het
+                _FOREVER = now + 86400 * 365
+                for _ki in range(len(self._keys)):
+                    s = self._slots.get((alias, _ki))
+                    if s:
+                        s.retry_after = _FOREVER
+                print(f'[GeminiPool] {alias} bi chan theo region (location block) -> disable vinh vien')
+            elif is_rate_limit:
                 for a in QUOTA:
                     s = self._slots.get((a, ki))
                     if s:
                         s.retry_after = retry_until
-                print(f'[GeminiPool] key{ki} 429 → ALL models cooldown {RETRY_AFTER_ERROR:.0f}s')
+                print(f'[GeminiPool] key{ki} 429 -> ALL models cooldown {RETRY_AFTER_ERROR:.0f}s')
             else:
                 slot = self._slots.get((alias, ki))
                 if slot:
                     slot.retry_after = retry_until
                 label = f'{alias}[key{ki}]' if len(self._keys) > 1 else alias
-                print(f'[GeminiPool] {label} lỗi → retry sau {RETRY_AFTER_ERROR:.0f}s')
+                print(f'[GeminiPool] {label} loi -> retry sau {RETRY_AFTER_ERROR:.0f}s')
 
-            # Reset cycle để thử các slot khác ngay
+            # Reset cycle de thu cac slot khac ngay
             self._cycle_idx = 0
-
+            self._cycle_expires = 0.0  # force rebuild cycle ngay lap tuc
     def slot_status(self) -> str:
         now = time.time()
         n_keys = len(self._keys)

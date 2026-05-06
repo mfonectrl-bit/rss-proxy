@@ -723,6 +723,7 @@ def _gemini_translate_inner(text, is_html=False):
                     raise RuntimeError(f'GeminiPool: {alias}[key{ki}] rate_limit — fallback')
                 # is_loc: model bi block theo region, pool da disable, pick_slot se chon model khac
                 print(f'[Translate] {alias}[key{ki}] loi: {e} — thu slot tiep')
+                time.sleep(0.5)  # backoff nhe truoc khi thu slot tiep, chong 429 burst
 
 
 def _gemini_combined_inner(text, style_hint, lang_instruction):
@@ -759,6 +760,7 @@ def _gemini_combined_inner(text, style_hint, lang_instruction):
                     raise RuntimeError(f'GeminiPool combined: {alias}[key{ki}] rate_limit')
                 # is_loc: pool da disable model nay, pick_slot se chon model khac
                 print(f'[AIComment] {alias}[key{ki}] lỗi combined: {e} — thử slot tiếp')
+                time.sleep(0.5)  # backoff nhe truoc khi thu slot tiep
 
 
 def _dispatcher_translate(text, preferred=None):
@@ -1304,6 +1306,7 @@ async def _ast_translate_with_entities(raw_text: str, entities: list, force_goog
                             return None, 'none'
                         # is_loc: pool da disable model nay, vong lap se pick model khac
                         print(f'[AST] Gemini {alias}[key{ki}] lỗi: {_ge} — thử slot khác')
+                        time.sleep(0.5)  # backoff nhe truoc khi thu slot tiep
             return None, 'none'
         try:
             segs_out, engine_used = await loop.run_in_executor(None, _gemini_sync_call)

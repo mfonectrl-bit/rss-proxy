@@ -1155,12 +1155,7 @@ async def _ast_batch_translate_gemini(segs_text: list, alias: str, ki: int, api_
     parsed = json.loads(raw)
     if not isinstance(parsed, list) or len(parsed) != len(segs_text):
         raise ValueError(f'Gemini count mismatch: got {len(parsed) if isinstance(parsed, list) else "?"}, expected {len(segs_text)}')
-    results = [str(x) for x in parsed]
-    # Nếu bất kỳ element nào trông như error message → raise để caller fallback
-    for _elem in results:
-        if _is_error_result(_elem):
-            raise RuntimeError(f'Gemini trả về error text trong batch: {_elem[:100]}')
-    return results
+    return [str(x) for x in parsed]
 
 
 def _ast_batch_translate_gemini_sync(segs_text: list, alias: str, ki: int, api_key: str) -> list:
@@ -1200,12 +1195,7 @@ def _ast_batch_translate_gemini_sync(segs_text: list, alias: str, ki: int, api_k
             f'Gemini count mismatch: got {len(parsed) if isinstance(parsed, list) else "?"}, '
             f'expected {len(segs_text)}'
         )
-    results = [str(x) for x in parsed]
-    # Nếu bất kỳ element nào trông như error message → raise để caller fallback
-    for _elem in results:
-        if _is_error_result(_elem):
-            raise RuntimeError(f'Gemini trả về error text trong batch: {_elem[:100]}')
-    return results
+    return [str(x) for x in parsed]
 
 
 async def _ast_translate_with_entities(raw_text: str, entities: list, force_google: bool = False):
@@ -1224,34 +1214,12 @@ async def _ast_translate_with_entities(raw_text: str, entities: list, force_goog
         url_ph[tok] = m.group(0)
         return tok
 
-    # Mask emoji để bảo toàn chính xác — Gemini có thể tự ý thay emoji khác
-    _EMOJI_RE = re.compile(
-        u'[\U0001F000-\U0001FFFF'
-        u'\U00002600-\U000027BF'
-        u'\U00002300-\U000023FF'
-        u'\U000025A0-\U000025FF'
-        u'\U00002B00-\U00002BFF'
-        u'\U00003000-\U00003300'
-        u'\U0000FE00-\U0000FE0F'   # variation selectors
-        u'\U0001F900-\U0001F9FF'
-        u'\U0001FA00-\U0001FA6F'
-        u'\U0001FA70-\U0001FAFF'
-        u']+',
-        re.UNICODE
-    )
-    emoji_ph: dict = {}
-    def _mask_emoji(m):
-        tok = f'EMJTOK{len(emoji_ph)}END'
-        emoji_ph[tok] = m.group(0)
-        return tok
-
     NL = '⏎NL⏎'
     segments = _ast_build_segments(raw_text, entities)
     translatable_idx = [i for i, s in enumerate(segments) if s['text'].strip()]
     segs_masked = []
     for i in translatable_idx:
         t = re.sub(r'https?://[^\s\)<>]+', _mask, segments[i]['text'])
-        t = _EMOJI_RE.sub(_mask_emoji, t)
         t = t.replace('\n', NL)
         segs_masked.append(t)
 
@@ -1331,14 +1299,12 @@ async def _ast_translate_with_entities(raw_text: str, entities: list, force_goog
         segs_out = await loop.run_in_executor(None, _google_sync_call)
         engine_used = 'GT'
 
-    # Restore URL + newline + emoji
+    # Restore URL + newline
     if segs_out and translatable_idx:
         for k, orig_idx in enumerate(translatable_idx):
             restored = segs_out[k].replace(NL, '\n')
             for tok, url_val in url_ph.items():
                 restored = restored.replace(tok, url_val)
-            for tok, emj_val in emoji_ph.items():
-                restored = restored.replace(tok, emj_val)
             segments[orig_idx]['text'] = restored or segments[orig_idx]['text']
 
     final_text, new_entities = _ast_render(segments)
@@ -1395,7 +1361,7 @@ def _translate_google(text):
             return t
         masked = re.sub(r'https?://\S+', _mask, text)
         translated = GoogleTranslator(source='auto', target=_gtarget).translate(masked)
-        if translated:
+        if translated and not _is_error_result(translated):
             for tok, url in _url_ph.items():
                 translated = translated.replace(tok, url)
             return translated
@@ -1436,6 +1402,8 @@ def _translate_google_only(text):
 
     try:
         translated = _GoogleTranslator(source='auto', target=_gtarget).translate(masked) or masked
+        if _is_error_result(translated):
+            return text, 'google'
     except Exception as e:
         print(f'[Translate/Google-history] Lỗi: {e} — giữ nguyên bản gốc')
         return text, 'google'
@@ -1486,6 +1454,8 @@ def _translate_google_html_only(html_text):
                     inner_masked = ' ' + inner_masked
                 try:
                     translated_inner = _GoogleTranslator(source='auto', target=_gtarget).translate(inner_masked) or inner_masked
+                    if _is_error_result(translated_inner):
+                        translated_inner = inner_masked
                     for tok, url in url_ph.items():
                         translated_inner = translated_inner.replace(tok, url)
                     result.append(leading + translated_inner + trailing)
@@ -1583,6 +1553,8 @@ def translate_with_entities(raw_text, entities=None, force_google=False):
         if not result:
             try:
                 result = _GoogleTranslator(source='auto', target=_gtarget).translate(masked) or masked
+                if _is_error_result(result):
+                    result = masked
             except Exception:
                 result = masked
             _engine_used[0] = 'GT'
@@ -1657,10 +1629,13 @@ def translate_with_entities(raw_text, entities=None, force_google=False):
             NL = '⏎NL⏎'
 
             segs_masked = []
+            segs_emoji_ph = []  # emoji placeholders per segment
             for _, seg in translatable:
                 s = re.sub(r'https?://[^\s\)<>]+', _mask_url, seg)
                 s = s.replace('\n', NL)
+                s, _eph = _mask_emoji(s)
                 segs_masked.append(s)
+                segs_emoji_ph.append(_eph)
 
             segs_out = None  # list[str] kết quả, len == len(translatable)
 
@@ -1764,11 +1739,12 @@ def translate_with_entities(raw_text, entities=None, force_google=False):
                 segs_out = _gt_results
                 _engine_used[0] = 'GT'
 
-            # Restore URL và newline, ghi vào translated_parts
+            # Restore URL, emoji và newline, ghi vào translated_parts
             for k, (orig_idx, _) in enumerate(translatable):
                 _restored = segs_out[k].replace(NL, '\n')
                 for tok, _url_val in url_ph.items():
                     _restored = _restored.replace(tok, _url_val)
+                _restored = _restore_emoji(_restored, segs_emoji_ph[k])
                 translated_parts[orig_idx] = _restored or parts[orig_idx]['text']
 
         # Rebuild entities với offset/length mới
@@ -1793,6 +1769,30 @@ def translate_with_entities(raw_text, entities=None, force_google=False):
 
 
 
+def _mask_emoji(text):
+    """Mask emoji thành token để tránh translate engine thay đổi."""
+    import unicodedata
+    _emoji_re = re.compile(
+        u'[\U00010000-\U0010ffff'
+        u'\U0001F300-\U0001F9FF'
+        u'\u2600-\u26FF\u2700-\u27BF'
+        u'\uFE00-\uFE0F\u20D0-\u20FF]+',
+        re.UNICODE
+    )
+    placeholders = {}
+    def _replace(m):
+        tok = f'EMOJI{len(placeholders)}X'
+        placeholders[tok] = m.group(0)
+        return tok
+    masked = _emoji_re.sub(_replace, text)
+    return masked, placeholders
+
+def _restore_emoji(text, placeholders):
+    for tok, emoji in placeholders.items():
+        text = text.replace(tok, emoji)
+    return text
+
+
 def _translate_gemini(text, model='gemini-2.0-flash', api_key=None):
     """
     Dịch text bằng Gemini. api_key: key cụ thể (multi-key), None = dùng GEMINI_API_KEY.
@@ -1801,9 +1801,10 @@ def _translate_gemini(text, model='gemini-2.0-flash', api_key=None):
     if not _key:
         raise ValueError('GEMINI_API_KEY chưa set')
     _lang = _LANG_NAME.get(translate_target_lang, translate_target_lang)
+    text_masked, _emoji_ph = _mask_emoji(text)
     prompt = (
         f'Dịch đoạn văn bản sau sang {_lang} tự nhiên, giữ nguyên format xuống dòng, '
-        'emoji và các ký tự đặc biệt. Chỉ trả về bản dịch, không giải thích thêm:\n\n' + text[:15000]
+        'emoji và các ký tự đặc biệt. Chỉ trả về bản dịch, không giải thích thêm:\n\n' + text_masked[:15000]
     )
     payload = json.dumps({
         'contents': [{'parts': [{'text': prompt}]}],
@@ -1817,7 +1818,7 @@ def _translate_gemini(text, model='gemini-2.0-flash', api_key=None):
         result = data['candidates'][0]['content']['parts'][0]['text'].strip()
         if _is_error_result(result):
             raise RuntimeError(f'Gemini trả về error text: {result[:100]}')
-        return result
+        return _restore_emoji(result, _emoji_ph)
     except urllib.error.HTTPError as e:
         body = e.read().decode('utf-8', errors='ignore')
         retry_after = e.headers.get('Retry-After', '') if hasattr(e, 'headers') else ''
@@ -1966,54 +1967,36 @@ def _generate_ai_comment_only(content_text, feed_cfg):
     style_part = f'Style requirement: {style_hint}\n' if style_hint else ''
     prompt = (
         f'Read the following article and write a short, concise comment.\n'
+        f'Reply in the same language as the source text.\n'
         f'{style_part}'
         f'Return only the comment content, no explanation, no title.\n\n'
         f'ARTICLE:\n{text[:3000]}'
     )
-    # systemInstruction đảm bảo ngôn ngữ luôn theo bản tin gốc,
-    # không bị style_hint tiếng Việt override
-    system_instruction = (
-        'You are a news commentator. '
-        'You MUST always write your comment in the exact same language as the article provided. '
-        'Never use any other language, regardless of any other instruction.'
-    )
-    tried = set()
-    with _gemini_pool.translate_context():
-        while True:
-            slot = _gemini_pool.pick_slot()
-            if not slot:
-                break
-            alias, ki, api_key = slot
-            if (alias, ki) in tried:
-                break
-            tried.add((alias, ki))
-            model_name = _GPOOL_MODELS[alias]
-            payload = json.dumps({
-                'systemInstruction': {'parts': [{'text': system_instruction}]},
-                'contents': [{'parts': [{'text': prompt}]}],
-                'generationConfig': {'temperature': 0.7, 'maxOutputTokens': 512},
-            }).encode('utf-8')
-            _url = (
-                f'https://generativelanguage.googleapis.com/v1beta/models/'
-                f'{model_name}:generateContent?key={api_key}'
-            )
-            try:
-                req = urllib.request.Request(_url, data=payload, headers={'Content-Type': 'application/json'})
-                with urllib.request.urlopen(req, timeout=30) as resp:
-                    data = json.loads(resp.read())
-                comment = data['candidates'][0]['content']['parts'][0]['text'].strip()
-                _gemini_pool.record_success(alias, ki)
-                return '' if _is_error_result(comment) else comment
-            except Exception as e:
-                is_rl = '429' in str(e) or 'quota' in str(e).lower()
-                _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl)
-                print(f'[AIComment] {alias}[key{ki}] lỗi: {e} — thử slot khác')
-                if is_rl:
-                    break
-    return ''
+    try:
+        slot = _gemini_pool.pick_slot()
+        if not slot:
+            return ''
+        alias, ki, api_key = slot
+        model_name = _GPOOL_MODELS[alias]
+        payload = json.dumps({
+            'contents': [{'parts': [{'text': prompt}]}],
+            'generationConfig': {'temperature': 0.7, 'maxOutputTokens': 512},
+        }).encode('utf-8')
+        _url = (
+            f'https://generativelanguage.googleapis.com/v1beta/models/'
+            f'{model_name}:generateContent?key={api_key}'
+        )
+        req = urllib.request.Request(_url, data=payload, headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read())
+        comment = data['candidates'][0]['content']['parts'][0]['text'].strip()
+        _gemini_pool.record_success(alias, ki)
+        return '' if _is_error_result(comment) else comment
+    except Exception as e:
+        print(f'[AIComment] Lỗi sinh bình luận: {e}')
+        return ''
 
 
-def _fix_html_spacing(html):
     """
     Post-process HTML sau khi dịch (Gemini/DeepL) — đảm bảo có space
     trước opening tag và sau closing tag, tránh text bị dính vào tag.
@@ -4788,8 +4771,6 @@ function connectWS(){
             show_link:f.show_link!==false,
             auto_fwd:f.auto_fwd===true,
             do_translate:f.do_translate!==false,
-            ai_comment:f.ai_comment===true,
-            ai_comment_style:f.ai_comment_style||'',
             destinations:f.destinations||[],
             history_limit:f.history_limit!=null?f.history_limit:20}));
         wsReconnectCount++;
@@ -5964,12 +5945,6 @@ def _run_read_all_bg(url, feed_cfg):
                 item["_translate_engine_used"] = ''
                 # Không dịch — bình luận riêng bằng ngôn ngữ gốc nếu feed bật
                 item["_ai_comment"] = _generate_ai_comment_only(msg_text, feed_cfg) if _want_comment else ''
-                # Bảo toàn bold/italic/underline/link ẩn từ entities gốc —
-                # inject vào _tg_translated_* để _do_forward đi vào nhánh entity path
-                _ra_ents = msg.entities if msg.entities else []
-                if _ra_ents:
-                    item["_tg_translated_text"]     = msg_text
-                    item["_tg_translated_entities"] = list(_ra_ents)
 
             # Đánh dấu grouped_id đã xử lý (guid đã được ghi atomic ở trên)
             if grouped:
@@ -6189,13 +6164,6 @@ def _poll_one(url_obj):
                     it['text_translated'] = it['text']
                     it['translated']      = False
                     it['_translate_engine_used'] = ''
-                    # Bình luận AI cho RSS khi không dịch
-                    with lock:
-                        _rss_bypass_cfg = next((u for u in watched_urls if u['url'] == url), {})
-                    _rss_want_cmt = _rss_bypass_cfg.get('ai_comment', False) and GEMINI_API_KEYS
-                    if _rss_want_cmt:
-                        _rss_ai_cmt = _generate_ai_comment_only(it.get('text', ''), _rss_bypass_cfg)
-                        it['_ai_comment'] = _rss_ai_cmt
                     ws_it = {k: v for k, v in it.items() if k not in _WS_STRIP and k not in ('text', 'text_translated')}
                     broadcast({'type': 'new_items', 'url': url, 'items': [ws_it]})
                     _forward_pool.submit(_do_forward, [it], category, url)
@@ -6364,14 +6332,6 @@ def _process_tg_queue():
                 pipeline_item['text_translated']       = _raw_text
                 pipeline_item['translated']            = False
                 pipeline_item['_translate_engine_used'] = ''
-                # Bảo toàn bold/italic/underline/link ẩn từ entities gốc —
-                # inject vào _tg_translated_* để _do_forward đi vào nhánh entity path
-                # thay vì nhánh caption HTML (vốn strip hết tag → mất format)
-                _orig_ents = pipeline_item.get('_tg_entities') or []
-                _orig_raw  = pipeline_item.get('_tg_raw_text') or _raw_text
-                if _orig_ents:
-                    pipeline_item['_tg_translated_text']     = _orig_raw
-                    pipeline_item['_tg_translated_entities'] = list(_orig_ents)
                 ws_item = {k: v for k, v in pipeline_item.items()
                            if k not in _WS_STRIP and k not in ('text', 'text_translated', '_tg_has_media')}
                 broadcast({'type': 'new_items', 'url': feed_url, 'items': [ws_item]})
@@ -7037,8 +6997,7 @@ class HttpHandler(BaseHTTPRequestHandler):
                             _ents = it.get('_tg_entities') or None
 
                         _mf_ai_cmt = ''
-                        _mf_do_translate = _mf_feed_cfg.get('do_translate', True)
-                        if _mf_do_translate and _raw.strip():
+                        if it.get('do_translate', True) and _raw.strip():
                             try:
                                 # Combined (1 request) nếu plain-text + bình luận bật
                                 if _mf_want_cmt and not _ents and GEMINI_API_KEYS:
@@ -7118,36 +7077,12 @@ class HttpHandler(BaseHTTPRequestHandler):
                             # Không dịch — bình luận riêng bằng ngôn ngữ gốc
                             if _mf_want_cmt:
                                 _mf_ai_cmt = _generate_ai_comment_only(_raw or desc_plain, _mf_feed_cfg)
-                            # Bảo toàn bold/italic/link ẩn từ entities gốc khi không dịch
-                            if _ents:
-                                from copy import deepcopy as _dc
-                                from telethon.tl.types import (
-                                    MessageEntityItalic as _MEI,
-                                    MessageEntityTextUrl as _METU,
-                                )
-                                _sfx_text = ''; _sfx_e = []; _cur = _u16len(_raw)
-                                if _mf_ai_cmt:
-                                    _cmt_pre = '\n\n🧠 '
-                                    _sfx_text += _cmt_pre + _mf_ai_cmt
-                                    _cur += _u16len(_cmt_pre + _mf_ai_cmt)
-                                if show_link and it.get('link'):
-                                    _lbl = 'Xem b\u00e0i g\u1ed1c \u2192'
-                                    _sfx_text += '\n\n' + _lbl
-                                    _sfx_e.append(_METU(offset=_cur + 2, length=_u16len(_lbl), url=it['link']))
-                                    _cur += 2 + _u16len(_lbl)
-                                if channel_name:
-                                    _sfx_text += '\n\n' + channel_name
-                                    _sfx_e.append(_MEI(offset=_cur + 2, length=_u16len(channel_name)))
-                                send_item['_tg_translated_text']     = _raw + _sfx_text
-                                send_item['_tg_translated_entities'] = list(_ents) + _sfx_e
-                                caption = desc_plain
-                            else:
-                                if _mf_ai_cmt:
-                                    caption += f'\n\n🧠 {_mf_ai_cmt}'
-                                if show_link and it.get('link'):
-                                    caption += f'\n\n<a href="{it["link"]}">Xem bài gốc →</a>'
-                                if channel_name:
-                                    caption += f'\n\n<i>{channel_name}</i>'
+                            if _mf_ai_cmt:
+                                caption += f'\n\n🧠 {_mf_ai_cmt}'
+                            if show_link and it.get('link'):
+                                caption += f'\n\n<a href="{it["link"]}">Xem bài gốc →</a>'
+                            if channel_name:
+                                caption += f'\n\n<i>{channel_name}</i>'
                         desc_has_link = bool(re.search(r'https?://', it.get('desc', '') or ''))
                         try:
                             ok = tg_run(_tg_send_item(dest, send_item, caption, topic_id=topic_id, desc_has_link=desc_has_link))

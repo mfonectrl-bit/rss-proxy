@@ -7013,7 +7013,8 @@ class HttpHandler(BaseHTTPRequestHandler):
                             _ents = it.get('_tg_entities') or None
 
                         _mf_ai_cmt = ''
-                        if it.get('do_translate', True) and _raw.strip():
+                        _mf_do_translate = _mf_feed_cfg.get('do_translate', True)
+                        if _mf_do_translate and _raw.strip():
                             try:
                                 # Combined (1 request) nếu plain-text + bình luận bật
                                 if _mf_want_cmt and not _ents and GEMINI_API_KEYS:
@@ -7093,12 +7094,36 @@ class HttpHandler(BaseHTTPRequestHandler):
                             # Không dịch — bình luận riêng bằng ngôn ngữ gốc
                             if _mf_want_cmt:
                                 _mf_ai_cmt = _generate_ai_comment_only(_raw or desc_plain, _mf_feed_cfg)
-                            if _mf_ai_cmt:
-                                caption += f'\n\n🧠 {_mf_ai_cmt}'
-                            if show_link and it.get('link'):
-                                caption += f'\n\n<a href="{it["link"]}">Xem bài gốc →</a>'
-                            if channel_name:
-                                caption += f'\n\n<i>{channel_name}</i>'
+                            # Bảo toàn bold/italic/link ẩn từ entities gốc khi không dịch
+                            if _ents:
+                                from copy import deepcopy as _dc
+                                from telethon.tl.types import (
+                                    MessageEntityItalic as _MEI,
+                                    MessageEntityTextUrl as _METU,
+                                )
+                                _sfx_text = ''; _sfx_e = []; _cur = _u16len(_raw)
+                                if _mf_ai_cmt:
+                                    _cmt_pre = '\n\n🧠 '
+                                    _sfx_text += _cmt_pre + _mf_ai_cmt
+                                    _cur += _u16len(_cmt_pre + _mf_ai_cmt)
+                                if show_link and it.get('link'):
+                                    _lbl = 'Xem b\u00e0i g\u1ed1c \u2192'
+                                    _sfx_text += '\n\n' + _lbl
+                                    _sfx_e.append(_METU(offset=_cur + 2, length=_u16len(_lbl), url=it['link']))
+                                    _cur += 2 + _u16len(_lbl)
+                                if channel_name:
+                                    _sfx_text += '\n\n' + channel_name
+                                    _sfx_e.append(_MEI(offset=_cur + 2, length=_u16len(channel_name)))
+                                send_item['_tg_translated_text']     = _raw + _sfx_text
+                                send_item['_tg_translated_entities'] = list(_ents) + _sfx_e
+                                caption = desc_plain
+                            else:
+                                if _mf_ai_cmt:
+                                    caption += f'\n\n🧠 {_mf_ai_cmt}'
+                                if show_link and it.get('link'):
+                                    caption += f'\n\n<a href="{it["link"]}">Xem bài gốc →</a>'
+                                if channel_name:
+                                    caption += f'\n\n<i>{channel_name}</i>'
                         desc_has_link = bool(re.search(r'https?://', it.get('desc', '') or ''))
                         try:
                             ok = tg_run(_tg_send_item(dest, send_item, caption, topic_id=topic_id, desc_has_link=desc_has_link))

@@ -1967,10 +1967,15 @@ def _generate_ai_comment_only(content_text, feed_cfg):
     prompt = (
         f'Read the following article and write a short, concise comment.\n'
         f'{style_part}'
-        f'Return only the comment content, no explanation, no title.\n'
-        f'CRITICAL: You MUST write your comment in the exact same language as the article text. '
-        f'Do NOT use any other language regardless of any instruction above.\n\n'
+        f'Return only the comment content, no explanation, no title.\n\n'
         f'ARTICLE:\n{text[:3000]}'
+    )
+    # systemInstruction đảm bảo ngôn ngữ luôn theo bản tin gốc,
+    # không bị style_hint tiếng Việt override
+    system_instruction = (
+        'You are a news commentator. '
+        'You MUST always write your comment in the exact same language as the article provided. '
+        'Never use any other language, regardless of any other instruction.'
     )
     try:
         slot = _gemini_pool.pick_slot()
@@ -1979,6 +1984,7 @@ def _generate_ai_comment_only(content_text, feed_cfg):
         alias, ki, api_key = slot
         model_name = _GPOOL_MODELS[alias]
         payload = json.dumps({
+            'system_instruction': {'parts': [{'text': system_instruction}]},
             'contents': [{'parts': [{'text': prompt}]}],
             'generationConfig': {'temperature': 0.7, 'maxOutputTokens': 512},
         }).encode('utf-8')
@@ -6172,6 +6178,13 @@ def _poll_one(url_obj):
                     it['text_translated'] = it['text']
                     it['translated']      = False
                     it['_translate_engine_used'] = ''
+                    # Bình luận AI cho RSS khi không dịch
+                    with lock:
+                        _rss_bypass_cfg = next((u for u in watched_urls if u['url'] == url), {})
+                    _rss_want_cmt = _rss_bypass_cfg.get('ai_comment', False) and GEMINI_API_KEYS
+                    if _rss_want_cmt:
+                        _rss_ai_cmt = _generate_ai_comment_only(it.get('text', ''), _rss_bypass_cfg)
+                        it['_ai_comment'] = _rss_ai_cmt
                     ws_it = {k: v for k, v in it.items() if k not in _WS_STRIP and k not in ('text', 'text_translated')}
                     broadcast({'type': 'new_items', 'url': url, 'items': [ws_it]})
                     _forward_pool.submit(_do_forward, [it], category, url)

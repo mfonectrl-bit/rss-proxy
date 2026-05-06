@@ -1989,7 +1989,7 @@ def _generate_ai_comment_only(content_text, feed_cfg):
             tried.add((alias, ki))
             model_name = _GPOOL_MODELS[alias]
             payload = json.dumps({
-                'system_instruction': {'parts': [{'text': system_instruction}]},
+                'systemInstruction': {'parts': [{'text': system_instruction}]},
                 'contents': [{'parts': [{'text': prompt}]}],
                 'generationConfig': {'temperature': 0.7, 'maxOutputTokens': 512},
             }).encode('utf-8')

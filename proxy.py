@@ -688,11 +688,8 @@ except ImportError:
 
 def _gemini_translate_inner(text, is_html=False):
     """
-    Bản cân bằng:
-    - Sử dụng cooldown 60s của GeminiPool
-    - Rotate kiên nhẫn giữa các model/key
-    - Adaptive delay khi rate limit (tránh dồn dập 429)
-    - Chỉ fallback khi thật sự hết khả năng
+    Rotate mạnh + adaptive delay.
+    Ưu tiên model ổn định, skip model block region.
     """
     if not text or not text.strip():
         return text, 'none'
@@ -702,7 +699,7 @@ def _gemini_translate_inner(text, is_html=False):
     last_rl_time = 0
 
     with _gemini_pool.translate_context():
-        for attempt in range(30):   # tối đa 30 lần thử
+        for attempt in range(40):   # Tăng số lần thử
             slot = _gemini_pool.pick_slot()
             if not slot:
                 break
@@ -713,6 +710,10 @@ def _gemini_translate_inner(text, is_html=False):
                 continue
             tried.add(slot_key)
 
+            # Ưu tiên model ổn định (2.5 series)
+            if alias.startswith('gemini-3.') and len(tried) > 8:
+                continue  # Giảm thử model 3.x nếu đã thử nhiều
+
             model_name = _GPOOL_MODELS[alias]
 
             try:
@@ -722,6 +723,8 @@ def _gemini_translate_inner(text, is_html=False):
                     result = _translate_gemini(text, model=model_name, api_key=api_key)
 
                 _gemini_pool.record_success(alias, ki)
+                if alias.startswith('gemini-3.'):
+                    print(f'[Translate] ✅ Thành công với model {alias}')
                 return result, alias
 
             except Exception as e:
@@ -738,25 +741,20 @@ def _gemini_translate_inner(text, is_html=False):
 
                 if is_rl:
                     consecutive_rl += 1
-                    # Adaptive delay
-                    delay = 4 + (consecutive_rl * 3) + (len(tried) % 5)
-                    delay = min(delay, 16)   # tối đa 16 giây
+                    delay = 5 + (consecutive_rl * 2.5) + (len(tried) % 6)
+                    delay = min(delay, 15)
                     if time.time() - last_rl_time > 3:
-                        print(f'[Translate] Rate limit {alias}[key{ki}] (lần {consecutive_rl}) → chờ {delay}s')
+                        print(f'[Translate] Rate limit {alias}[key{ki}] (lần {consecutive_rl}) → chờ {delay:.1f}s')
                         last_rl_time = time.time()
                     time.sleep(delay)
                     continue
                 else:
-                    consecutive_rl = 0  # reset khi không phải rate limit
+                    consecutive_rl = 0
 
                 print(f'[Translate] {alias}[key{ki}] lỗi: {e[:100]}')
 
-    # Chỉ fallback khi đã thử khá nhiều
-    if len(tried) >= 6 or consecutive_rl >= 3:
-        print(f'[Translate] Đã thử {len(tried)} slot Gemini → fallback DeepL/Google')
-        raise RuntimeError("Gemini exhausted → fallback")
-
-    raise RuntimeError('GeminiPool: không có slot khả dụng')
+    print(f'[Translate] Đã thử {len(tried)} slot Gemini → fallback DeepL/Google')
+    raise RuntimeError("Gemini exhausted → fallback")
 
 
 def _gemini_combined_inner(text, style_hint, lang_instruction):

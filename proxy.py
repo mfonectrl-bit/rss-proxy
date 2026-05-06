@@ -720,9 +720,8 @@ def _gemini_translate_inner(text, is_html=False):
                 is_loc = any(x in err_str for x in ['FAILED_PRECONDITION', 'LOCATION IS NOT SUPPORTED', 'USER LOCATION'])
                 _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl, is_location_blocked=is_loc)
                 if is_rl:
-                    # 429 → không retry sang slot khác, fallback Google ngay
-                    # Pool đã cooldown key này, request tiếp theo tự pick key còn tốt
                     raise RuntimeError(f'GeminiPool: {alias}[key{ki}] rate_limit — fallback')
+                # is_loc: model bi block theo region, pool da disable, pick_slot se chon model khac
                 print(f'[Translate] {alias}[key{ki}] loi: {e} — thu slot tiep')
 
 
@@ -758,6 +757,7 @@ def _gemini_combined_inner(text, style_hint, lang_instruction):
                 _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl, is_location_blocked=is_loc)
                 if is_rl:
                     raise RuntimeError(f'GeminiPool combined: {alias}[key{ki}] rate_limit')
+                # is_loc: pool da disable model nay, pick_slot se chon model khac
                 print(f'[AIComment] {alias}[key{ki}] lỗi combined: {e} — thử slot tiếp')
 
 
@@ -1300,8 +1300,9 @@ async def _ast_translate_with_entities(raw_text: str, entities: list, force_goog
                         is_rl  = '429' in _ge_str or 'QUOTA' in _ge_str or 'RESOURCE_EXHAUSTED' in _ge_str
                         is_loc = any(x in _ge_str for x in ['FAILED_PRECONDITION', 'LOCATION IS NOT SUPPORTED', 'USER LOCATION'])
                         _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl, is_location_blocked=is_loc)
-                        if is_rl or is_loc:
+                        if is_rl:
                             return None, 'none'
+                        # is_loc: pool da disable model nay, vong lap se pick model khac
                         print(f'[AST] Gemini {alias}[key{ki}] lỗi: {_ge} — thử slot khác')
             return None, 'none'
         try:

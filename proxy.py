@@ -4771,6 +4771,8 @@ function connectWS(){
             show_link:f.show_link!==false,
             auto_fwd:f.auto_fwd===true,
             do_translate:f.do_translate!==false,
+            ai_comment:f.ai_comment===true,
+            ai_comment_style:f.ai_comment_style||'',
             destinations:f.destinations||[],
             history_limit:f.history_limit!=null?f.history_limit:20}));
         wsReconnectCount++;

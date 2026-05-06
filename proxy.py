@@ -688,55 +688,97 @@ except ImportError:
 
 def _gemini_translate_inner(text, is_html=False):
     """
-    Round-robin THEO MODEL theo thứ tự bạn muốn:
+    Round-robin theo model:
     gemini-3.1 → gemini-3.0 → gemini-2.5 → gemini-2.5-lite
-    Thử hết 5 keys của model hiện tại trước khi chuyển model tiếp theo.
+
+    - Thử hết keys của từng model
+    - Có throttle toàn cục
+    - Có exponential backoff khi 429
+    - Có delay giữa các request để tránh burst
     """
+
     if not text or not text.strip():
         return text, 'none'
 
-    # Thứ tự model theo ý bạn
     model_order = ['gemini-3.1', 'gemini-3.0', 'gemini-2.5', 'gemini-2.5-lite']
 
+    # ---- throttle toàn cục ----
+    if not hasattr(_gemini_translate_inner, "_last_call"):
+        _gemini_translate_inner._last_call = 0
+
+    def _throttle(min_interval=1.0):
+        now = time.time()
+        elapsed = now - _gemini_translate_inner._last_call
+        if elapsed < min_interval:
+            time.sleep(min_interval - elapsed)
+        _gemini_translate_inner._last_call = time.time()
+
+    # --------------------------
+
     for model_alias in model_order:
-        print(f'[Translate] Thử model: {model_alias} (thử hết 5 keys)')
+        print(f'[Translate] Thử model: {model_alias} (thử hết keys)')
+
+        retry_delay = 2  # reset cho mỗi model
 
         for ki in range(len(GEMINI_API_KEYS)):
             alias = model_alias
             api_key = GEMINI_API_KEYS[ki]
-            slot_key = (alias, ki)
 
             try:
+                _throttle(1.0)  # chống spam global
+
                 if is_html:
-                    result = _fix_html_spacing(_translate_gemini_html(text, model=_GPOOL_MODELS[alias], api_key=api_key))
+                    result = _fix_html_spacing(
+                        _translate_gemini_html(
+                            text,
+                            model=_GPOOL_MODELS[alias],
+                            api_key=api_key
+                        )
+                    )
                 else:
-                    result = _translate_gemini(text, model=_GPOOL_MODELS[alias], api_key=api_key)
+                    result = _translate_gemini(
+                        text,
+                        model=_GPOOL_MODELS[alias],
+                        api_key=api_key
+                    )
 
                 _gemini_pool.record_success(alias, ki)
+
+                time.sleep(0.5)  # delay nhẹ sau success
                 return result, alias
 
             except Exception as e:
                 err_str = str(e).upper()
-                is_region_block = any(x in err_str for x in ["USER LOCATION", "FAILED_PRECONDITION", "REGION NOT SUPPORTED"])
-                is_rl = any(x in err_str for x in ['429', 'RESOURCE_EXHAUSTED', 'QUOTA', 'RATE LIMIT'])
+
+                is_region_block = any(x in err_str for x in [
+                    "USER LOCATION", "FAILED_PRECONDITION", "REGION NOT SUPPORTED"
+                ])
+
+                is_rl = any(x in err_str for x in [
+                    '429', 'RESOURCE_EXHAUSTED', 'QUOTA', 'RATE LIMIT'
+                ])
 
                 if is_region_block:
-                    print(f'[Translate] {alias}[key{ki}] bị block region → chuyển model tiếp theo')
-                    break  # Thoát khỏi model này, sang model tiếp theo
+                    print(f'[Translate] {alias}[key{ki}] bị block region → skip model')
+                    break
 
                 _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl)
 
                 if is_rl:
-                    print(f'[Translate] {alias}[key{ki}] rate limit → thử key tiếp theo')
-                    time.sleep(4)   # delay nhẹ giữa các key
+                    print(f'[Translate] {alias}[key{ki}] rate limit → sleep {retry_delay}s')
+                    time.sleep(retry_delay)
+                    retry_delay = min(retry_delay * 2, 30)  # exponential backoff
                     continue
 
-                print(f'[Translate] {alias}[key{ki}] lỗi: {e[:100]}')
+                print(f'[Translate] {alias}[key{ki}] lỗi: {str(e)[:100]}')
 
-        # Nếu model này fail hết keys → chuyển model tiếp theo
+            # delay giữa các key (quan trọng để tránh burst)
+            time.sleep(1)
 
-    # Nếu đã thử hết tất cả model
-    print(f'[Translate] Đã thử hết tất cả model + keys → fallback DeepL/Google')
+        # reset backoff khi sang model mới
+        retry_delay = 2
+
+    print('[Translate] Đã thử hết tất cả model + keys → fallback')
     raise RuntimeError("All Gemini models and keys exhausted → fallback")
 
 

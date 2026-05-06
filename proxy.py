@@ -1155,7 +1155,12 @@ async def _ast_batch_translate_gemini(segs_text: list, alias: str, ki: int, api_
     parsed = json.loads(raw)
     if not isinstance(parsed, list) or len(parsed) != len(segs_text):
         raise ValueError(f'Gemini count mismatch: got {len(parsed) if isinstance(parsed, list) else "?"}, expected {len(segs_text)}')
-    return [str(x) for x in parsed]
+    results = [str(x) for x in parsed]
+    # Nếu bất kỳ element nào trông như error message → raise để caller fallback
+    for _elem in results:
+        if _is_error_result(_elem):
+            raise RuntimeError(f'Gemini trả về error text trong batch: {_elem[:100]}')
+    return results
 
 
 def _ast_batch_translate_gemini_sync(segs_text: list, alias: str, ki: int, api_key: str) -> list:
@@ -1195,7 +1200,12 @@ def _ast_batch_translate_gemini_sync(segs_text: list, alias: str, ki: int, api_k
             f'Gemini count mismatch: got {len(parsed) if isinstance(parsed, list) else "?"}, '
             f'expected {len(segs_text)}'
         )
-    return [str(x) for x in parsed]
+    results = [str(x) for x in parsed]
+    # Nếu bất kỳ element nào trông như error message → raise để caller fallback
+    for _elem in results:
+        if _is_error_result(_elem):
+            raise RuntimeError(f'Gemini trả về error text trong batch: {_elem[:100]}')
+    return results
 
 
 async def _ast_translate_with_entities(raw_text: str, entities: list, force_google: bool = False):
@@ -1214,12 +1224,34 @@ async def _ast_translate_with_entities(raw_text: str, entities: list, force_goog
         url_ph[tok] = m.group(0)
         return tok
 
+    # Mask emoji để bảo toàn chính xác — Gemini có thể tự ý thay emoji khác
+    _EMOJI_RE = re.compile(
+        u'[\U0001F000-\U0001FFFF'
+        u'\U00002600-\U000027BF'
+        u'\U00002300-\U000023FF'
+        u'\U000025A0-\U000025FF'
+        u'\U00002B00-\U00002BFF'
+        u'\U00003000-\U00003300'
+        u'\U0000FE00-\U0000FE0F'   # variation selectors
+        u'\U0001F900-\U0001F9FF'
+        u'\U0001FA00-\U0001FA6F'
+        u'\U0001FA70-\U0001FAFF'
+        u']+',
+        re.UNICODE
+    )
+    emoji_ph: dict = {}
+    def _mask_emoji(m):
+        tok = f'EMJTOK{len(emoji_ph)}END'
+        emoji_ph[tok] = m.group(0)
+        return tok
+
     NL = '⏎NL⏎'
     segments = _ast_build_segments(raw_text, entities)
     translatable_idx = [i for i, s in enumerate(segments) if s['text'].strip()]
     segs_masked = []
     for i in translatable_idx:
         t = re.sub(r'https?://[^\s\)<>]+', _mask, segments[i]['text'])
+        t = _EMOJI_RE.sub(_mask_emoji, t)
         t = t.replace('\n', NL)
         segs_masked.append(t)
 
@@ -1299,12 +1331,14 @@ async def _ast_translate_with_entities(raw_text: str, entities: list, force_goog
         segs_out = await loop.run_in_executor(None, _google_sync_call)
         engine_used = 'GT'
 
-    # Restore URL + newline
+    # Restore URL + newline + emoji
     if segs_out and translatable_idx:
         for k, orig_idx in enumerate(translatable_idx):
             restored = segs_out[k].replace(NL, '\n')
             for tok, url_val in url_ph.items():
                 restored = restored.replace(tok, url_val)
+            for tok, emj_val in emoji_ph.items():
+                restored = restored.replace(tok, emj_val)
             segments[orig_idx]['text'] = restored or segments[orig_idx]['text']
 
     final_text, new_entities = _ast_render(segments)

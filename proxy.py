@@ -688,41 +688,70 @@ except ImportError:
 
 def _gemini_translate_inner(text, is_html=False):
     """
-    Core retry loop dùng GeminiPool — dùng chung cho plain text và HTML.
-    Semaphore giới hạn MAX_CONCURRENT_TRANSLATES thread đồng thời,
-    ngăn burst 429 khi nhiều tin dồn cùng lúc (real-time flood / restart).
-    Trả về (result, alias) hoặc raise RuntimeError khi hết slot.
+    Rotate hết tất cả Gemini models + keys trước.
+    Chỉ fallback xuống Google/DeepL khi TẤT CẢ Gemini models đều fail.
     """
-    tried = set()
+    if not text or not text.strip():
+        return text, 'none'
+
+    tried_slots = set()
+    failed_models = set()   # Track model nào đã fail hoàn toàn
+
     with _gemini_pool.translate_context():
         while True:
             slot = _gemini_pool.pick_slot()
             if not slot:
-                if tried:
-                    raise RuntimeError(f'GeminiPool: đã thử {len(tried)} slot(s), tất cả exhausted')
-                raise RuntimeError('GeminiPool: không có slot khả dụng')
+                break
+
             alias, ki, api_key = slot
             slot_key = (alias, ki)
-            if slot_key in tried:
-                raise RuntimeError(f'GeminiPool: đã thử hết {len(tried)} slot(s)')
-            tried.add(slot_key)
+            if slot_key in tried_slots:
+                break
+            tried_slots.add(slot_key)
+
+            # Bỏ qua model đã fail hoàn toàn
+            if alias in failed_models:
+                continue
+
             model_name = _GPOOL_MODELS[alias]
+
             try:
                 if is_html:
                     result = _fix_html_spacing(_translate_gemini_html(text, model=model_name, api_key=api_key))
                 else:
                     result = _translate_gemini(text, model=model_name, api_key=api_key)
+
                 _gemini_pool.record_success(alias, ki)
                 return result, alias
+
             except Exception as e:
                 err_str = str(e).upper()
+                is_region_block = any(x in err_str for x in [
+                    "USER LOCATION IS NOT SUPPORTED", "FAILED_PRECONDITION", 
+                    "REGION NOT SUPPORTED", "NOT SUPPORTED FOR THE API USE"
+                ])
                 is_rl = any(x in err_str for x in ['429', 'RESOURCE_EXHAUSTED', 'QUOTA', 'RATE LIMIT'])
+
+                if is_region_block or "400" in str(e):
+                    print(f'[Translate] {alias}[key{ki}] bị block region hoặc lỗi 400 → skip model này')
+                    failed_models.add(alias)        # Skip toàn bộ model này
+                    _gemini_pool.record_failure(alias, ki, is_rate_limit=True)
+                    continue
+
                 _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl)
+
                 if is_rl:
-                    # 429 → không retry sang slot khác, fallback Google ngay
-                    # Pool đã cooldown key này, request tiếp theo tự pick key còn tốt
-                    raise RuntimeError(f'GeminiPool: {alias}[key{ki}] rate_limit — fallback')
-                print(f'[Translate] {alias}[key{ki}] loi: {e} — thu slot tiep')
+                    print(f'[Translate] {alias}[key{ki}] rate limit → rotate key khác')
+                    continue
+
+                print(f'[Translate] {alias}[key{ki}] lỗi: {e}')
+
+    # Chỉ fallback khi đã thử nhiều slot và không còn model nào khả dụng
+    if len(tried_slots) >= 3 or len(failed_models) >= 2:
+        print(f'[Translate] Đã thử {len(tried_slots)} slot Gemini → fallback DeepL/Google')
+        raise RuntimeError("All Gemini models failed → fallback")
+
+    raise RuntimeError('GeminiPool: không có slot khả dụng')
 
 
 def _gemini_combined_inner(text, style_hint, lang_instruction):

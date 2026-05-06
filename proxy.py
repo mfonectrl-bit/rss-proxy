@@ -688,43 +688,31 @@ except ImportError:
 
 def _gemini_translate_inner(text, is_html=False):
     """
-    Rotate mạnh + adaptive delay.
-    Ưu tiên model ổn định, skip model block region.
+    Round-robin THEO MODEL theo thứ tự bạn muốn:
+    gemini-3.1 → gemini-3.0 → gemini-2.5 → gemini-2.5-lite
+    Thử hết 5 keys của model hiện tại trước khi chuyển model tiếp theo.
     """
     if not text or not text.strip():
         return text, 'none'
 
-    tried = set()
-    consecutive_rl = 0
-    last_rl_time = 0
+    # Thứ tự model theo ý bạn
+    model_order = ['gemini-3.1', 'gemini-3.0', 'gemini-2.5', 'gemini-2.5-lite']
 
-    with _gemini_pool.translate_context():
-        for attempt in range(40):   # Tăng số lần thử
-            slot = _gemini_pool.pick_slot()
-            if not slot:
-                break
+    for model_alias in model_order:
+        print(f'[Translate] Thử model: {model_alias} (thử hết 5 keys)')
 
-            alias, ki, api_key = slot
+        for ki in range(len(GEMINI_API_KEYS)):
+            alias = model_alias
+            api_key = GEMINI_API_KEYS[ki]
             slot_key = (alias, ki)
-            if slot_key in tried:
-                continue
-            tried.add(slot_key)
-
-            # Ưu tiên model ổn định (2.5 series)
-            if alias.startswith('gemini-3.') and len(tried) > 8:
-                continue  # Giảm thử model 3.x nếu đã thử nhiều
-
-            model_name = _GPOOL_MODELS[alias]
 
             try:
                 if is_html:
-                    result = _fix_html_spacing(_translate_gemini_html(text, model=model_name, api_key=api_key))
+                    result = _fix_html_spacing(_translate_gemini_html(text, model=_GPOOL_MODELS[alias], api_key=api_key))
                 else:
-                    result = _translate_gemini(text, model=model_name, api_key=api_key)
+                    result = _translate_gemini(text, model=_GPOOL_MODELS[alias], api_key=api_key)
 
                 _gemini_pool.record_success(alias, ki)
-                if alias.startswith('gemini-3.'):
-                    print(f'[Translate] ✅ Thành công với model {alias}')
                 return result, alias
 
             except Exception as e:
@@ -733,28 +721,23 @@ def _gemini_translate_inner(text, is_html=False):
                 is_rl = any(x in err_str for x in ['429', 'RESOURCE_EXHAUSTED', 'QUOTA', 'RATE LIMIT'])
 
                 if is_region_block:
-                    print(f'[Translate] {alias}[key{ki}] bị block region → skip model')
-                    _gemini_pool.record_failure(alias, ki, is_rate_limit=True)
-                    continue
+                    print(f'[Translate] {alias}[key{ki}] bị block region → chuyển model tiếp theo')
+                    break  # Thoát khỏi model này, sang model tiếp theo
 
                 _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl)
 
                 if is_rl:
-                    consecutive_rl += 1
-                    delay = 5 + (consecutive_rl * 2.5) + (len(tried) % 6)
-                    delay = min(delay, 15)
-                    if time.time() - last_rl_time > 3:
-                        print(f'[Translate] Rate limit {alias}[key{ki}] (lần {consecutive_rl}) → chờ {delay:.1f}s')
-                        last_rl_time = time.time()
-                    time.sleep(delay)
+                    print(f'[Translate] {alias}[key{ki}] rate limit → thử key tiếp theo')
+                    time.sleep(4)   # delay nhẹ giữa các key
                     continue
-                else:
-                    consecutive_rl = 0
 
                 print(f'[Translate] {alias}[key{ki}] lỗi: {e[:100]}')
 
-    print(f'[Translate] Đã thử {len(tried)} slot Gemini → fallback DeepL/Google')
-    raise RuntimeError("Gemini exhausted → fallback")
+        # Nếu model này fail hết keys → chuyển model tiếp theo
+
+    # Nếu đã thử hết tất cả model
+    print(f'[Translate] Đã thử hết tất cả model + keys → fallback DeepL/Google')
+    raise RuntimeError("All Gemini models and keys exhausted → fallback")
 
 
 def _gemini_combined_inner(text, style_hint, lang_instruction):

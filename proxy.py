@@ -688,30 +688,29 @@ except ImportError:
 
 def _gemini_translate_inner(text, is_html=False):
     """
-    Rotate hết tất cả Gemini models + keys trước.
-    Chỉ fallback xuống Google/DeepL khi TẤT CẢ Gemini models đều fail.
+    Gemini translate thực tế:
+    - Skip model bị region block (400)
+    - Khi rate limit (429) → delay + rotate key
+    - Rotate kiên nhẫn, không dồn dập
+    - Chỉ fallback khi thật sự hết khả năng
     """
     if not text or not text.strip():
         return text, 'none'
 
-    tried_slots = set()
-    failed_models = set()   # Track model nào đã fail hoàn toàn
+    tried = set()
+    last_rate_limit_time = 0
 
     with _gemini_pool.translate_context():
-        while True:
+        for attempt in range(25):   # tối đa 25 lần thử
             slot = _gemini_pool.pick_slot()
             if not slot:
                 break
 
             alias, ki, api_key = slot
             slot_key = (alias, ki)
-            if slot_key in tried_slots:
-                break
-            tried_slots.add(slot_key)
-
-            # Bỏ qua model đã fail hoàn toàn
-            if alias in failed_models:
+            if slot_key in tried:
                 continue
+            tried.add(slot_key)
 
             model_name = _GPOOL_MODELS[alias]
 
@@ -726,30 +725,36 @@ def _gemini_translate_inner(text, is_html=False):
 
             except Exception as e:
                 err_str = str(e).upper()
+                
                 is_region_block = any(x in err_str for x in [
-                    "USER LOCATION IS NOT SUPPORTED", "FAILED_PRECONDITION", 
-                    "REGION NOT SUPPORTED", "NOT SUPPORTED FOR THE API USE"
+                    "USER LOCATION IS NOT SUPPORTED", 
+                    "FAILED_PRECONDITION", 
+                    "REGION NOT SUPPORTED"
                 ])
+                
                 is_rl = any(x in err_str for x in ['429', 'RESOURCE_EXHAUSTED', 'QUOTA', 'RATE LIMIT'])
 
-                if is_region_block or "400" in str(e):
-                    print(f'[Translate] {alias}[key{ki}] bị block region hoặc lỗi 400 → skip model này')
-                    failed_models.add(alias)        # Skip toàn bộ model này
+                if is_region_block:
+                    print(f'[Translate] {alias}[key{ki}] bị block region → skip model này')
                     _gemini_pool.record_failure(alias, ki, is_rate_limit=True)
                     continue
 
                 _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl)
 
                 if is_rl:
-                    print(f'[Translate] {alias}[key{ki}] rate limit → rotate key khác')
+                    # Độ trễ khi rate limit - tránh dồn dập
+                    wait = 3 + (len(tried) % 5)   # delay 3~7 giây
+                    print(f'[Translate] {alias}[key{ki}] Rate limit → chờ {wait}s rồi rotate')
+                    time.sleep(wait)
                     continue
 
-                print(f'[Translate] {alias}[key{ki}] lỗi: {e}')
+                # Lỗi khác
+                print(f'[Translate] {alias}[key{ki}] lỗi: {e[:100]}')
 
-    # Chỉ fallback khi đã thử nhiều slot và không còn model nào khả dụng
-    if len(tried_slots) >= 3 or len(failed_models) >= 2:
-        print(f'[Translate] Đã thử {len(tried_slots)} slot Gemini → fallback DeepL/Google')
-        raise RuntimeError("All Gemini models failed → fallback")
+    # Chỉ fallback khi đã thử khá nhiều
+    if len(tried) >= 5:
+        print(f'[Translate] Đã thử {len(tried)} slot Gemini → fallback DeepL/Google')
+        raise RuntimeError("Gemini exhausted after multiple attempts → fallback")
 
     raise RuntimeError('GeminiPool: không có slot khả dụng')
 

@@ -1977,32 +1977,43 @@ def _generate_ai_comment_only(content_text, feed_cfg):
         'You MUST always write your comment in the exact same language as the article provided. '
         'Never use any other language, regardless of any other instruction.'
     )
-    try:
-        slot = _gemini_pool.pick_slot()
-        if not slot:
-            return ''
-        alias, ki, api_key = slot
-        model_name = _GPOOL_MODELS[alias]
-        payload = json.dumps({
-            'system_instruction': {'parts': [{'text': system_instruction}]},
-            'contents': [{'parts': [{'text': prompt}]}],
-            'generationConfig': {'temperature': 0.7, 'maxOutputTokens': 512},
-        }).encode('utf-8')
-        _url = (
-            f'https://generativelanguage.googleapis.com/v1beta/models/'
-            f'{model_name}:generateContent?key={api_key}'
-        )
-        req = urllib.request.Request(_url, data=payload, headers={'Content-Type': 'application/json'})
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read())
-        comment = data['candidates'][0]['content']['parts'][0]['text'].strip()
-        _gemini_pool.record_success(alias, ki)
-        return '' if _is_error_result(comment) else comment
-    except Exception as e:
-        print(f'[AIComment] Lỗi sinh bình luận: {e}')
-        return ''
+    tried = set()
+    with _gemini_pool.translate_context():
+        while True:
+            slot = _gemini_pool.pick_slot()
+            if not slot:
+                break
+            alias, ki, api_key = slot
+            if (alias, ki) in tried:
+                break
+            tried.add((alias, ki))
+            model_name = _GPOOL_MODELS[alias]
+            payload = json.dumps({
+                'system_instruction': {'parts': [{'text': system_instruction}]},
+                'contents': [{'parts': [{'text': prompt}]}],
+                'generationConfig': {'temperature': 0.7, 'maxOutputTokens': 512},
+            }).encode('utf-8')
+            _url = (
+                f'https://generativelanguage.googleapis.com/v1beta/models/'
+                f'{model_name}:generateContent?key={api_key}'
+            )
+            try:
+                req = urllib.request.Request(_url, data=payload, headers={'Content-Type': 'application/json'})
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    data = json.loads(resp.read())
+                comment = data['candidates'][0]['content']['parts'][0]['text'].strip()
+                _gemini_pool.record_success(alias, ki)
+                return '' if _is_error_result(comment) else comment
+            except Exception as e:
+                is_rl = '429' in str(e) or 'quota' in str(e).lower()
+                _gemini_pool.record_failure(alias, ki, is_rate_limit=is_rl)
+                print(f'[AIComment] {alias}[key{ki}] lỗi: {e} — thử slot khác')
+                if is_rl:
+                    break
+    return ''
 
 
+def _fix_html_spacing(html):
     """
     Post-process HTML sau khi dịch (Gemini/DeepL) — đảm bảo có space
     trước opening tag và sau closing tag, tránh text bị dính vào tag.
